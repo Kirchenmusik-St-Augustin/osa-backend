@@ -4,8 +4,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import ALGORITHM, SECRET_KEY, SESSION_IDLE_TIMEOUT_MINUTES
 from app.db.database import get_db
@@ -38,8 +37,8 @@ def _decode_token(token: str) -> tuple[str, str]:
         return email, token_id
 
 
-async def _get_session_record(db: AsyncSession, token_id: str) -> PersonalAccessToken:
-    result = await db.execute(
+def _get_session_record(db: Session, token_id: str) -> PersonalAccessToken:
+    result = db.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.token == token_id)
     )
     session_record = result.scalar_one_or_none()
@@ -54,28 +53,26 @@ def _ensure_tz_aware(dt: datetime) -> datetime:
     return dt
 
 
-async def _bump_lastsignal(db: AsyncSession, user_id: int, now: datetime) -> None:
-    await db.execute(update(User).where(User.id == user_id).values(auth_lastsignal=now))
+def _bump_lastsignal(db: Session, user_id: int, now: datetime) -> None:
+    db.execute(update(User).where(User.id == user_id).values(auth_lastsignal=now))
 
 
-async def _enforce_idle_timeout(
-    db: AsyncSession, session_record: PersonalAccessToken
-) -> None:
+def _enforce_idle_timeout(db: Session, session_record: PersonalAccessToken) -> None:
     now = datetime.now(UTC)
     last_used = session_record.last_used_at
 
     if not last_used:
         session_record.last_used_at = now
-        await _bump_lastsignal(db, session_record.user_id, now)
-        await db.commit()
+        _bump_lastsignal(db, session_record.user_id, now)
+        db.commit()
         return
 
     last_used = _ensure_tz_aware(last_used)
     idle_duration = now - last_used
 
     if idle_duration > timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES):
-        await db.delete(session_record)
-        await db.commit()
+        db.delete(session_record)
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session wegen Inaktivität abgelaufen.",
@@ -84,12 +81,12 @@ async def _enforce_idle_timeout(
 
     if idle_duration > timedelta(minutes=1):
         session_record.last_used_at = now
-        await _bump_lastsignal(db, session_record.user_id, now)
-        await db.commit()
+        _bump_lastsignal(db, session_record.user_id, now)
+        db.commit()
 
 
-async def _get_verified_user(db: AsyncSession, email: str) -> User:
-    result = await db.execute(
+def _get_verified_user(db: Session, email: str) -> User:
+    result = db.execute(
         select(User)
         .options(selectinload(User.roles))
         .where(User.email == email, User.deleted_at.is_(None))
@@ -104,15 +101,15 @@ async def _get_verified_user(db: AsyncSession, email: str) -> User:
     return user
 
 
-async def get_current_user(
+def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ) -> User:
     """Dependency that decodes+verifies the JWT, checks the revocable
     server-side session, enforces the idle timeout, and returns the User --
     with `roles` already eager-loaded so permission_service.calculate_permissions
     never triggers a lazy-load (no N+1 per authenticated request)."""
     email, token_id = _decode_token(token)
-    session_record = await _get_session_record(db, token_id)
-    await _enforce_idle_timeout(db, session_record)
-    return await _get_verified_user(db, email)
+    session_record = _get_session_record(db, token_id)
+    _enforce_idle_timeout(db, session_record)
+    return _get_verified_user(db, email)

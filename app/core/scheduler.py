@@ -46,7 +46,7 @@ def _acquire_scheduler_lock() -> bool:
     if engine.dialect.name != "postgresql":
         return True
 
-    conn = engine.sync_engine.connect()
+    conn = engine.connect()
     acquired = bool(
         conn.execute(
             text("SELECT pg_try_advisory_lock(:key)"),

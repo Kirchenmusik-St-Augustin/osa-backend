@@ -3,8 +3,7 @@ from typing import Any, Literal, NoReturn, overload
 
 import jwt
 from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import (
     ALGORITHM,
@@ -41,8 +40,8 @@ def _ensure_tz_aware(dt: datetime | None) -> datetime | None:
     return dt
 
 
-async def log_auth_event(
-    db: AsyncSession,
+def log_auth_event(
+    db: Session,
     event: str,
     email: str | None,
     *,
@@ -64,12 +63,10 @@ async def log_auth_event(
             payload=payload or {},
         )
     )
-    await db.commit()
+    db.commit()
 
 
-async def check_login_throttle(
-    db: AsyncSession, email: str, ip_address: str
-) -> int | None:
+def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None:
     """Returns seconds remaining if the email+IP pair is currently
     rate-limited, None if the login attempt may proceed.
 
@@ -95,9 +92,7 @@ async def check_login_throttle(
         .order_by(AuthLog.fired_at.desc())
         .limit(1)
     )
-    last_success = _ensure_tz_aware(
-        (await db.execute(last_success_stmt)).scalar_one_or_none()
-    )
+    last_success = _ensure_tz_aware(db.execute(last_success_stmt).scalar_one_or_none())
 
     effective_start = window_start
     if last_success is not None and last_success > effective_start:
@@ -113,7 +108,7 @@ async def check_login_throttle(
         )
         .order_by(AuthLog.fired_at.asc())
     )
-    raw_failed_times = (await db.execute(failed_stmt)).scalars().all()
+    raw_failed_times = db.execute(failed_stmt).scalars().all()
     failed_times = [_ensure_tz_aware(t) for t in raw_failed_times if t is not None]
 
     if len(failed_times) < MAX_LOGIN_ATTEMPTS:
@@ -126,13 +121,13 @@ async def check_login_throttle(
     return max(1, int(retry_after.total_seconds()))
 
 
-async def authenticate_user(
-    db: AsyncSession, email: str, password: str
+def authenticate_user(
+    db: Session, email: str, password: str
 ) -> tuple[User | None, AuthFailureReason | Literal["ok"]]:
     """Case-sensitive email match, matching Legacy's actual DB comparison
     (SQLite default BINARY collation, no COLLATE NOCASE on `users.email`) --
     deliberately NOT lowercased here, unlike the throttle key above."""
-    result = await db.execute(
+    result = db.execute(
         select(User)
         .options(selectinload(User.roles))
         .where(User.email == email, User.deleted_at.is_(None))
@@ -148,7 +143,7 @@ async def authenticate_user(
     return user, "ok"
 
 
-async def create_user_session(db: AsyncSession, user: User) -> tuple[str, str, str]:
+def create_user_session(db: Session, user: User) -> tuple[str, str, str]:
     if not user.email:
         msg = "User hat keine E-Mail-Adresse."
         raise ValueError(msg)
@@ -169,7 +164,7 @@ async def create_user_session(db: AsyncSession, user: User) -> tuple[str, str, s
         )
     )
     user.auth_lastlogin = now
-    await db.commit()
+    db.commit()
 
     return access_token, session_id, refresh_secret
 
@@ -179,18 +174,18 @@ class InvalidSessionError(Exception):
     is no longer valid -- the router maps this to a 401 + cookie clear."""
 
 
-async def _invalidate_session(
-    db: AsyncSession, session: PersonalAccessToken, reason: str
+def _invalidate_session(
+    db: Session, session: PersonalAccessToken, reason: str
 ) -> NoReturn:
-    await db.delete(session)
-    await db.commit()
+    db.delete(session)
+    db.commit()
     raise InvalidSessionError(reason)
 
 
-async def refresh_session(
-    db: AsyncSession, session_id: str, refresh_secret: str
+def refresh_session(
+    db: Session, session_id: str, refresh_secret: str
 ) -> tuple[str, str]:
-    result = await db.execute(
+    result = db.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
     )
     session = result.scalar_one_or_none()
@@ -201,24 +196,24 @@ async def refresh_session(
     if not session.refresh_token_hash or not verify_refresh_secret(
         refresh_secret, session.refresh_token_hash
     ):
-        await _invalidate_session(db, session, "Token reuse detected")
+        _invalidate_session(db, session, "Token reuse detected")
 
     now = datetime.now(UTC)
     last_used = _ensure_tz_aware(session.last_used_at)
     if last_used and (now - last_used) > timedelta(
         minutes=SESSION_IDLE_TIMEOUT_MINUTES
     ):
-        await _invalidate_session(db, session, "Session expired due to inactivity")
+        _invalidate_session(db, session, "Session expired due to inactivity")
     created = _ensure_tz_aware(session.created_at)
     if created and (now - created) > timedelta(days=REFRESH_TOKEN_LIFETIME_DAYS):
-        await _invalidate_session(db, session, "Session expired")
+        _invalidate_session(db, session, "Session expired")
 
-    user_result = await db.execute(select(User).where(User.id == session.user_id))
+    user_result = db.execute(select(User).where(User.id == session.user_id))
     user = user_result.scalar_one_or_none()
     if user is None or user.auth_locked or user.deleted_at is not None:
-        await _invalidate_session(db, session, "Account locked or deleted")
+        _invalidate_session(db, session, "Account locked or deleted")
     if not user.email:
-        await _invalidate_session(db, session, "Account has no email")
+        _invalidate_session(db, session, "Account has no email")
 
     new_secret = generate_refresh_secret()
     session.refresh_token_hash = hash_refresh_secret(new_secret)
@@ -226,12 +221,12 @@ async def refresh_session(
     user.auth_lastsignal = now
 
     access_token, _ = create_access_token(subject=user.email, jti_override=session_id)
-    await db.commit()
+    db.commit()
 
     return access_token, new_secret
 
 
-async def logout_user(db: AsyncSession, token: str) -> None:
+def logout_user(db: Session, token: str) -> None:
     try:
         payload = jwt.decode(
             token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False}
@@ -243,17 +238,17 @@ async def logout_user(db: AsyncSession, token: str) -> None:
     if not token_id:
         return
 
-    result = await db.execute(
+    result = db.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.token == token_id)
     )
     session = result.scalar_one_or_none()
     if session is None:
         return
 
-    await db.execute(
+    db.execute(
         update(User)
         .where(User.id == session.user_id)
         .values(auth_lastlogout=datetime.now(UTC))
     )
-    await db.delete(session)
-    await db.commit()
+    db.delete(session)
+    db.commit()

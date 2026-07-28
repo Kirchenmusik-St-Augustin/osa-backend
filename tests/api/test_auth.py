@@ -4,7 +4,7 @@ from app.services import auth_service
 async def test_login_success_sets_refresh_cookie_and_returns_access_token(
     client, make_user
 ):
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
 
     response = await client.post(
         "/auth/login",
@@ -34,7 +34,7 @@ async def test_login_wrong_password_returns_same_generic_message_as_unknown_emai
     """Hard Legacy parity: lang/de/auth.php's `failed` string covers BOTH
     cases identically -- there is no separate "Passwort falsch." message in
     the login flow (that belongs to the unrelated change-password form)."""
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
 
     response = await client.post(
         "/auth/login",
@@ -46,7 +46,7 @@ async def test_login_wrong_password_returns_same_generic_message_as_unknown_emai
 
 
 async def test_login_locked_account_returns_locked_message(client, make_user):
-    user = await make_user(password="correct-password", auth_locked=True)
+    user = make_user(password="correct-password", auth_locked=True)
 
     response = await client.post(
         "/auth/login",
@@ -58,7 +58,7 @@ async def test_login_locked_account_returns_locked_message(client, make_user):
 
 
 async def test_login_throttles_after_five_failed_attempts(client, make_user):
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
 
     for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
         response = await client.post(
@@ -101,7 +101,7 @@ async def test_refresh_without_cookie_returns_401(client):
 
 
 async def test_refresh_rotates_token_and_reuse_is_rejected(client, make_user):
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
     login_response = await client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
@@ -142,7 +142,7 @@ async def test_logout_requires_authentication(client):
 
 
 async def test_logout_success_clears_cookie(client, make_user):
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
     login_response = await client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
@@ -161,7 +161,7 @@ async def test_logout_success_clears_cookie(client, make_user):
 async def test_get_current_user_rejects_locked_account_mid_session(
     client, make_user, db_session
 ):
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
     login_response = await client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
@@ -172,7 +172,7 @@ async def test_get_current_user_rejects_locked_account_mid_session(
     # an already-logged-in, now-locked user on their NEXT request, not just
     # at login time. Our get_current_user dependency must do the same.
     user.auth_locked = True
-    await db_session.commit()
+    db_session.commit()
 
     response = await client.post(
         "/auth/logout",

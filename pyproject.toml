@@ -104,11 +104,6 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["app", "scripts", "main.py"]
-# SQLAlchemy's async engine bridges aiosqlite's sync driver calls through
-# greenlet_spawn -- without this, coverage.py's default tracer loses track
-# of any code that runs after the first `await` inside a request handler
-# (silently under-reports every DB-touching endpoint as barely covered).
-concurrency = ["greenlet"]
 omit = [
     "alembic/*",
     "tests/*",

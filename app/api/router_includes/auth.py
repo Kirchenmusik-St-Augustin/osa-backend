@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, oauth2_scheme
 from app.core.rate_limit import limiter
@@ -51,10 +51,10 @@ def _build_login_response(
 
 
 @auth_router.post("/login")
-async def login(
+def login(
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
     """Authenticate with email + password, receive a JWT access token plus
     an httponly refresh cookie.
@@ -70,11 +70,11 @@ async def login(
     ip_address = _client_ip(request)
     user_agent = request.headers.get("user-agent")
 
-    seconds_remaining = await auth_service.check_login_throttle(
+    seconds_remaining = auth_service.check_login_throttle(
         db, form_data.username, ip_address
     )
     if seconds_remaining is not None:
-        await auth_service.log_auth_event(
+        auth_service.log_auth_event(
             db,
             "Lockout",
             form_data.username,
@@ -94,12 +94,12 @@ async def login(
             },
         )
 
-    user, reason = await auth_service.authenticate_user(
+    user, reason = auth_service.authenticate_user(
         db, form_data.username, form_data.password
     )
 
     if reason == "account_locked":
-        await auth_service.log_auth_event(
+        auth_service.log_auth_event(
             db,
             "Failed",
             form_data.username,
@@ -113,7 +113,7 @@ async def login(
         )
 
     if user is None:
-        await auth_service.log_auth_event(
+        auth_service.log_auth_event(
             db,
             "Failed",
             form_data.username,
@@ -126,10 +126,10 @@ async def login(
             content={"detail": "Anmeldedaten unbekannt."},
         )
 
-    access_token, session_id, refresh_secret = await auth_service.create_user_session(
+    access_token, session_id, refresh_secret = auth_service.create_user_session(
         db, user
     )
-    await auth_service.log_auth_event(
+    auth_service.log_auth_event(
         db, "Login", user.email, ip_address=ip_address, user_agent=user_agent
     )
 
@@ -138,9 +138,7 @@ async def login(
 
 @auth_router.post("/refresh")
 @limiter.limit("10/minute")  # type: ignore[reportUntypedFunctionDecorator]
-async def refresh(
-    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
-) -> JSONResponse:
+def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONResponse:
     """Exchange the refresh-token cookie for a new access token, rotating
     the refresh secret on every use. No Legacy equivalent (Legacy has no
     JWT refresh concept at all) -- per-IP rate limit only, 1:1 vb-api."""
@@ -153,7 +151,7 @@ async def refresh(
 
     try:
         session_id, refresh_secret = parse_refresh_cookie(cookie_value)
-        access_token, new_secret = await auth_service.refresh_session(
+        access_token, new_secret = auth_service.refresh_session(
             db, session_id, refresh_secret
         )
     except (ValueError, InvalidSessionError):
@@ -168,15 +166,15 @@ async def refresh(
 
 
 @auth_router.post("/logout")
-async def logout(
+def logout(
     _request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> JSONResponse:
     """Invalidate the current session and clear the refresh-token cookie."""
-    await auth_service.logout_user(db, token)
-    await auth_service.log_auth_event(db, "Logout", current_user.email)
+    auth_service.logout_user(db, token)
+    auth_service.log_auth_event(db, "Logout", current_user.email)
     response = JSONResponse(
         content={"status": "ok", "message": "Erfolgreich abgemeldet."}
     )

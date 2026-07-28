@@ -15,21 +15,21 @@ from app.db.models.personal_access_token import PersonalAccessToken
 async def test_expired_idle_session_is_rejected_and_deleted(
     client, make_user, db_session
 ):
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
     login_response = await client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
     access_token = login_response.json()["access_token"]
 
-    result = await db_session.execute(
+    result = db_session.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
     )
     session_row = result.scalar_one()
     session_row.last_used_at = datetime.now(UTC) - timedelta(
         minutes=SESSION_IDLE_TIMEOUT_MINUTES + 1
     )
-    await db_session.commit()
+    db_session.commit()
 
     response = await client.post(
         "/auth/logout", headers={"Authorization": f"Bearer {access_token}"}
@@ -38,7 +38,7 @@ async def test_expired_idle_session_is_rejected_and_deleted(
     assert response.status_code == 401
     assert response.json()["detail"] == "Session wegen Inaktivität abgelaufen."
 
-    result = await db_session.execute(
+    result = db_session.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
     )
     assert result.scalar_one_or_none() is None
@@ -53,7 +53,7 @@ async def test_invalid_bearer_token_is_rejected(client):
 
 
 async def test_unknown_session_token_is_rejected(client, make_user):
-    user = await make_user()
+    user = make_user()
     token, _jti = create_access_token(
         subject=user.email, jti_override="never-persisted"
     )
@@ -68,7 +68,7 @@ async def test_unknown_session_token_is_rejected(client, make_user):
 async def test_deleted_user_is_rejected_despite_valid_session(
     client, make_user, db_session
 ):
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
     login_response = await client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
@@ -76,7 +76,7 @@ async def test_deleted_user_is_rejected_despite_valid_session(
     access_token = login_response.json()["access_token"]
 
     user.deleted_at = datetime.now(UTC)
-    await db_session.commit()
+    db_session.commit()
 
     response = await client.post(
         "/auth/logout", headers={"Authorization": f"Bearer {access_token}"}
@@ -108,19 +108,19 @@ async def test_session_with_never_used_timestamp_is_bumped_not_rejected(
     """`last_used_at` is nullable in the schema even though our own
     create_user_session always sets it -- covers the defensive branch for
     a hypothetically null value rather than assuming it can't happen."""
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
     login_response = await client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
     access_token = login_response.json()["access_token"]
 
-    result = await db_session.execute(
+    result = db_session.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
     )
     session_row = result.scalar_one()
     session_row.last_used_at = None
-    await db_session.commit()
+    db_session.commit()
 
     response = await client.post(
         "/auth/logout", headers={"Authorization": f"Bearer {access_token}"}
@@ -136,19 +136,19 @@ async def test_session_within_grace_period_bumps_lastsignal(
     (last_used_at/auth_lastsignal bumped) but the session is NOT
     invalidated -- covers the "still active, just quiet" branch, distinct
     from both the sub-1-minute no-op and the over-timeout rejection."""
-    user = await make_user(password="correct-password")
+    user = make_user(password="correct-password")
     login_response = await client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
     access_token = login_response.json()["access_token"]
 
-    result = await db_session.execute(
+    result = db_session.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
     )
     session_row = result.scalar_one()
     session_row.last_used_at = datetime.now(UTC) - timedelta(minutes=2)
-    await db_session.commit()
+    db_session.commit()
 
     response = await client.post(
         "/auth/logout", headers={"Authorization": f"Bearer {access_token}"}

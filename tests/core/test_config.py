@@ -6,7 +6,7 @@ from app.core.config import Settings
 def test_valid_settings_parses_cors_origins_list(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example, https://b.example")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
 
     settings = Settings()
 
@@ -16,7 +16,7 @@ def test_valid_settings_parses_cors_origins_list(monkeypatch: pytest.MonkeyPatch
 def test_missing_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("APP_ENVIRONMENT", raising=False)
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
 
     with pytest.raises(SystemExit):
         Settings()
@@ -25,7 +25,7 @@ def test_missing_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
 def test_invalid_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "not-a-real-environment")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
 
     with pytest.raises(SystemExit):
         Settings()
@@ -34,7 +34,7 @@ def test_invalid_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
 def test_missing_cors_origins_exits(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
 
     with pytest.raises(SystemExit):
         Settings()
@@ -43,7 +43,7 @@ def test_missing_cors_origins_exits(monkeypatch: pytest.MonkeyPatch):
 def test_blank_cors_origins_exits(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", " , ")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
 
     with pytest.raises(SystemExit):
         Settings()
@@ -61,7 +61,7 @@ def test_missing_database_url_exits(monkeypatch: pytest.MonkeyPatch):
 def test_missing_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.delenv("SECRET_KEY", raising=False)
 
     with pytest.raises(SystemExit):
@@ -71,7 +71,7 @@ def test_missing_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
 def test_too_short_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("SECRET_KEY", "too-short")
 
     with pytest.raises(SystemExit):
@@ -81,7 +81,7 @@ def test_too_short_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
 def test_valid_secret_key_and_tier2_defaults(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
-    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("SECRET_KEY", "x" * 32)
     monkeypatch.delenv("SESSION_LIFETIME_MINUTES", raising=False)
     monkeypatch.delenv("SESSION_IDLE_TIMEOUT_MINUTES", raising=False)

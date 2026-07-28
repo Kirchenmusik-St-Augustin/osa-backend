@@ -6,8 +6,8 @@ from app.services.permission_service import (
 )
 
 
-async def test_administrator_gets_all_administrator_gated_permissions(make_user):
-    user = await make_user(administrator=True)
+def test_administrator_gets_all_administrator_gated_permissions(make_user):
+    user = make_user(administrator=True)
 
     permissions = calculate_permissions(user)
 
@@ -27,10 +27,10 @@ async def test_administrator_gets_all_administrator_gated_permissions(make_user)
         assert permission in permissions
 
 
-async def test_user_with_no_roles_and_no_admin_flag_gets_only_open_permission(
+def test_user_with_no_roles_and_no_admin_flag_gets_only_open_permission(
     make_user,
 ):
-    user = await make_user(administrator=False)
+    user = make_user(administrator=False)
 
     permissions = calculate_permissions(user)
 
@@ -38,8 +38,8 @@ async def test_user_with_no_roles_and_no_admin_flag_gets_only_open_permission(
     assert permissions == ["performanceChangeUserStatus"]
 
 
-async def test_planner_role_grants_artist_and_repertoire_maintain(make_user):
-    user = await make_user(roles=["planner"])
+def test_planner_role_grants_artist_and_repertoire_maintain(make_user):
+    user = make_user(roles=["planner"])
 
     permissions = calculate_permissions(user)
 
@@ -50,8 +50,8 @@ async def test_planner_role_grants_artist_and_repertoire_maintain(make_user):
     assert "performanceCast" not in permissions  # planner alone, no disponent
 
 
-async def test_disponent_role_grants_broader_surface_than_planner(make_user):
-    user = await make_user(roles=["disponent"])
+def test_disponent_role_grants_broader_surface_than_planner(make_user):
+    user = make_user(roles=["disponent"])
 
     permissions = calculate_permissions(user)
 
@@ -62,24 +62,24 @@ async def test_disponent_role_grants_broader_surface_than_planner(make_user):
     assert "roleMaintain" not in permissions  # disponent alone, no administrator
 
 
-async def test_billing_role_grants_only_performance_billing(make_user):
-    user = await make_user(roles=["billing"])
+def test_billing_role_grants_only_performance_billing(make_user):
+    user = make_user(roles=["billing"])
 
     permissions = calculate_permissions(user)
 
     assert permissions == ["performanceBilling", "performanceChangeUserStatus"]
 
 
-async def test_scores_role_grants_only_score_maintain(make_user):
-    user = await make_user(roles=["scores"])
+def test_scores_role_grants_only_score_maintain(make_user):
+    user = make_user(roles=["scores"])
 
     permissions = calculate_permissions(user)
 
     assert permissions == ["scoreMaintain", "performanceChangeUserStatus"]
 
 
-async def test_shorturls_role_grants_only_shorturl_maintain(make_user):
-    user = await make_user(roles=["shorturls"])
+def test_shorturls_role_grants_only_shorturl_maintain(make_user):
+    user = make_user(roles=["shorturls"])
 
     permissions = calculate_permissions(user)
 

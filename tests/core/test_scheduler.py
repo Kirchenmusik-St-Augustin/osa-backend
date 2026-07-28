@@ -66,14 +66,6 @@ class _FakeConnection:
         self.closed = True
 
 
-class _FakeSyncEngine:
-    def __init__(self, connection: _FakeConnection) -> None:
-        self._connection = connection
-
-    def connect(self) -> _FakeConnection:
-        return self._connection
-
-
 class _FakeDialect:
     name = "postgresql"
 
@@ -82,7 +74,10 @@ class _FakeEngine:
     dialect = _FakeDialect()
 
     def __init__(self, connection: _FakeConnection) -> None:
-        self.sync_engine = _FakeSyncEngine(connection)
+        self._connection = connection
+
+    def connect(self) -> _FakeConnection:
+        return self._connection
 
 
 def test_acquire_scheduler_lock_holds_connection_under_postgresql(
