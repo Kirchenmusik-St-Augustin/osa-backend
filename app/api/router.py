@@ -1,8 +1,9 @@
 """Aggregates all domain routers into a single api_router, mounted in
-main.py. Empty in this scaffolding step -- the first domain slice adds its
-router under app/api/router_includes/ (created then, not now) and includes
-it here, mirroring the vb-fastapi-vue sister project's shape."""
+main.py."""
 
 from fastapi import APIRouter
 
+from app.api.router_includes.auth import auth_router
+
 api_router = APIRouter()
+api_router.include_router(auth_router, prefix="/auth", tags=["auth"])

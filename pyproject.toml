@@ -68,7 +68,7 @@ max-complexity = 8
 # os.environ, ...) — once get_settings() has an lru_cache cleared per-test
 # (see the vb-fastapi-vue conftest.py pattern for the reference fixture),
 # direct env manipulation is the whole testing strategy, not a violation.
-"tests/**" = ["S101", "S105", "S106", "ANN", "ARG002", "TRY", "FBT", "N802", "PLR", "SLF001", "PLW0603", "TID251"]
+"tests/**" = ["S101", "S105", "S106", "S107", "ANN", "ARG002", "TRY", "FBT", "N802", "PLR", "SLF001", "PLW0603", "TID251"]
 # alembic/env.py runs as Alembic's own CLI entry point, outside the
 # FastAPI app process — it reads DATABASE_URL directly rather than via
 # app.core.config.get_settings().
@@ -104,6 +104,11 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["app", "scripts", "main.py"]
+# SQLAlchemy's async engine bridges aiosqlite's sync driver calls through
+# greenlet_spawn -- without this, coverage.py's default tracer loses track
+# of any code that runs after the first `await` inside a request handler
+# (silently under-reports every DB-touching endpoint as barely covered).
+concurrency = ["greenlet"]
 omit = [
     "alembic/*",
     "tests/*",

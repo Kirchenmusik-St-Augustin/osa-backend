@@ -5,9 +5,11 @@ directly) -- it is the only path that keeps the lru_cache and its per-test
 reset fixture (see tests/conftest.py) in sync.
 
 Tier 1 (boot-critical, validated in _validate_tier1 below): APP_ENVIRONMENT,
-CORS_ORIGINS, DATABASE_URL. SECRET_KEY is intentionally NOT part of this
-scaffolding step -- nothing reads it yet (no Auth slice). It is added as a
-Tier 1 setting in the same change that introduces JWT signing.
+CORS_ORIGINS, DATABASE_URL, SECRET_KEY.
+
+Tier 2 (optional, defaults applied, no boot-time validation): session/JWT
+lifetimes -- a deployment that never boots the Auth slice's tests still
+gets sane defaults, matching the vb-fastapi-vue sister project's values.
 """
 
 import sys
@@ -34,6 +36,20 @@ class Settings(BaseSettings):
     )
     cors_origins: str | None = Field(default=None, validation_alias="CORS_ORIGINS")
     database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
+    secret_key: str | None = Field(default=None, validation_alias="SECRET_KEY")
+
+    # Tier 2 -- optional with defaults, no boot-time validation. Defaults
+    # match vb-api's own values exactly (sister-project parity default).
+    session_lifetime_minutes: int = Field(
+        default=15, validation_alias="SESSION_LIFETIME_MINUTES"
+    )
+    session_idle_timeout_minutes: int = Field(
+        default=120, validation_alias="SESSION_IDLE_TIMEOUT_MINUTES"
+    )
+    refresh_token_lifetime_days: int = Field(
+        default=7, validation_alias="REFRESH_TOKEN_LIFETIME_DAYS"
+    )
+    password_min_length: int = Field(default=8, validation_alias="PASSWORD_MIN_LENGTH")
 
     @model_validator(mode="after")
     def _validate_tier1(self) -> "Settings":
@@ -46,6 +62,10 @@ class Settings(BaseSettings):
             _fail("CORS_ORIGINS is not set or contains no valid origins.")
         if not self.database_url:
             _fail("DATABASE_URL is not set.")
+        if not self.secret_key:
+            _fail("SECRET_KEY is not set.")
+        if len(self.secret_key) < 32:
+            _fail("SECRET_KEY must be at least 32 characters long.")
         return self
 
     @property

@@ -56,3 +56,42 @@ def test_missing_database_url_exits(monkeypatch: pytest.MonkeyPatch):
 
     with pytest.raises(SystemExit):
         Settings()
+
+
+def test_missing_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+
+def test_too_short_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("SECRET_KEY", "too-short")
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+
+def test_valid_secret_key_and_tier2_defaults(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    monkeypatch.setenv("SECRET_KEY", "x" * 32)
+    monkeypatch.delenv("SESSION_LIFETIME_MINUTES", raising=False)
+    monkeypatch.delenv("SESSION_IDLE_TIMEOUT_MINUTES", raising=False)
+    monkeypatch.delenv("REFRESH_TOKEN_LIFETIME_DAYS", raising=False)
+    monkeypatch.delenv("PASSWORD_MIN_LENGTH", raising=False)
+
+    settings = Settings()
+
+    assert settings.secret_key == "x" * 32
+    assert settings.session_lifetime_minutes == 15
+    assert settings.session_idle_timeout_minutes == 120
+    assert settings.refresh_token_lifetime_days == 7
+    assert settings.password_min_length == 8

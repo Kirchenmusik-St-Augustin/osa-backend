@@ -36,7 +36,16 @@ CREATE TABLE "performance_rehearsals" ("id" integer primary key autoincrement no
 
 CREATE TABLE "performances" ("id" integer primary key autoincrement not null, "schedule" datetime not null, "location_id" integer not null, "ordinariumwork_id" integer not null, "artist_id" integer, "description" text, "choirjob_defaultfee" integer not null, "instrument_defaultfee" integer not null, "voice_defaultfee" integer not null, "extracost_amount" integer, "extracost_description" text, "created_at" datetime, "updated_at" datetime);
 
-CREATE TABLE "personal_access_tokens" ("id" integer primary key autoincrement not null, "tokenable_type" varchar not null, "tokenable_id" integer not null, "name" varchar not null, "token" varchar not null, "abilities" text, "last_used_at" datetime, "expires_at" datetime, "created_at" datetime, "updated_at" datetime);
+CREATE TABLE "personal_access_tokens" (
+  "id" integer primary key autoincrement not null,
+  "user_id" integer not null references "users"("id") on delete cascade on update cascade,
+  "name" varchar not null,
+  "token" varchar not null,
+  "refresh_token_hash" varchar,
+  "last_used_at" datetime,
+  "created_at" datetime,
+  "updated_at" datetime
+);
 
 CREATE TABLE "propriumelements" ("id" integer primary key autoincrement not null, "name" varchar not null, "order" integer not null default '0', "created_at" datetime, "updated_at" datetime);
 
@@ -101,8 +110,6 @@ CREATE UNIQUE INDEX "performances_schedule_artist_id_unique" on "performances" (
 CREATE UNIQUE INDEX "performances_schedule_location_id_unique" on "performances" ("schedule", "location_id");
 
 CREATE UNIQUE INDEX "personal_access_tokens_token_unique" on "personal_access_tokens" ("token");
-
-CREATE INDEX "personal_access_tokens_tokenable_type_tokenable_id_index" on "personal_access_tokens" ("tokenable_type", "tokenable_id");
 
 CREATE UNIQUE INDEX "propriumelements_name_unique" on "propriumelements" ("name");
 

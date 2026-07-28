@@ -5,3 +5,7 @@ sqlalchemy
 aiosqlite
 apscheduler
 pydantic-settings
+bcrypt
+PyJWT
+python-multipart
+slowapi
