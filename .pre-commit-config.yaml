@@ -1,0 +1,41 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: check-router-soc
+        name: Router Separation-of-Concerns Check
+        entry: podman exec osa-api python scripts/check_router_soc.py
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pyright
+        name: Pyright Strict Type Checking
+        entry: podman exec osa-api python -m pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pytest-coverage
+        name: Pytest & Code Coverage
+        entry: podman exec osa-api pytest --tb=short -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
