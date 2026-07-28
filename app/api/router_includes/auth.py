@@ -1,12 +1,15 @@
 from math import ceil
 from typing import Annotated
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, oauth2_scheme
+from app.core import mailer
+from app.core.config import get_settings, require_setting
 from app.core.rate_limit import limiter
 from app.core.security import (
     REFRESH_TOKEN_LIFETIME_DAYS,
@@ -15,8 +18,21 @@ from app.core.security import (
 )
 from app.db.database import get_db
 from app.db.models.user import User
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    GoogleCallbackRequest,
+    GoogleLinkRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+    VerifyEmailRequest,
+)
 from app.services import auth_service
-from app.services.auth_service import InvalidSessionError
+from app.services.auth_service import (
+    AccountNotLinkedError,
+    InvalidSessionError,
+    OauthBindingNotFoundError,
+    RegistrationConflictError,
+)
 
 auth_router = APIRouter()
 
@@ -180,3 +196,174 @@ def logout(
     )
     response.delete_cookie("refresh_token", path=COOKIE_PATH)
     return response
+
+
+def _conflict_errors_to_detail(
+    errors: list[tuple[str, str]],
+) -> list[dict[str, object]]:
+    return [
+        {"loc": ["body", field], "msg": msg, "type": "value_error"}
+        for field, msg in errors
+    ]
+
+
+@auth_router.post("/register")
+def register(
+    data: RegisterRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[Session, Depends(get_db)],
+) -> JSONResponse:
+    """Register + auto-login (mirrors Legacy's `Auth::login($user)` right
+    after `User::create()`), then notify the disponent address in the
+    background -- registration itself must not wait on (or fail because
+    of) mail delivery."""
+    try:
+        user = auth_service.register_user(db, data)
+    except RegistrationConflictError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": _conflict_errors_to_detail(exc.errors)},
+        )
+
+    background_tasks.add_task(
+        mailer.send_new_registration_notice,
+        surname=user.surname,
+        givenname=user.givenname,
+        email=data.email.lower(),
+        phone=user.phone,
+    )
+
+    access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db, user
+    )
+    return _build_login_response(access_token, session_id, refresh_secret)
+
+
+@auth_router.post("/verify-email")
+def verify_email(
+    data: VerifyEmailRequest, db: Annotated[Session, Depends(get_db)]
+) -> JSONResponse:
+    """Self-contained via the token alone (no prior login required) --
+    the token already encodes+signs the target user, playing the same
+    role Legacy's Laravel Signed Route + auth-middleware combination did.
+    Auto-logs the user in afterwards, since Legacy's equivalent flow
+    always already had an active session at this point."""
+    try:
+        user = auth_service.verify_email(db, data.token)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from None
+
+    access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db, user
+    )
+    return _build_login_response(access_token, session_id, refresh_secret)
+
+
+@auth_router.post("/forgot-password")
+def forgot_password(
+    data: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, str]:
+    """Always responds 200 regardless of whether the email is registered
+    -- prevents account enumeration (1:1 Legacy UX, even though Legacy's
+    own server-side validation actually leaks this via a distinct
+    "passwords.user" error; the neutral-response behavior is the
+    hardening, not a Legacy replication)."""
+    token = auth_service.request_password_reset(db, data.email)
+    if token is not None:
+        settings = get_settings()
+        base_url = require_setting(
+            settings.frontend_reset_password_url, "FRONTEND_RESET_PASSWORD_URL"
+        )
+        reset_url = f"{base_url}?{urlencode({'token': token, 'email': data.email})}"
+        background_tasks.add_task(
+            mailer.send_password_reset_email, data.email, reset_url
+        )
+    return {
+        "status": "ok",
+        "message": (
+            "Falls die E-Mail-Adresse registriert ist, wurde ein Reset-Link versendet."
+        ),
+    }
+
+
+@auth_router.post("/reset-password")
+def reset_password(
+    data: ResetPasswordRequest, db: Annotated[Session, Depends(get_db)]
+) -> dict[str, str]:
+    try:
+        auth_service.execute_password_reset(db, data.email, data.token, data.password)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from None
+    return {"status": "ok", "message": "Das Passwort wurde zurückgesetzt."}
+
+
+@auth_router.post("/google/callback")
+def google_callback(
+    data: GoogleCallbackRequest, db: Annotated[Session, Depends(get_db)]
+) -> JSONResponse:
+    """Direct login via an existing Google binding. No Legacy-equivalent
+    redirect/callback dance (Socialite's server-side OAuth code exchange
+    needs session-stored CSRF `state`, which doesn't cleanly exist in a
+    stateless-JWT backend) -- uses Google Identity Services' ID-token
+    ("credential") flow instead, 1:1 the simpler pattern already proven
+    for this exact use case. Same business capability (log in if already
+    linked), leaner mechanism."""
+    try:
+        user = auth_service.authenticate_google_user(db, data.credential)
+    except AccountNotLinkedError:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": "ACCOUNT_NOT_LINKED"},
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+        ) from None
+
+    access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db, user
+    )
+    return _build_login_response(access_token, session_id, refresh_secret)
+
+
+@auth_router.post("/google/link")
+def google_link(
+    data: GoogleLinkRequest, db: Annotated[Session, Depends(get_db)]
+) -> JSONResponse:
+    try:
+        user = auth_service.link_google_account(
+            db, data.credential, data.email, data.password
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+        ) from None
+
+    access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db, user
+    )
+    return _build_login_response(access_token, session_id, refresh_secret)
+
+
+@auth_router.delete("/oauth2/{binding_id}")
+def disconnect_oauth2_binding(
+    binding_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, str]:
+    """IDOR-fixed replacement for Legacy's `oauth2disconnect($id)` -- see
+    auth_service.unlink_oauth_binding for the vulnerability this closes.
+    """
+    try:
+        auth_service.unlink_oauth_binding(db, binding_id, current_user.id)
+    except OauthBindingNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Nicht gefunden."
+        ) from None
+    return {"status": "ok", "message": "Google-Verknüpfung wurde erfolgreich gelöst."}

@@ -7,6 +7,7 @@ from typing import cast
 
 import bcrypt
 import jwt
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.core.config import get_settings
 
@@ -92,3 +93,56 @@ def parse_refresh_cookie(cookie_value: str) -> tuple[str, str]:
         msg = "Malformed refresh cookie"
         raise ValueError(msg)
     return parts[0], parts[1]
+
+
+_EMAIL_VERIFICATION_SALT = "email-verification"
+_email_verification_serializer = URLSafeTimedSerializer(
+    SECRET_KEY, salt=_EMAIL_VERIFICATION_SALT
+)
+
+
+class InvalidVerificationTokenError(Exception):
+    """Token is malformed, expired, or was tampered with."""
+
+
+def create_email_verification_token(user_id: int, email: str) -> str:
+    """Mirrors Legacy's Laravel Signed URL for email verification 1:1
+    (Illuminate\\Auth\\Notifications\\VerifyEmail): payload is
+    {user_id, sha1(email)}. sha1 here is only a cheap "has the email
+    changed since" fingerprint, not a security boundary -- tamper
+    protection comes from itsdangerous' HMAC signature around the whole
+    payload, not from sha1's collision resistance."""
+    email_hash = hashlib.sha1(email.encode(), usedforsecurity=False).hexdigest()
+    return _email_verification_serializer.dumps(
+        {"user_id": user_id, "email_hash": email_hash}
+    )
+
+
+def decode_email_verification_token(
+    token: str, max_age_seconds: int
+) -> tuple[int, str]:
+    try:
+        payload = _email_verification_serializer.loads(token, max_age=max_age_seconds)
+    except (BadSignature, SignatureExpired):
+        raise InvalidVerificationTokenError from None
+    return payload["user_id"], payload["email_hash"]
+
+
+def hash_email_for_verification(email: str) -> str:
+    return hashlib.sha1(email.encode(), usedforsecurity=False).hexdigest()
+
+
+def generate_reset_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_reset_token(token: str) -> str:
+    # Deliberate hardening over a plaintext-stored reset token: a random
+    # secret sitting in the DB in the clear is an avoidable risk (DB
+    # backup leak, overly-broad admin access) for a two-line fix -- same
+    # hash-before-persist pattern already used for refresh secrets above.
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def verify_reset_token(plain: str, hashed: str) -> bool:
+    return hashlib.sha256(plain.encode()).hexdigest() == hashed

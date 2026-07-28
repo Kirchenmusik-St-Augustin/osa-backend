@@ -7,7 +7,10 @@ main.py) -- 1:1 vb-api pattern (app/db/base.py)."""
 
 from app.db.database import Base  # noqa: F401
 from app.db.models.auth_log import AuthLog  # noqa: F401
+from app.db.models.oauth2_binding import Oauth2Binding  # noqa: F401
+from app.db.models.password_reset_token import PasswordResetToken  # noqa: F401
 from app.db.models.personal_access_token import PersonalAccessToken  # noqa: F401
 from app.db.models.role import Role  # noqa: F401
+from app.db.models.sent_email import SentEmail  # noqa: F401
 from app.db.models.user import User  # noqa: F401
 from app.db.models.user_role import UserRole  # noqa: F401

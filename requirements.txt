@@ -8,3 +8,8 @@ bcrypt
 PyJWT
 python-multipart
 slowapi
+jinja2
+google-auth
+requests
+itsdangerous
+email-validator

@@ -1,3 +1,11 @@
+import uuid
+from datetime import UTC, datetime
+from unittest.mock import patch
+
+import pytest
+from sqlalchemy import select
+
+from app.db.models.oauth2_binding import Oauth2Binding
 from app.services import auth_service
 
 
@@ -181,3 +189,343 @@ async def test_get_current_user_rejects_locked_account_mid_session(
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Benutzerkonto gesperrt."
+
+
+# ---------------------------------------------------------------------------
+# Registration
+# ---------------------------------------------------------------------------
+
+
+def _com_email() -> str:
+    # email-validator (backing Pydantic's EmailStr, used by every JSON
+    # body below except /auth/login's form-encoded username) hard-rejects
+    # the RFC 2606 reserved .test TLD that make_user()'s own default uses.
+    return f"user-{uuid.uuid4().hex[:8]}@example.com"
+
+
+def _registration_payload(**overrides: object) -> dict[str, object]:
+    unique = uuid.uuid4().hex[:8]
+    payload: dict[str, object] = {
+        "surname": f"muster{unique}",
+        "givenname": f"max{unique}",
+        "email": f"max.muster.{unique}@example.com",
+        "phone": "+43 660 1234567",
+        "password": "Passw0rd1",
+        "password_confirmation": "Passw0rd1",
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def test_register_success_auto_logs_in_and_notifies_disponent(client):
+    with patch("app.core.mailer.send_new_registration_notice") as mock_notify:
+        response = await client.post("/auth/register", json=_registration_payload())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["access_token"]
+    assert "refresh_token" in response.cookies
+    mock_notify.assert_called_once()
+
+
+async def test_register_rejects_duplicate_email(client):
+    payload = _registration_payload()
+    with patch("app.core.mailer.send_new_registration_notice"):
+        first = await client.post("/auth/register", json=payload)
+    assert first.status_code == 200
+
+    with patch("app.core.mailer.send_new_registration_notice"):
+        second = await client.post(
+            "/auth/register",
+            json=_registration_payload(
+                surname="Andere", givenname="Person", email=payload["email"].upper()
+            ),
+        )
+
+    assert second.status_code == 422
+    detail = second.json()["detail"]
+    assert any(err["loc"] == ["body", "email"] for err in detail)
+
+
+async def test_register_rejects_weak_password(client):
+    response = await client.post(
+        "/auth/register",
+        json=_registration_payload(password="short", password_confirmation="short"),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any("Richtlinien" in err["msg"] for err in detail)
+
+
+async def test_register_rejects_mismatched_password_confirmation(client):
+    response = await client.post(
+        "/auth/register",
+        json=_registration_payload(password_confirmation="Different1"),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any("Bestätigung" in err["msg"] for err in detail)
+
+
+async def test_register_rejects_invalid_phone(client):
+    response = await client.post(
+        "/auth/register", json=_registration_payload(phone="not-a-phone!!")
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any("Telefonnummer" in err["msg"] for err in detail)
+
+
+# ---------------------------------------------------------------------------
+# Email verification
+# ---------------------------------------------------------------------------
+
+
+async def test_verify_email_success_auto_logs_in(client, make_user):
+    user = make_user()
+    token = auth_service.build_email_verification_token(user)
+
+    response = await client.post("/auth/verify-email", json={"token": token})
+
+    assert response.status_code == 200
+    assert response.json()["access_token"]
+
+
+async def test_verify_email_rejects_invalid_token(client):
+    response = await client.post(
+        "/auth/verify-email", json={"token": "not-a-real-token"}
+    )
+
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Password reset
+# ---------------------------------------------------------------------------
+
+
+async def test_forgot_password_returns_200_for_unknown_email(client):
+    response = await client.post(
+        "/auth/forgot-password", json={"email": "nobody@example.com"}
+    )
+
+    assert response.status_code == 200
+
+
+async def test_forgot_password_queues_reset_mail_for_known_user(
+    client, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv(
+        "FRONTEND_RESET_PASSWORD_URL",
+        "https://einteilung.hochamt.at.dev.schimpl.cc/reset-password",
+    )
+    user = make_user(email=_com_email())
+
+    with patch("app.core.mailer.send_password_reset_email") as mock_send:
+        response = await client.post(
+            "/auth/forgot-password", json={"email": user.email}
+        )
+
+    assert response.status_code == 200
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[0] == user.email
+
+
+async def test_reset_password_success(client, make_user, db_session):
+    user = make_user(password="old-password", email=_com_email())
+    token = auth_service.request_password_reset(db_session, user.email)
+
+    response = await client.post(
+        "/auth/reset-password",
+        json={
+            "email": user.email,
+            "token": token,
+            "password": "Passw0rd1",
+            "password_confirmation": "Passw0rd1",
+        },
+    )
+
+    assert response.status_code == 200
+
+    login_response = await client.post(
+        "/auth/login", data={"username": user.email, "password": "Passw0rd1"}
+    )
+    assert login_response.status_code == 200
+
+
+async def test_reset_password_rejects_invalid_token(client, make_user):
+    user = make_user(email=_com_email())
+
+    response = await client.post(
+        "/auth/reset-password",
+        json={
+            "email": user.email,
+            "token": "bogus-token",
+            "password": "Passw0rd1",
+            "password_confirmation": "Passw0rd1",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth
+# ---------------------------------------------------------------------------
+
+
+async def test_google_callback_returns_404_when_not_linked(
+    client, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    with patch(
+        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        return_value={"sub": "google-not-linked", "name": "Nobody"},
+    ):
+        response = await client.post(
+            "/auth/google/callback", json={"credential": "fake-credential"}
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "ACCOUNT_NOT_LINKED"
+
+
+async def test_google_link_then_callback_logs_in(
+    client, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    user = make_user(password="correct-password", email=_com_email())
+    google_id_info = {"sub": "google-round-trip", "name": "Max Muster"}
+
+    with patch(
+        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        return_value=google_id_info,
+    ):
+        link_response = await client.post(
+            "/auth/google/link",
+            json={
+                "credential": "fake-credential",
+                "email": user.email,
+                "password": "correct-password",
+            },
+        )
+        assert link_response.status_code == 200
+
+        callback_response = await client.post(
+            "/auth/google/callback", json={"credential": "fake-credential"}
+        )
+
+    assert callback_response.status_code == 200
+    assert callback_response.json()["access_token"]
+
+
+async def test_google_link_rejects_wrong_password(
+    client, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    user = make_user(password="correct-password", email=_com_email())
+
+    response = await client.post(
+        "/auth/google/link",
+        json={
+            "credential": "fake-credential",
+            "email": user.email,
+            "password": "wrong-password",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+async def test_oauth2_disconnect_removes_own_binding(
+    client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    user = make_user(password="correct-password", email=_com_email())
+    login_response = await client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    access_token = login_response.json()["access_token"]
+
+    with patch(
+        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        return_value={"sub": "google-disconnect-own", "name": "Max Muster"},
+    ):
+        await client.post(
+            "/auth/google/link",
+            json={
+                "credential": "fake-credential",
+                "email": user.email,
+                "password": "correct-password",
+            },
+        )
+
+    binding_id = (
+        db_session.execute(
+            select(Oauth2Binding).where(Oauth2Binding.local_id == user.id)
+        )
+        .scalar_one()
+        .id
+    )
+
+    response = await client.delete(
+        f"/auth/oauth2/{binding_id}",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+
+
+async def test_oauth2_disconnect_rejects_binding_owned_by_another_user(
+    client, make_user, db_session
+):
+    """IDOR regression at the HTTP layer: an authenticated attacker must
+    get an identical 404 (not 403) when targeting a binding ID that
+    belongs to someone else -- no enumeration signal."""
+    victim = make_user()
+    attacker = make_user(password="attacker-password")
+    db_session.add(
+        Oauth2Binding(
+            provider="google",
+            remote_id=f"google-victim-{uuid.uuid4().hex[:8]}",
+            remote_name="Victim",
+            local_id=victim.id,
+            bound_at=datetime.now(UTC),
+            lastuse_at=datetime.now(UTC),
+        )
+    )
+    db_session.commit()
+    binding_id = (
+        db_session.execute(
+            select(Oauth2Binding).where(Oauth2Binding.local_id == victim.id)
+        )
+        .scalar_one()
+        .id
+    )
+
+    login_response = await client.post(
+        "/auth/login",
+        data={"username": attacker.email, "password": "attacker-password"},
+    )
+    attacker_token = login_response.json()["access_token"]
+
+    response = await client.delete(
+        f"/auth/oauth2/{binding_id}",
+        headers={"Authorization": f"Bearer {attacker_token}"},
+    )
+
+    assert response.status_code == 404
+
+    still_present = db_session.execute(
+        select(Oauth2Binding).where(Oauth2Binding.id == binding_id)
+    ).scalar_one_or_none()
+    assert still_present is not None
+
+
+async def test_oauth2_disconnect_requires_authentication(client):
+    response = await client.delete("/auth/oauth2/1")
+
+    assert response.status_code == 401

@@ -83,3 +83,47 @@ def test_parse_refresh_cookie_rejects_malformed_value():
 
     with pytest.raises(ValueError, match="Malformed refresh cookie"):
         security.parse_refresh_cookie(":only-two")
+
+
+def test_email_verification_token_roundtrip():
+    token = security.create_email_verification_token(42, "user@example.test")
+
+    user_id, email_hash = security.decode_email_verification_token(
+        token, max_age_seconds=3600
+    )
+
+    assert user_id == 42
+    assert email_hash == security.hash_email_for_verification("user@example.test")
+
+
+def test_email_verification_token_rejects_expired_token():
+    token = security.create_email_verification_token(42, "user@example.test")
+
+    with pytest.raises(security.InvalidVerificationTokenError):
+        security.decode_email_verification_token(token, max_age_seconds=-1)
+
+
+def test_email_verification_token_rejects_tampered_token():
+    token = security.create_email_verification_token(42, "user@example.test")
+
+    with pytest.raises(security.InvalidVerificationTokenError):
+        security.decode_email_verification_token(
+            token + "tampered", max_age_seconds=3600
+        )
+
+
+def test_hash_email_for_verification_is_case_sensitive_and_deterministic():
+    first = security.hash_email_for_verification("user@example.test")
+    second = security.hash_email_for_verification("user@example.test")
+    different = security.hash_email_for_verification("USER@example.test")
+
+    assert first == second
+    assert first != different
+
+
+def test_generate_and_hash_reset_token_roundtrip():
+    token = security.generate_reset_token()
+    hashed = security.hash_reset_token(token)
+
+    assert security.verify_reset_token(token, hashed)
+    assert not security.verify_reset_token("wrong-token", hashed)
