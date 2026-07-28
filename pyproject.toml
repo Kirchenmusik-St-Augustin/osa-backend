@@ -1,0 +1,142 @@
+[project]
+name = "osa-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    # Base rules
+    "E", "F", "I", "B", "S", "UP", "SIM", "PT", "C90", "FAST", "RUF", "ANN",
+    "RET", "ARG", "ERA", "T20", "BLE", "DTZ", "A", "PTH", "FBT", "N", "TRY",
+
+    # Strictness rules ("Boss Mode")
+    "PERF",   # Performance anti-patterns (e.g., inefficient loops/casts)
+    "ASYNC",  # Async/await errors (essential for FastAPI)
+    "C4",     # More efficient comprehensions instead of list()/dict()
+    "TCH",    # Force type imports cleanly into TYPE_CHECKING blocks
+    "SLF",    # Encapsulate private attributes (no outside access to _variables)
+    "PL",     # Pylint (very strict architecture and logic checks)
+    "EM",     # Clean exception messages (no f-strings in raise)
+    "PIE",    # Various code simplifications
+    "FURB",   # Modernization suggestions (Refurb)
+    "ISC",    # Prevents accidental string concatenation
+    "TID",    # Ban specific APIs (e.g. SessionLocal outside Depends(get_db))
+]
+ignore = [
+    "E402",    # logging setup before imports (practical exception)
+    "E741",    # ambiguous-variable-name (practical exception)
+    "PLR2004", # Allow "Magic Numbers" (e.g., if status_code == 200)
+    "PLR0913", # Allow > 5 arguments (unavoidable for FastAPI dependencies)
+]
+
+[tool.ruff.lint.flake8-annotations]
+mypy-init-return = true
+suppress-dummy-args = true
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.Header", "fastapi.Cookie", "fastapi.Security",
+    "Depends", "Query", "Path", "Body", "Header", "Cookie", "Security",
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Established convention (ported from the vb-fastapi-vue sister project):
+# once app/db/database.py and app/core/config.py exist, these bans become
+# active. Keep the dotted paths in sync with the actual module layout as
+# the app is scaffolded.
+"app.db.database.SessionLocal".msg = "Direct SessionLocal instantiation is banned — inject the DB session via FastAPI Depends(get_db)! (Exception: background jobs without a request context, see per-file-ignores.)"
+"os.environ".msg = "Direct os.environ access is banned — read config via app.core.config.get_settings() instead! (Exception: standalone scripts/tests without Settings access, see per-file-ignores.)"
+"os.getenv".msg = "Direct os.getenv() is banned — read config via app.core.config.get_settings() instead! (Exception: standalone scripts/tests without Settings access, see per-file-ignores.)"
+
+[tool.ruff.lint.mccabe]
+# 8 is the sweet spot: prevents monster functions, but allows
+# linear FastAPI endpoints without enforcing "helper spaghetti".
+max-complexity = 8
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are allowed to be more robust and repetitive. TID251: tests
+# deliberately drive Settings through monkeypatch.setenv()/patch.dict(
+# os.environ, ...) — once get_settings() has an lru_cache cleared per-test
+# (see the vb-fastapi-vue conftest.py pattern for the reference fixture),
+# direct env manipulation is the whole testing strategy, not a violation.
+"tests/**" = ["S101", "S105", "S106", "ANN", "ARG002", "TRY", "FBT", "N802", "PLR", "SLF001", "PLW0603", "TID251"]
+# alembic/env.py runs as Alembic's own CLI entry point, outside the
+# FastAPI app process — it reads DATABASE_URL directly rather than via
+# app.core.config.get_settings().
+"alembic/**" = ["F401", "UP035", "ANN", "PLR0915", "TID251"]
+"scripts/**" = ["T201", "FBT", "PLR0915"]
+# Declarative models use `from __future__ import annotations`, so SQLAlchemy
+# resolves `Mapped[...]` annotations at mapper-configure time by evaluating
+# the stringified annotation against the module's real (non-TYPE_CHECKING)
+# globals. Hiding stdlib types like `datetime`/`Decimal` behind
+# `TYPE_CHECKING` breaks that resolution with a runtime `NameError` —
+# verified empirically in vb-fastapi-vue before adding this ignore there.
+"app/models/**" = ["TC003"]
+# Add SessionLocal-direct-instantiation exceptions here as background-job
+# files without a request context get created (middleware logging, cron
+# jobs, background mail sending) — same pattern as the sister project's
+# activity_logger.py/scheduler.py/mailer.py exceptions. None exist yet.
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=app --cov=scripts --cov=main --cov-report=term-missing --cov-report=xml --cov-fail-under=81"
+asyncio_mode = "auto"
+filterwarnings = [
+    "error",
+    "default::DeprecationWarning",
+    "error::DeprecationWarning:app.*",
+]
+
+[tool.coverage.run]
+source = ["app", "scripts", "main.py"]
+omit = [
+    "alembic/*",
+    "tests/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "def __repr__",
+    "raise NotImplementedError",
+    "pass",
+]
+
+[tool.pyright]
+include = ["app", "scripts"]
+exclude = [
+    "alembic",
+    "**/__pycache__",
+]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+useLibraryCodeForTypes = true
+reportMissingTypeStubs = false
+
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+
+# --- DEAD CODE & UNREACHABLE (Pyright) ---
+reportUnreachable = "error"
+reportUnusedImport = "error"
+reportUnusedVariable = "error"
+reportUnusedFunction = "error"
+reportUnusedClass = "error"

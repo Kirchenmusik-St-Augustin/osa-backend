@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+.git
+.gitignore
+.local
+.cache
+.ruff_cache
+.env
+.env.example
+tests
+Dockerfile
+*.md
+deploy
