@@ -15,7 +15,10 @@ from app.services.artist_service import label_for
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 60
-_DURATION_MIN = 0
+# Legacy quirk, confirmed 1:1: Propriumwork requires min:1 here, while
+# Ordinariumwork (ordinariumwork_service.py) allows min:0 -- not a typo,
+# the two SaveRequest classes genuinely differ on this bound.
+_DURATION_MIN = 1
 _DURATION_MAX = 999
 _SEARCH_RESULT_LIMIT = 20
 _NAME_LENGTH_ERROR = (

@@ -151,6 +151,50 @@ class TestValidation:
         assert response.status_code == 422
 
 
+class TestListComposers:
+    def test_requires_authentication(self, client):
+        response = client.get("/artists/composers")
+        assert response.status_code == 401
+
+    def test_only_returns_composer_flagged_artists(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        composer_name = _unique("Komponist")
+        client.post(
+            "/artists",
+            json={
+                "surname": composer_name,
+                "givenname": _unique(),
+                "description": None,
+                "birthyear": None,
+                "deathyear": None,
+                "composer": True,
+                "conductor": False,
+            },
+            headers=headers,
+        )
+        conductor_only_name = _unique("Dirigent")
+        client.post(
+            "/artists",
+            json={
+                "surname": conductor_only_name,
+                "givenname": _unique(),
+                "description": None,
+                "birthyear": None,
+                "deathyear": None,
+                "composer": False,
+                "conductor": True,
+            },
+            headers=headers,
+        )
+
+        response = client.get("/artists/composers", headers=headers)
+
+        assert response.status_code == 200
+        surnames = [item["label"].split(",")[0] for item in response.json()]
+        assert composer_name.upper() in surnames
+        assert conductor_only_name.upper() not in surnames
+
+
 class TestDeleteInUse:
     def test_delete_blocked_while_ordinariumwork_references_artist(
         self, client, make_user

@@ -114,7 +114,22 @@ class TestCreatePropriumwork:
             )
 
         assert exc_info.value.errors == [
-            ("duration", "Muss zwischen 0 und 999 liegen.")
+            ("duration", "Muss zwischen 1 und 999 liegen.")
+        ]
+
+    def test_rejects_zero_duration(self, db_session: Session):
+        """Legacy quirk: unlike Ordinariumwork, Propriumwork's duration
+        lower bound is 1, not 0 -- a duration of exactly 0 is invalid."""
+        artist_id = _make_artist(db_session)
+        with pytest.raises(
+            propriumwork_service.PropriumworkValidationError
+        ) as exc_info:
+            propriumwork_service.create_propriumwork(
+                db_session, _request(artist_id, duration=0)
+            )
+
+        assert exc_info.value.errors == [
+            ("duration", "Muss zwischen 1 und 999 liegen.")
         ]
 
 

@@ -65,6 +65,17 @@ def create_artist(
     return _to_response(artist)
 
 
+@artist_router.get("/composers")
+def list_composer_artists(
+    db: Annotated[Session, Depends(get_db)],
+    _current_user: Annotated[User, _MAINTAIN],
+) -> list[ArtistSearchResult]:
+    artists = artist_service.list_composer_artists(db)
+    return [
+        ArtistSearchResult(id=artist.id, label=label_for(artist)) for artist in artists
+    ]
+
+
 @artist_router.get("/{artist_id}")
 def get_artist(
     artist_id: int,

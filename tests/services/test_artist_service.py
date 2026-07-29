@@ -31,6 +31,23 @@ def _request(
     return ArtistRequest(**defaults)  # type: ignore[arg-type]
 
 
+class TestListComposerArtists:
+    def test_excludes_conductor_only_artists(self, db_session: Session):
+        composer = artist_service.create_artist(
+            db_session, _request(surname=_unique("Composer"), composer=True)
+        )
+        artist_service.create_artist(
+            db_session,
+            _request(surname=_unique("Conductor"), composer=False, conductor=True),
+        )
+
+        results = artist_service.list_composer_artists(db_session)
+
+        ids = [artist.id for artist in results]
+        assert composer.id in ids
+        assert all(artist.composer for artist in results)
+
+
 class TestSearchArtists:
     def test_empty_query_returns_empty(self, db_session: Session):
         assert artist_service.search_artists(db_session, "") == []

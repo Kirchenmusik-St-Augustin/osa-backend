@@ -8,6 +8,7 @@ from app.api.error_responses import field_errors_to_detail
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.ordinariumwork import (
+    OrdinariumworkAvailablePositionsOutput,
     OrdinariumworkRequest,
     OrdinariumworkResponse,
     OrdinariumworkSearchResult,
@@ -47,6 +48,14 @@ def create_ordinariumwork(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=field_errors_to_detail(exc.errors),
         ) from None
+
+
+@ordinariumwork_router.get("/available-positions")
+def get_available_positions(
+    db: Annotated[Session, Depends(get_db)],
+    _current_user: Annotated[User, _MAINTAIN],
+) -> OrdinariumworkAvailablePositionsOutput:
+    return ordinariumwork_service.get_available_positions(db)
 
 
 @ordinariumwork_router.get("/{ordinariumwork_id}")

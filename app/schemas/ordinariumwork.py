@@ -46,3 +46,13 @@ class OrdinariumworkSetupOutput(BaseModel):
 class OrdinariumworkSearchResult(BaseModel):
     id: int
     label: str
+
+
+class AvailablePositionOutput(BaseModel):
+    id: int
+    name: str
+
+
+class OrdinariumworkAvailablePositionsOutput(BaseModel):
+    instruments: list[AvailablePositionOutput]
+    voices: list[AvailablePositionOutput]

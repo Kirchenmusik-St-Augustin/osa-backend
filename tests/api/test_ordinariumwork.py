@@ -146,6 +146,21 @@ class TestCrudRoundtrip:
         assert response.status_code == 404
 
 
+class TestAvailablePositions:
+    def test_requires_authentication(self, client):
+        response = client.get("/ordinariumworks/available-positions")
+        assert response.status_code == 401
+
+    def test_returns_instruments_and_voices(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        instrument_id = _make_instrument(client, make_user)
+
+        response = client.get("/ordinariumworks/available-positions", headers=headers)
+
+        assert response.status_code == 200
+        assert instrument_id in [item["id"] for item in response.json()["instruments"]]
+
+
 class TestSetup:
     def test_create_with_setup_and_read_it_back(self, client, make_user):
         headers = _auth_headers(client, make_user)

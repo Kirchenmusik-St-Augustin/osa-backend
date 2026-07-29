@@ -92,6 +92,21 @@ def _get_or_404(db: Session, artist_id: int) -> Artist:
     return artist
 
 
+def list_composer_artists(db: Session) -> Sequence[Artist]:
+    """Dropdown source for Ordinariumwork/Propriumwork's "Komponist" select
+    -- mirrors Legacy's `Artist::ofType('composer')->get()`, which is
+    embedded directly in those controllers' ShowForm resources rather than
+    gated under ArtistController itself (see artistMaintain/
+    ordinariumworkMaintain/propriumworkMaintain in permission_service.py,
+    which share the identical planner/disponent condition)."""
+    stmt = (
+        select(Artist)
+        .where(Artist.composer.is_(True))
+        .order_by(Artist.surname, Artist.givenname)
+    )
+    return db.execute(stmt).scalars().all()
+
+
 def search_artists(db: Session, query: str) -> Sequence[Artist]:
     """Real indexed-ish DB query, replacing Legacy's `Artist::search()`
     anti-pattern (loads the entire table into PHP, filters in memory).

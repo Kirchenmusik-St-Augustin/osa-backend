@@ -9,7 +9,10 @@ from app.db.models.instrument import Instrument
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
 from app.db.models.voice import Voice
+from app.schemas.coreelement import CoreelementType
 from app.schemas.ordinariumwork import (
+    AvailablePositionOutput,
+    OrdinariumworkAvailablePositionsOutput,
     OrdinariumworkPositionInput,
     OrdinariumworkPositionOutput,
     OrdinariumworkRequest,
@@ -18,6 +21,7 @@ from app.schemas.ordinariumwork import (
     OrdinariumworkSetupOutput,
 )
 from app.services.artist_service import label_for
+from app.services.coreelement_service import list_coreelements
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 60
@@ -214,6 +218,24 @@ def search_ordinariumworks(
     ]
 
 
+def get_available_positions(db: Session) -> OrdinariumworkAvailablePositionsOutput:
+    """Instrument/Voice dropdown source for the setup editor -- mirrors
+    Legacy's `Instrument::all()`/`Voice::all()` embedded directly in
+    Ordinariumwork's ShowForm resource (gated by ordinariumworkMaintain,
+    not instrumentMaintain/voiceMaintain -- Legacy performs zero
+    cross-model authorization here). Reuses coreelement_service's
+    `order`-column ordering for consistency with the Coreelement admin
+    pages (Schritt 3)."""
+    instruments = list_coreelements(db, CoreelementType.instrument)
+    voices = list_coreelements(db, CoreelementType.voice)
+    return OrdinariumworkAvailablePositionsOutput(
+        instruments=[
+            AvailablePositionOutput(id=item.id, name=item.name) for item in instruments
+        ],
+        voices=[AvailablePositionOutput(id=item.id, name=item.name) for item in voices],
+    )
+
+
 def create_ordinariumwork(
     db: Session, data: OrdinariumworkRequest
 ) -> OrdinariumworkResponse:
@@ -263,6 +285,15 @@ def get_ordinariumwork(db: Session, ordinariumwork_id: int) -> OrdinariumworkRes
 
 
 def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
+    """Output order follows the Instrument/Voice's own `order` column, not
+    pivot-row insertion order -- Legacy's Instrument/Voice models carry a
+    global `OrderByOrder` scope (HasCoreelementFeatures trait) that applies
+    to EVERY query against them, including the `morphedByMany` relation
+    query behind `Ordinariumwork::setup()`. Confirmed live against
+    production data (2026-07-29): a real Ordinariumwork's Instrumente table
+    showed Konzertmeister/Violine 1/Violine 2/Violoncello/Contrabass/Orgel
+    in exactly their coreelement `order` sequence (0/1/2/4/6/31), not their
+    `id` sequence (18/35/2/4/5/1, unrelated) or pivot-row insertion order."""
     _get_or_404(db, ordinariumwork_id)
     positions = (
         db.execute(
@@ -280,25 +311,26 @@ def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
         ("instruments", Instrument, instruments_out),
         ("voices", Voice, voices_out),
     ):
-        matching = [p for p in positions if p.position_type == position_type]
-        ids = [p.position_id for p in matching]
-        items_by_id = (
-            {
-                item.id: item
-                for item in db.execute(select(model).where(model.id.in_(ids)))
-                .scalars()
-                .all()
-            }
-            if ids
-            else {}
+        quantity_by_id = {
+            p.position_id: p.quantity
+            for p in positions
+            if p.position_type == position_type
+        }
+        if not quantity_by_id:
+            continue
+        items = (
+            db.execute(
+                select(model)
+                .where(model.id.in_(quantity_by_id))
+                .order_by(model.order, model.id)
+            )
+            .scalars()
+            .all()
         )
-        for position in matching:
-            item = items_by_id.get(position.position_id)
-            if item is None:
-                continue
+        for item in items:
             bucket.append(
                 OrdinariumworkPositionOutput(
-                    id=position.position_id, name=item.name, quantity=position.quantity
+                    id=item.id, name=item.name, quantity=quantity_by_id[item.id]
                 )
             )
 

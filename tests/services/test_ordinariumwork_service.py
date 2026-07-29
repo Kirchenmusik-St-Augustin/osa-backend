@@ -65,6 +65,27 @@ def _request(
     return OrdinariumworkRequest(**defaults)  # type: ignore[arg-type]
 
 
+class TestGetAvailablePositions:
+    def test_returns_instruments_and_voices_ordered_by_core_element_order(
+        self, db_session: Session
+    ):
+        # Shared SQLite test DB has no per-test rollback (see conftest.py) --
+        # other tests' Instrument/Voice rows persist across this whole
+        # file, so assertions must check relative order/membership, not
+        # exact list equality.
+        first = _make_instrument(db_session)
+        second = _make_instrument(db_session)
+        second.order = -1
+        db_session.commit()
+        voice = _make_voice(db_session)
+
+        result = ordinariumwork_service.get_available_positions(db_session)
+
+        instrument_ids = [item.id for item in result.instruments]
+        assert instrument_ids.index(second.id) < instrument_ids.index(first.id)
+        assert voice.id in [item.id for item in result.voices]
+
+
 class TestSearchOrdinariumworks:
     def test_empty_query_returns_empty(self, db_session: Session):
         assert ordinariumwork_service.search_ordinariumworks(db_session, "") == []
@@ -252,6 +273,42 @@ class TestGetSetup:
         setup = ordinariumwork_service.get_setup(db_session, created.id)
 
         assert (setup.instruments, setup.voices) == ([], [])
+
+    def test_output_order_follows_instrument_order_column_not_insertion_order(
+        self, db_session: Session
+    ):
+        """Regression guard for a real parity bug found via Playwright
+        against production data (2026-07-29): Legacy's Instrument/Voice
+        models carry a global order-by-`order` scope that applies even to
+        the Ordinariumwork setup relation -- the setup table's row order
+        must follow each item's own `order` column, not pivot-row insertion
+        order or `id`."""
+        artist_id = _make_artist(db_session)
+        first_added = _make_instrument(db_session)
+        first_added.order = 10
+        second_added = _make_instrument(db_session)
+        second_added.order = 1
+        db_session.commit()
+
+        created = ordinariumwork_service.create_ordinariumwork(
+            db_session,
+            _request(
+                artist_id,
+                setup=OrdinariumworkSetupInput(
+                    instruments=[
+                        OrdinariumworkPositionInput(id=first_added.id, quantity=1),
+                        OrdinariumworkPositionInput(id=second_added.id, quantity=2),
+                    ]
+                ),
+            ),
+        )
+
+        setup = ordinariumwork_service.get_setup(db_session, created.id)
+
+        assert [item.id for item in setup.instruments] == [
+            second_added.id,
+            first_added.id,
+        ]
 
 
 class TestDeleteOrdinariumwork:
