@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 
 import jwt
@@ -66,11 +67,12 @@ def test_generate_and_hash_refresh_secret_roundtrip():
 
 
 def test_build_and_parse_refresh_cookie_roundtrip():
-    cookie_value = security.build_refresh_cookie_value("session-id", "refresh-secret")
+    session_id = str(uuid.uuid4())
+    cookie_value = security.build_refresh_cookie_value(session_id, "refresh-secret")
 
-    session_id, refresh_secret = security.parse_refresh_cookie(cookie_value)
+    parsed_session_id, refresh_secret = security.parse_refresh_cookie(cookie_value)
 
-    assert session_id == "session-id"
+    assert parsed_session_id == session_id
     assert refresh_secret == "refresh-secret"
 
 
@@ -83,6 +85,11 @@ def test_parse_refresh_cookie_rejects_malformed_value():
 
     with pytest.raises(ValueError, match="Malformed refresh cookie"):
         security.parse_refresh_cookie(":only-two")
+
+
+def test_parse_refresh_cookie_rejects_non_uuid_session_id():
+    with pytest.raises(ValueError, match="Malformed refresh cookie"):
+        security.parse_refresh_cookie("not-a-uuid:refresh-secret")
 
 
 def test_email_verification_token_roundtrip():

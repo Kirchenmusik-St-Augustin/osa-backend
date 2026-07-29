@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import logging
 import secrets
 import uuid
@@ -80,7 +81,7 @@ def hash_refresh_secret(secret: str) -> str:
 
 
 def verify_refresh_secret(plain: str, hashed: str) -> bool:
-    return hashlib.sha256(plain.encode()).hexdigest() == hashed
+    return hmac.compare_digest(hashlib.sha256(plain.encode()).hexdigest(), hashed)
 
 
 def build_refresh_cookie_value(session_id: str, refresh_secret: str) -> str:
@@ -92,7 +93,19 @@ def parse_refresh_cookie(cookie_value: str) -> tuple[str, str]:
     if len(parts) != 2 or not parts[0] or not parts[1]:
         msg = "Malformed refresh cookie"
         raise ValueError(msg)
-    return parts[0], parts[1]
+    session_id, refresh_secret = parts
+    # session_id is client-supplied at this point (the cookie the browser
+    # sent back) and flows straight into a DB lookup and, on success, right
+    # back into a freshly built cookie -- session_id is always a UUID4
+    # string on the way out (see create_access_token's jti), so rejecting
+    # anything else here closes that loop with an explicit, local check
+    # instead of relying on the later DB lookup as an implicit sanitizer.
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        msg = "Malformed refresh cookie"
+        raise ValueError(msg) from None
+    return session_id, refresh_secret
 
 
 _EMAIL_VERIFICATION_SALT = "email-verification"
@@ -145,4 +158,4 @@ def hash_reset_token(token: str) -> str:
 
 
 def verify_reset_token(plain: str, hashed: str) -> bool:
-    return hashlib.sha256(plain.encode()).hexdigest() == hashed
+    return hmac.compare_digest(hashlib.sha256(plain.encode()).hexdigest(), hashed)
