@@ -1,14 +1,16 @@
 """Exercises main.py's global exception handlers on a throwaway app.
 
-httpx's ASGITransport re-raises exceptions from the app by default, which
-would bypass the handler under test entirely -- raise_app_exceptions=False
-lets the handler actually run and produce a response, same reasoning
-vb-api's own equivalent test module documents.
+Starlette's ServerErrorMiddleware re-raises the original exception under
+TestClient's default raise_server_exceptions=True regardless of a
+registered handler being present, so a handler can only be observed via
+raise_server_exceptions=False -- and doing that against the full app would
+also swallow real bugs in unrelated routes, hence the dedicated throwaway
+app (1:1 vb-api's own equivalent test module).
 """
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from httpx import ASGITransport, AsyncClient
+from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError, field_validator
 
 from main import (
@@ -63,40 +65,34 @@ def _make_test_app() -> FastAPI:
     return test_app
 
 
-async def test_validation_error_handler_returns_422_with_detail():
-    transport = ASGITransport(app=_make_test_app(), raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/raise-validation-error")
+def test_validation_error_handler_returns_422_with_detail():
+    client = TestClient(_make_test_app(), raise_server_exceptions=False)
+    response = client.get("/raise-validation-error")
 
     assert response.status_code == 422
     assert "detail" in response.json()
 
 
-async def test_unhandled_exception_handler_returns_generic_500():
-    transport = ASGITransport(app=_make_test_app(), raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.get("/raise-unhandled")
+def test_unhandled_exception_handler_returns_generic_500():
+    client = TestClient(_make_test_app(), raise_server_exceptions=False)
+    response = client.get("/raise-unhandled")
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Ein unerwarteter Fehler ist aufgetreten."}
 
 
-async def test_request_validation_error_translates_missing_field_to_german():
-    transport = ASGITransport(app=_make_test_app(), raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.post("/strict-body", json={})
+def test_request_validation_error_translates_missing_field_to_german():
+    client = TestClient(_make_test_app(), raise_server_exceptions=False)
+    response = client.post("/strict-body", json={})
 
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(err["msg"] == "Dieses Feld ist erforderlich." for err in detail)
 
 
-async def test_request_validation_error_preserves_custom_german_message():
-    transport = ASGITransport(app=_make_test_app(), raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        response = await client.post(
-            "/custom-validator-body", json={"password": "short"}
-        )
+def test_request_validation_error_preserves_custom_german_message():
+    client = TestClient(_make_test_app(), raise_server_exceptions=False)
+    response = client.post("/custom-validator-body", json={"password": "short"})
 
     assert response.status_code == 422
     detail = response.json()["detail"]

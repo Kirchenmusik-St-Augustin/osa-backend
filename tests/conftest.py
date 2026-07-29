@@ -28,16 +28,18 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
 os.environ["SECRET_KEY"] = "test-secret-key-" + "x" * 32
 
 import uuid
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from fastapi.testclient import TestClient
+from sqlalchemy import event, select
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.core.security import get_password_hash
-from app.db.database import get_db
+from app.db.database import engine, get_db
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
@@ -52,10 +54,9 @@ def _reset_settings_cache():
 
 
 @pytest.fixture
-async def client():
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
-        yield ac
+def client():
+    with TestClient(app, base_url="http://testserver") as c:
+        yield c
 
 
 @pytest.fixture
@@ -111,3 +112,40 @@ def make_user(db_session: Session) -> Callable[..., User]:
         return result.scalar_one()
 
     return _make_user
+
+
+class QueryCounter:
+    """Counts SQL statements executed on the test engine while active."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+
+@pytest.fixture
+def count_queries() -> Callable[[], Iterator["QueryCounter"]]:
+    """Yield a factory for a context manager that counts executed SQL
+    statements, e.g. `with count_queries() as counter: ...; assert
+    counter.count <= N` -- used to assert N+1 query patterns don't
+    regress (1:1 vb-api pattern, CLAUDE.md testing_constraints)."""
+
+    @contextmanager
+    def _count_queries() -> Iterator[QueryCounter]:
+        counter = QueryCounter()
+
+        def _on_execute(
+            _conn: Connection,
+            _cursor: object,
+            _statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            counter.count += 1
+
+        event.listen(engine, "before_cursor_execute", _on_execute)
+        try:
+            yield counter
+        finally:
+            event.remove(engine, "before_cursor_execute", _on_execute)
+
+    return _count_queries

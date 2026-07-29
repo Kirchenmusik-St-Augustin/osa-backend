@@ -49,10 +49,6 @@ fixture-parentheses = false
 mark-parentheses = false
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-# Established convention (ported from the vb-fastapi-vue sister project):
-# once app/db/database.py and app/core/config.py exist, these bans become
-# active. Keep the dotted paths in sync with the actual module layout as
-# the app is scaffolded.
 "app.db.database.SessionLocal".msg = "Direct SessionLocal instantiation is banned — inject the DB session via FastAPI Depends(get_db)! (Exception: background jobs without a request context, see per-file-ignores.)"
 "os.environ".msg = "Direct os.environ access is banned — read config via app.core.config.get_settings() instead! (Exception: standalone scripts/tests without Settings access, see per-file-ignores.)"
 "os.getenv".msg = "Direct os.getenv() is banned — read config via app.core.config.get_settings() instead! (Exception: standalone scripts/tests without Settings access, see per-file-ignores.)"
@@ -65,9 +61,9 @@ max-complexity = 8
 [tool.ruff.lint.per-file-ignores]
 # Tests are allowed to be more robust and repetitive. TID251: tests
 # deliberately drive Settings through monkeypatch.setenv()/patch.dict(
-# os.environ, ...) — once get_settings() has an lru_cache cleared per-test
-# (see the vb-fastapi-vue conftest.py pattern for the reference fixture),
-# direct env manipulation is the whole testing strategy, not a violation.
+# os.environ, ...) — get_settings()'s lru_cache is cleared per-test (see
+# conftest.py's _reset_settings_cache fixture), so direct env manipulation
+# is the whole testing strategy, not a violation of it.
 "tests/**" = ["S101", "S105", "S106", "S107", "ANN", "ARG002", "TRY", "FBT", "N802", "PLR", "SLF001", "PLW0603", "TID251"]
 # alembic/env.py runs as Alembic's own CLI entry point, outside the
 # FastAPI app process — it reads DATABASE_URL directly rather than via
@@ -79,8 +75,8 @@ max-complexity = 8
 # the stringified annotation against the module's real (non-TYPE_CHECKING)
 # globals. Hiding stdlib types like `datetime`/`Decimal` behind
 # `TYPE_CHECKING` breaks that resolution with a runtime `NameError` —
-# verified empirically in vb-fastapi-vue before adding this ignore there.
-"app/models/**" = ["TC003"]
+# verified empirically, not just theoretically, before adding this ignore.
+"app/db/models/**" = ["TC003"]
 # SessionLocal-direct-instantiation exceptions for background-job files
 # without a request context (no Depends(get_db) available there).
 "app/core/mailer.py" = ["TID251"]
@@ -94,7 +90,6 @@ line-ending = "auto"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=app --cov=scripts --cov=main --cov-report=term-missing --cov-report=xml --cov-fail-under=81"
-asyncio_mode = "auto"
 filterwarnings = [
     "error",
     "default::DeprecationWarning",

@@ -8,6 +8,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, oauth2_scheme
+from app.api.error_responses import field_errors_to_detail
 from app.core import mailer
 from app.core.config import get_settings, require_setting
 from app.core.rate_limit import limiter
@@ -218,15 +219,6 @@ def get_current_user_profile(
     )
 
 
-def _conflict_errors_to_detail(
-    errors: list[tuple[str, str]],
-) -> list[dict[str, object]]:
-    return [
-        {"loc": ["body", field], "msg": msg, "type": "value_error"}
-        for field, msg in errors
-    ]
-
-
 @auth_router.post("/register")
 def register(
     data: RegisterRequest,
@@ -242,7 +234,7 @@ def register(
     except RegistrationConflictError as exc:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            content={"detail": _conflict_errors_to_detail(exc.errors)},
+            content={"detail": field_errors_to_detail(exc.errors)},
         )
 
     background_tasks.add_task(

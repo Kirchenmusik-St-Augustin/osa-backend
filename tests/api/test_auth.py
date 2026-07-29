@@ -9,12 +9,10 @@ from app.db.models.oauth2_binding import Oauth2Binding
 from app.services import auth_service
 
 
-async def test_login_success_sets_refresh_cookie_and_returns_access_token(
-    client, make_user
-):
+def test_login_success_sets_refresh_cookie_and_returns_access_token(client, make_user):
     user = make_user(password="correct-password")
 
-    response = await client.post(
+    response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
@@ -26,8 +24,8 @@ async def test_login_success_sets_refresh_cookie_and_returns_access_token(
     assert "refresh_token" in response.cookies
 
 
-async def test_login_unknown_email_returns_generic_german_message(client):
-    response = await client.post(
+def test_login_unknown_email_returns_generic_german_message(client):
+    response = client.post(
         "/auth/login",
         data={"username": "nobody@example.test", "password": "irrelevant"},
     )
@@ -36,7 +34,7 @@ async def test_login_unknown_email_returns_generic_german_message(client):
     assert response.json()["detail"] == "Anmeldedaten unbekannt."
 
 
-async def test_login_wrong_password_returns_same_generic_message_as_unknown_email(
+def test_login_wrong_password_returns_same_generic_message_as_unknown_email(
     client, make_user
 ):
     """Hard Legacy parity: lang/de/auth.php's `failed` string covers BOTH
@@ -44,7 +42,7 @@ async def test_login_wrong_password_returns_same_generic_message_as_unknown_emai
     the login flow (that belongs to the unrelated change-password form)."""
     user = make_user(password="correct-password")
 
-    response = await client.post(
+    response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "wrong-password"},
     )
@@ -53,10 +51,10 @@ async def test_login_wrong_password_returns_same_generic_message_as_unknown_emai
     assert response.json()["detail"] == "Anmeldedaten unbekannt."
 
 
-async def test_login_locked_account_returns_locked_message(client, make_user):
+def test_login_locked_account_returns_locked_message(client, make_user):
     user = make_user(password="correct-password", auth_locked=True)
 
-    response = await client.post(
+    response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
@@ -65,17 +63,17 @@ async def test_login_locked_account_returns_locked_message(client, make_user):
     assert response.json()["detail"] == "Benutzerkonto gesperrt."
 
 
-async def test_login_throttles_after_five_failed_attempts(client, make_user):
+def test_login_throttles_after_five_failed_attempts(client, make_user):
     user = make_user(password="correct-password")
 
     for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
-        response = await client.post(
+        response = client.post(
             "/auth/login",
             data={"username": user.email, "password": "wrong-password"},
         )
         assert response.status_code == 401
 
-    throttled_response = await client.post(
+    throttled_response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "wrong-password"},
     )
@@ -86,31 +84,31 @@ async def test_login_throttles_after_five_failed_attempts(client, make_user):
     assert "Sekunden erneut versuchen" in body["detail"]
 
     # Even the CORRECT password is blocked while throttled.
-    still_blocked = await client.post(
+    still_blocked = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
     assert still_blocked.status_code == 429
 
 
-async def test_login_missing_fields_returns_german_validation_messages(client):
-    response = await client.post("/auth/login", data={})
+def test_login_missing_fields_returns_german_validation_messages(client):
+    response = client.post("/auth/login", data={})
 
     assert response.status_code == 422
     detail = response.json()["detail"]
     assert any(err["msg"] == "Dieses Feld ist erforderlich." for err in detail)
 
 
-async def test_refresh_without_cookie_returns_401(client):
-    response = await client.post("/auth/refresh")
+def test_refresh_without_cookie_returns_401(client):
+    response = client.post("/auth/refresh")
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Kein Refresh-Token vorhanden."
 
 
-async def test_refresh_rotates_token_and_reuse_is_rejected(client, make_user):
+def test_refresh_rotates_token_and_reuse_is_rejected(client, make_user):
     user = make_user(password="correct-password")
-    login_response = await client.post(
+    login_response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
@@ -121,7 +119,7 @@ async def test_refresh_rotates_token_and_reuse_is_rejected(client, make_user):
     # matching what a real proxied browser request does in production.
     client.cookies.set("refresh_token", login_response.cookies["refresh_token"])
 
-    refresh_response = await client.post("/auth/refresh")
+    refresh_response = client.post("/auth/refresh")
 
     assert refresh_response.status_code == 200
     # The access token's jti (session id) deliberately stays constant across
@@ -134,30 +132,30 @@ async def test_refresh_rotates_token_and_reuse_is_rejected(client, make_user):
     assert new_refresh_cookie != login_response.cookies["refresh_token"]
 
 
-async def test_refresh_with_invalid_cookie_clears_it_and_returns_401(client):
+def test_refresh_with_invalid_cookie_clears_it_and_returns_401(client):
     client.cookies.set("refresh_token", "bogus-session:bogus-secret")
 
-    response = await client.post("/auth/refresh")
+    response = client.post("/auth/refresh")
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Session abgelaufen oder ungültig."
 
 
-async def test_logout_requires_authentication(client):
-    response = await client.post("/auth/logout")
+def test_logout_requires_authentication(client):
+    response = client.post("/auth/logout")
 
     assert response.status_code == 401
 
 
-async def test_logout_success_clears_cookie(client, make_user):
+def test_logout_success_clears_cookie(client, make_user):
     user = make_user(password="correct-password")
-    login_response = await client.post(
+    login_response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
     access_token = login_response.json()["access_token"]
 
-    response = await client.post(
+    response = client.post(
         "/auth/logout",
         headers={"Authorization": f"Bearer {access_token}"},
     )
@@ -166,15 +164,15 @@ async def test_logout_success_clears_cookie(client, make_user):
     assert response.json()["message"] == "Erfolgreich abgemeldet."
 
 
-async def test_me_returns_profile_with_permissions(client, make_user):
+def test_me_returns_profile_with_permissions(client, make_user):
     user = make_user(password="correct-password", roles=["disponent"])
-    login_response = await client.post(
+    login_response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
     access_token = login_response.json()["access_token"]
 
-    response = await client.get(
+    response = client.get(
         "/auth/me", headers={"Authorization": f"Bearer {access_token}"}
     )
 
@@ -187,17 +185,17 @@ async def test_me_returns_profile_with_permissions(client, make_user):
     assert "userMaintain" in body["permissions"]
 
 
-async def test_me_requires_authentication(client):
-    response = await client.get("/auth/me")
+def test_me_requires_authentication(client):
+    response = client.get("/auth/me")
 
     assert response.status_code == 401
 
 
-async def test_get_current_user_rejects_locked_account_mid_session(
+def test_get_current_user_rejects_locked_account_mid_session(
     client, make_user, db_session
 ):
     user = make_user(password="correct-password")
-    login_response = await client.post(
+    login_response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
     )
@@ -209,7 +207,7 @@ async def test_get_current_user_rejects_locked_account_mid_session(
     user.auth_locked = True
     db_session.commit()
 
-    response = await client.post(
+    response = client.post(
         "/auth/logout",
         headers={"Authorization": f"Bearer {access_token}"},
     )
@@ -244,9 +242,9 @@ def _registration_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-async def test_register_success_auto_logs_in_and_notifies_disponent(client):
+def test_register_success_auto_logs_in_and_notifies_disponent(client):
     with patch("app.core.mailer.send_new_registration_notice") as mock_notify:
-        response = await client.post("/auth/register", json=_registration_payload())
+        response = client.post("/auth/register", json=_registration_payload())
 
     assert response.status_code == 200
     body = response.json()
@@ -255,14 +253,14 @@ async def test_register_success_auto_logs_in_and_notifies_disponent(client):
     mock_notify.assert_called_once()
 
 
-async def test_register_rejects_duplicate_email(client):
+def test_register_rejects_duplicate_email(client):
     payload = _registration_payload()
     with patch("app.core.mailer.send_new_registration_notice"):
-        first = await client.post("/auth/register", json=payload)
+        first = client.post("/auth/register", json=payload)
     assert first.status_code == 200
 
     with patch("app.core.mailer.send_new_registration_notice"):
-        second = await client.post(
+        second = client.post(
             "/auth/register",
             json=_registration_payload(
                 surname="Andere", givenname="Person", email=payload["email"].upper()
@@ -274,8 +272,8 @@ async def test_register_rejects_duplicate_email(client):
     assert any(err["loc"] == ["body", "email"] for err in detail)
 
 
-async def test_register_rejects_weak_password(client):
-    response = await client.post(
+def test_register_rejects_weak_password(client):
+    response = client.post(
         "/auth/register",
         json=_registration_payload(password="short", password_confirmation="short"),
     )
@@ -285,8 +283,8 @@ async def test_register_rejects_weak_password(client):
     assert any("Richtlinien" in err["msg"] for err in detail)
 
 
-async def test_register_rejects_mismatched_password_confirmation(client):
-    response = await client.post(
+def test_register_rejects_mismatched_password_confirmation(client):
+    response = client.post(
         "/auth/register",
         json=_registration_payload(password_confirmation="Different1"),
     )
@@ -296,8 +294,8 @@ async def test_register_rejects_mismatched_password_confirmation(client):
     assert any("Bestätigung" in err["msg"] for err in detail)
 
 
-async def test_register_rejects_invalid_phone(client):
-    response = await client.post(
+def test_register_rejects_invalid_phone(client):
+    response = client.post(
         "/auth/register", json=_registration_payload(phone="not-a-phone!!")
     )
 
@@ -311,20 +309,18 @@ async def test_register_rejects_invalid_phone(client):
 # ---------------------------------------------------------------------------
 
 
-async def test_verify_email_success_auto_logs_in(client, make_user):
+def test_verify_email_success_auto_logs_in(client, make_user):
     user = make_user()
     token = auth_service.build_email_verification_token(user)
 
-    response = await client.post("/auth/verify-email", json={"token": token})
+    response = client.post("/auth/verify-email", json={"token": token})
 
     assert response.status_code == 200
     assert response.json()["access_token"]
 
 
-async def test_verify_email_rejects_invalid_token(client):
-    response = await client.post(
-        "/auth/verify-email", json={"token": "not-a-real-token"}
-    )
+def test_verify_email_rejects_invalid_token(client):
+    response = client.post("/auth/verify-email", json={"token": "not-a-real-token"})
 
     assert response.status_code == 400
 
@@ -334,15 +330,15 @@ async def test_verify_email_rejects_invalid_token(client):
 # ---------------------------------------------------------------------------
 
 
-async def test_forgot_password_returns_200_for_unknown_email(client):
-    response = await client.post(
+def test_forgot_password_returns_200_for_unknown_email(client):
+    response = client.post(
         "/auth/forgot-password", json={"email": "nobody@example.com"}
     )
 
     assert response.status_code == 200
 
 
-async def test_forgot_password_queues_reset_mail_for_known_user(
+def test_forgot_password_queues_reset_mail_for_known_user(
     client, make_user, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv(
@@ -352,20 +348,18 @@ async def test_forgot_password_queues_reset_mail_for_known_user(
     user = make_user(email=_com_email())
 
     with patch("app.core.mailer.send_password_reset_email") as mock_send:
-        response = await client.post(
-            "/auth/forgot-password", json={"email": user.email}
-        )
+        response = client.post("/auth/forgot-password", json={"email": user.email})
 
     assert response.status_code == 200
     mock_send.assert_called_once()
     assert mock_send.call_args.args[0] == user.email
 
 
-async def test_reset_password_success(client, make_user, db_session):
+def test_reset_password_success(client, make_user, db_session):
     user = make_user(password="old-password", email=_com_email())
     token = auth_service.request_password_reset(db_session, user.email)
 
-    response = await client.post(
+    response = client.post(
         "/auth/reset-password",
         json={
             "email": user.email,
@@ -377,16 +371,16 @@ async def test_reset_password_success(client, make_user, db_session):
 
     assert response.status_code == 200
 
-    login_response = await client.post(
+    login_response = client.post(
         "/auth/login", data={"username": user.email, "password": "Passw0rd1"}
     )
     assert login_response.status_code == 200
 
 
-async def test_reset_password_rejects_invalid_token(client, make_user):
+def test_reset_password_rejects_invalid_token(client, make_user):
     user = make_user(email=_com_email())
 
-    response = await client.post(
+    response = client.post(
         "/auth/reset-password",
         json={
             "email": user.email,
@@ -404,7 +398,7 @@ async def test_reset_password_rejects_invalid_token(client, make_user):
 # ---------------------------------------------------------------------------
 
 
-async def test_google_callback_returns_404_when_not_linked(
+def test_google_callback_returns_404_when_not_linked(
     client, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
@@ -412,7 +406,7 @@ async def test_google_callback_returns_404_when_not_linked(
         "app.services.auth_service.google_id_token.verify_oauth2_token",
         return_value={"sub": "google-not-linked", "name": "Nobody"},
     ):
-        response = await client.post(
+        response = client.post(
             "/auth/google/callback", json={"credential": "fake-credential"}
         )
 
@@ -420,7 +414,7 @@ async def test_google_callback_returns_404_when_not_linked(
     assert response.json()["detail"] == "ACCOUNT_NOT_LINKED"
 
 
-async def test_google_link_then_callback_logs_in(
+def test_google_link_then_callback_logs_in(
     client, make_user, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
@@ -431,7 +425,7 @@ async def test_google_link_then_callback_logs_in(
         "app.services.auth_service.google_id_token.verify_oauth2_token",
         return_value=google_id_info,
     ):
-        link_response = await client.post(
+        link_response = client.post(
             "/auth/google/link",
             json={
                 "credential": "fake-credential",
@@ -441,7 +435,7 @@ async def test_google_link_then_callback_logs_in(
         )
         assert link_response.status_code == 200
 
-        callback_response = await client.post(
+        callback_response = client.post(
             "/auth/google/callback", json={"credential": "fake-credential"}
         )
 
@@ -449,13 +443,13 @@ async def test_google_link_then_callback_logs_in(
     assert callback_response.json()["access_token"]
 
 
-async def test_google_link_rejects_wrong_password(
+def test_google_link_rejects_wrong_password(
     client, make_user, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
     user = make_user(password="correct-password", email=_com_email())
 
-    response = await client.post(
+    response = client.post(
         "/auth/google/link",
         json={
             "credential": "fake-credential",
@@ -467,12 +461,12 @@ async def test_google_link_rejects_wrong_password(
     assert response.status_code == 401
 
 
-async def test_oauth2_disconnect_removes_own_binding(
+def test_oauth2_disconnect_removes_own_binding(
     client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
     user = make_user(password="correct-password", email=_com_email())
-    login_response = await client.post(
+    login_response = client.post(
         "/auth/login", data={"username": user.email, "password": "correct-password"}
     )
     access_token = login_response.json()["access_token"]
@@ -481,7 +475,7 @@ async def test_oauth2_disconnect_removes_own_binding(
         "app.services.auth_service.google_id_token.verify_oauth2_token",
         return_value={"sub": "google-disconnect-own", "name": "Max Muster"},
     ):
-        await client.post(
+        client.post(
             "/auth/google/link",
             json={
                 "credential": "fake-credential",
@@ -498,7 +492,7 @@ async def test_oauth2_disconnect_removes_own_binding(
         .id
     )
 
-    response = await client.delete(
+    response = client.delete(
         f"/auth/oauth2/{binding_id}",
         headers={"Authorization": f"Bearer {access_token}"},
     )
@@ -506,7 +500,7 @@ async def test_oauth2_disconnect_removes_own_binding(
     assert response.status_code == 200
 
 
-async def test_oauth2_disconnect_rejects_binding_owned_by_another_user(
+def test_oauth2_disconnect_rejects_binding_owned_by_another_user(
     client, make_user, db_session
 ):
     """IDOR regression at the HTTP layer: an authenticated attacker must
@@ -533,13 +527,13 @@ async def test_oauth2_disconnect_rejects_binding_owned_by_another_user(
         .id
     )
 
-    login_response = await client.post(
+    login_response = client.post(
         "/auth/login",
         data={"username": attacker.email, "password": "attacker-password"},
     )
     attacker_token = login_response.json()["access_token"]
 
-    response = await client.delete(
+    response = client.delete(
         f"/auth/oauth2/{binding_id}",
         headers={"Authorization": f"Bearer {attacker_token}"},
     )
@@ -552,7 +546,7 @@ async def test_oauth2_disconnect_rejects_binding_owned_by_another_user(
     assert still_present is not None
 
 
-async def test_oauth2_disconnect_requires_authentication(client):
-    response = await client.delete("/auth/oauth2/1")
+def test_oauth2_disconnect_requires_authentication(client):
+    response = client.delete("/auth/oauth2/1")
 
     assert response.status_code == 401
