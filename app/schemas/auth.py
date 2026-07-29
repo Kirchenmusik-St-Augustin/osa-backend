@@ -1,6 +1,6 @@
 import re
 
-from pydantic import EmailStr, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
 from app.schemas.base import StrictInputModel
 
@@ -98,3 +98,17 @@ class GoogleLinkRequest(StrictInputModel):
     credential: str
     email: EmailStr
     password: str
+
+
+class UserProfileResponse(BaseModel):
+    """Output-only model (no extra="forbid"/strict=True -- that CLAUDE.md
+    requirement targets input validation, not response serialization).
+    Frontend-facing shape of "who am I": drives navbar display and
+    permission-gated UI, since /auth/login itself returns only a JWT."""
+
+    id: int
+    email: str
+    surname: str
+    givenname: str
+    administrator: bool
+    permissions: list[str]

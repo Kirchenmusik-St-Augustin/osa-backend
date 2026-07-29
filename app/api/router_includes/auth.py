@@ -24,6 +24,7 @@ from app.schemas.auth import (
     GoogleLinkRequest,
     RegisterRequest,
     ResetPasswordRequest,
+    UserProfileResponse,
     VerifyEmailRequest,
 )
 from app.services import auth_service
@@ -33,6 +34,7 @@ from app.services.auth_service import (
     OauthBindingNotFoundError,
     RegistrationConflictError,
 )
+from app.services.permission_service import calculate_permissions
 
 auth_router = APIRouter()
 
@@ -196,6 +198,24 @@ def logout(
     )
     response.delete_cookie("refresh_token", path=COOKIE_PATH)
     return response
+
+
+@auth_router.get("/me")
+def get_current_user_profile(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> UserProfileResponse:
+    """No Legacy route equivalent -- Legacy's Inertia setup injects the
+    user into every server-rendered page's shared props, a pure SPA has
+    no such channel. The frontend calls this once after login/on boot to
+    populate its auth store (navbar display, permission-gated UI)."""
+    return UserProfileResponse(
+        id=current_user.id,
+        email=current_user.email or "",
+        surname=current_user.surname,
+        givenname=current_user.givenname,
+        administrator=current_user.administrator,
+        permissions=calculate_permissions(current_user),
+    )
 
 
 def _conflict_errors_to_detail(

@@ -166,6 +166,33 @@ async def test_logout_success_clears_cookie(client, make_user):
     assert response.json()["message"] == "Erfolgreich abgemeldet."
 
 
+async def test_me_returns_profile_with_permissions(client, make_user):
+    user = make_user(password="correct-password", roles=["disponent"])
+    login_response = await client.post(
+        "/auth/login",
+        data={"username": user.email, "password": "correct-password"},
+    )
+    access_token = login_response.json()["access_token"]
+
+    response = await client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {access_token}"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] == user.email
+    assert body["surname"] == user.surname
+    assert body["givenname"] == user.givenname
+    assert body["administrator"] is False
+    assert "userMaintain" in body["permissions"]
+
+
+async def test_me_requires_authentication(client):
+    response = await client.get("/auth/me")
+
+    assert response.status_code == 401
+
+
 async def test_get_current_user_rejects_locked_account_mid_session(
     client, make_user, db_session
 ):
