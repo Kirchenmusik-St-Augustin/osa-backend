@@ -381,17 +381,6 @@ def _register_request(**overrides: object) -> RegisterRequest:
     return RegisterRequest(**defaults)
 
 
-def test_normalize_surname_uppercases():
-    assert auth_service._normalize_surname("muster") == "MUSTER"
-
-
-def test_normalize_givenname_ucwords_only_splits_on_spaces():
-    # Mirrors PHP's ucwords(): splits on literal spaces only, unlike
-    # Python's str.title() which also breaks on apostrophes/hyphens.
-    assert auth_service._normalize_givenname("mary jane") == "Mary Jane"
-    assert auth_service._normalize_givenname("o'brien") == "O'brien"
-
-
 def test_register_user_persists_normalized_fields(db_session):
     request = _register_request(surname="muster", givenname="max")
 

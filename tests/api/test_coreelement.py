@@ -9,8 +9,12 @@ def _unique(base: str = "Element") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
 
 
-def _auth_headers(client, make_user, *, administrator: bool = True) -> dict[str, str]:
-    user = make_user(password="correct-password", administrator=administrator)
+def _auth_headers(
+    client, make_user, *, administrator: bool = True, roles: list[str] | None = None
+) -> dict[str, str]:
+    user = make_user(
+        password="correct-password", administrator=administrator, roles=roles
+    )
     response = client.post(
         "/auth/login",
         data={"username": user.email, "password": "correct-password"},
@@ -153,6 +157,65 @@ class TestDeleteInUse:
 
         delete_response = client.delete(
             f"/coreelements/role/{role_id}", headers=headers
+        )
+
+        assert delete_response.status_code == 422
+        assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
+
+
+class TestDeleteInUseViaOrdinariumworkPosition:
+    """Retrofit regression guard: Instrument/Voice delete is now blocked
+    once Schritt 4 (Repertoire) wires them into an Ordinariumwork's setup
+    positions -- see _make_ordinariumwork_position_dependency_check in
+    coreelement_service.py."""
+
+    def test_instrument_delete_blocked_while_referenced_by_ordinariumwork(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        instrument_response = client.post(
+            "/coreelements/instrument",
+            json={"name": _unique("Fagott")},
+            headers=headers,
+        )
+        instrument_id = instrument_response.json()["id"]
+
+        # artistMaintain/ordinariumworkMaintain require role planner/
+        # disponent, not the administrator flag used above for
+        # coreelements -- use a dedicated planner user for these calls.
+        planner_headers = _auth_headers(client, make_user, roles=["planner"])
+        artist_response = client.post(
+            "/artists",
+            json={
+                "surname": _unique(),
+                "givenname": _unique(),
+                "description": None,
+                "birthyear": None,
+                "deathyear": None,
+                "composer": True,
+                "conductor": False,
+            },
+            headers=planner_headers,
+        )
+        artist_id = artist_response.json()["id"]
+        client.post(
+            "/ordinariumworks",
+            json={
+                "name": _unique("Werk"),
+                "description": None,
+                "artist_id": artist_id,
+                "duration": None,
+                "demanding": False,
+                "setup": {
+                    "instruments": [{"id": instrument_id, "quantity": 1}],
+                    "voices": [],
+                },
+            },
+            headers=planner_headers,
+        )
+
+        delete_response = client.delete(
+            f"/coreelements/instrument/{instrument_id}", headers=headers
         )
 
         assert delete_response.status_code == 422

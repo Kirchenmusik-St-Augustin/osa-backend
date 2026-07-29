@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
 from app.db.models.location import Location
+from app.db.models.ordinariumwork_position import OrdinariumworkPosition
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.role import Role
 from app.db.models.user_role import UserRole
@@ -54,22 +55,49 @@ class CoreelementTypeConfig:
 
 
 def _role_has_dependent_users(db: Session, role: CoreelementModel) -> bool:
-    """Only Role has a real dependency target today (`user_roles`, built in
-    Schritt 2/Auth). Instrument/Voice/Choirjob/Location/Propriumelement's
-    Legacy dependencies (performances/ordinariumworks/user_positions) don't
-    exist in osa-backend yet -- those domains land in Schritt 4/5, at which
-    point their own `has_dependencies` callables get added here. Until
-    then they genuinely have zero dependents, so hard-checking against
-    tables that don't exist would be speculative dead code, not parity."""
+    """Only Role had a real dependency target from the start (`user_roles`,
+    built in Schritt 2/Auth)."""
     count = db.execute(
         select(func.count()).select_from(UserRole).where(UserRole.role_id == role.id)
     ).scalar_one()
     return count > 0
 
 
+def _make_ordinariumwork_position_dependency_check(
+    position_type: str,
+) -> Callable[[Session, CoreelementModel], bool]:
+    """Instrument/Voice can be referenced by an Ordinariumwork's Positions
+    setup (Schritt 4/Repertoire) -- retrofitted now that
+    ordinariumwork_positions exists, per the plan already noted here
+    before Schritt 4 landed. Choirjob/Location/Propriumelement still have
+    zero real dependents in osa-backend today (their Legacy dependencies
+    -- performances/user_positions -- land in Schritt 5+); checking
+    against tables that don't exist yet would be speculative dead code,
+    not parity."""
+
+    def _check(db: Session, item: CoreelementModel) -> bool:
+        count = db.execute(
+            select(func.count())
+            .select_from(OrdinariumworkPosition)
+            .where(
+                OrdinariumworkPosition.position_type == position_type,
+                OrdinariumworkPosition.position_id == item.id,
+            )
+        ).scalar_one()
+        return count > 0
+
+    return _check
+
+
 COREELEMENT_CONFIG: dict[CoreelementType, CoreelementTypeConfig] = {
-    CoreelementType.instrument: CoreelementTypeConfig(model=Instrument),
-    CoreelementType.voice: CoreelementTypeConfig(model=Voice),
+    CoreelementType.instrument: CoreelementTypeConfig(
+        model=Instrument,
+        has_dependencies=_make_ordinariumwork_position_dependency_check("instruments"),
+    ),
+    CoreelementType.voice: CoreelementTypeConfig(
+        model=Voice,
+        has_dependencies=_make_ordinariumwork_position_dependency_check("voices"),
+    ),
     CoreelementType.choirjob: CoreelementTypeConfig(model=Choirjob),
     CoreelementType.propriumelement: CoreelementTypeConfig(model=Propriumelement),
     CoreelementType.location: CoreelementTypeConfig(

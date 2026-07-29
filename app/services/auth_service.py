@@ -8,6 +8,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings, require_setting
+from app.core.human_names import normalize_givenname, normalize_surname
 from app.core.security import (
     ALGORITHM,
     REFRESH_TOKEN_LIFETIME_DAYS,
@@ -283,18 +284,6 @@ class RegistrationConflictError(Exception):
         super().__init__("Registration conflict")
 
 
-def _normalize_surname(value: str) -> str:
-    return value.upper()
-
-
-def _normalize_givenname(value: str) -> str:
-    """Mirrors Legacy's `ucwords()` mutator (HasHumanNames trait) -- PHP's
-    ucwords() only splits on literal spaces (unlike Python's str.title(),
-    which also breaks on apostrophes/hyphens), and leaves the rest of each
-    word's casing untouched."""
-    return " ".join(word[:1].upper() + word[1:] for word in value.split(" "))
-
-
 def check_registration_conflicts(
     db: Session, *, surname: str, givenname: str, email: str
 ) -> None:
@@ -335,8 +324,8 @@ def register_user(db: Session, data: RegisterRequest) -> User:
     )
 
     user = User(
-        surname=_normalize_surname(data.surname),
-        givenname=_normalize_givenname(data.givenname),
+        surname=normalize_surname(data.surname),
+        givenname=normalize_givenname(data.givenname),
         email=data.email.lower(),
         phone=data.phone,
         auth_password=get_password_hash(data.password),

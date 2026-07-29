@@ -1,0 +1,280 @@
+import uuid
+from datetime import UTC, datetime
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.db.models.instrument import Instrument
+from app.db.models.voice import Voice
+from app.schemas.artist import ArtistRequest
+from app.schemas.ordinariumwork import (
+    OrdinariumworkPositionInput,
+    OrdinariumworkRequest,
+    OrdinariumworkSetupInput,
+)
+from app.services import artist_service, ordinariumwork_service
+
+
+def _unique(base: str = "Name") -> str:
+    return f"{base}-{uuid.uuid4().hex[:8]}"
+
+
+def _make_artist(db_session: Session) -> int:
+    artist = artist_service.create_artist(
+        db_session,
+        ArtistRequest(
+            surname=_unique("Composer"), givenname=_unique("First"), composer=True
+        ),
+    )
+    return artist.id
+
+
+def _make_instrument(db_session: Session) -> Instrument:
+    now = datetime.now(UTC)
+    instrument = Instrument(
+        name=_unique("Instrument"), order=0, created_at=now, updated_at=now
+    )
+    db_session.add(instrument)
+    db_session.commit()
+    return instrument
+
+
+def _make_voice(db_session: Session) -> Voice:
+    now = datetime.now(UTC)
+    voice = Voice(name=_unique("Voice"), order=0, created_at=now, updated_at=now)
+    db_session.add(voice)
+    db_session.commit()
+    return voice
+
+
+def _request(
+    artist_id: int,
+    name: str | None = None,
+    setup: OrdinariumworkSetupInput | None = None,
+    **overrides: object,
+) -> OrdinariumworkRequest:
+    defaults: dict[str, object] = {
+        "name": name or _unique("Werk"),
+        "description": None,
+        "artist_id": artist_id,
+        "duration": None,
+        "demanding": False,
+        "setup": setup or OrdinariumworkSetupInput(),
+    }
+    defaults.update(overrides)
+    return OrdinariumworkRequest(**defaults)  # type: ignore[arg-type]
+
+
+class TestSearchOrdinariumworks:
+    def test_empty_query_returns_empty(self, db_session: Session):
+        assert ordinariumwork_service.search_ordinariumworks(db_session, "") == []
+
+    def test_matches_by_work_name(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        marker = _unique("Requiem")
+        ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist_id, name=marker)
+        )
+
+        results = ordinariumwork_service.search_ordinariumworks(
+            db_session, marker.lower()
+        )
+
+        assert len(results) == 1
+        assert marker in results[0].label
+
+
+class TestCreateOrdinariumwork:
+    def test_basic_create_returns_response_with_artist_name(self, db_session: Session):
+        artist = artist_service.create_artist(
+            db_session,
+            ArtistRequest(surname="Mozart", givenname="Wolfgang", composer=True),
+        )
+
+        response = ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist.id, name=_unique("Krönungsmesse"))
+        )
+
+        assert response.artist_id == artist.id
+        assert response.artist_name == "MOZART, Wolfgang"
+
+    def test_rejects_short_name(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id, name="ab")
+            )
+
+        assert exc_info.value.errors == [
+            ("name", "Muss zwischen 3 und 60 Zeichen lang sein.")
+        ]
+
+    def test_rejects_unknown_artist(self, db_session: Session):
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id=999999)
+            )
+
+        assert exc_info.value.errors == [
+            ("artist_id", "Komponist/in wurde nicht gefunden.")
+        ]
+
+    def test_rejects_duplicate_name_for_same_artist(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        name = _unique("Messe")
+        ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist_id, name=name)
+        )
+
+        with pytest.raises(ordinariumwork_service.OrdinariumworkValidationError):
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id, name=name)
+            )
+
+    def test_rejects_unknown_instrument_in_setup(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        setup = OrdinariumworkSetupInput(
+            instruments=[OrdinariumworkPositionInput(id=999999, quantity=1)]
+        )
+
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id, setup=setup)
+            )
+
+        assert exc_info.value.errors == [
+            ("setup", "instruments: Element nicht gefunden.")
+        ]
+
+    def test_rejects_duplicate_position_entry(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        instrument = _make_instrument(db_session)
+        setup = OrdinariumworkSetupInput(
+            instruments=[
+                OrdinariumworkPositionInput(id=instrument.id, quantity=1),
+                OrdinariumworkPositionInput(id=instrument.id, quantity=2),
+            ]
+        )
+
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id, setup=setup)
+            )
+
+        assert exc_info.value.errors == [("setup", "instruments: doppelter Eintrag.")]
+
+    def test_persists_setup_positions(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        instrument = _make_instrument(db_session)
+        voice = _make_voice(db_session)
+        setup = OrdinariumworkSetupInput(
+            instruments=[OrdinariumworkPositionInput(id=instrument.id, quantity=2)],
+            voices=[OrdinariumworkPositionInput(id=voice.id, quantity=4)],
+        )
+
+        response = ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist_id, setup=setup)
+        )
+        result = ordinariumwork_service.get_setup(db_session, response.id)
+
+        assert [(i.id, i.name, i.quantity) for i in result.instruments] == [
+            (instrument.id, instrument.name, 2)
+        ]
+        assert [(v.id, v.name, v.quantity) for v in result.voices] == [
+            (voice.id, voice.name, 4)
+        ]
+
+
+class TestUpdateOrdinariumwork:
+    def test_not_found_raises(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
+            ordinariumwork_service.update_ordinariumwork(
+                db_session, 999, _request(artist_id)
+            )
+
+    def test_setup_sync_removes_updates_and_adds_positions(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        kept = _make_instrument(db_session)
+        removed = _make_instrument(db_session)
+        added = _make_voice(db_session)
+
+        created = ordinariumwork_service.create_ordinariumwork(
+            db_session,
+            _request(
+                artist_id,
+                setup=OrdinariumworkSetupInput(
+                    instruments=[
+                        OrdinariumworkPositionInput(id=kept.id, quantity=1),
+                        OrdinariumworkPositionInput(id=removed.id, quantity=1),
+                    ]
+                ),
+            ),
+        )
+
+        ordinariumwork_service.update_ordinariumwork(
+            db_session,
+            created.id,
+            _request(
+                artist_id,
+                name=created.name,
+                setup=OrdinariumworkSetupInput(
+                    instruments=[OrdinariumworkPositionInput(id=kept.id, quantity=9)],
+                    voices=[OrdinariumworkPositionInput(id=added.id, quantity=3)],
+                ),
+            ),
+        )
+
+        setup = ordinariumwork_service.get_setup(db_session, created.id)
+        assert [(i.id, i.quantity) for i in setup.instruments] == [(kept.id, 9)]
+        assert [(v.id, v.quantity) for v in setup.voices] == [(added.id, 3)]
+
+
+class TestGetSetup:
+    def test_not_found_raises(self, db_session: Session):
+        with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
+            ordinariumwork_service.get_setup(db_session, 999)
+
+    def test_empty_setup_returns_empty_lists(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        created = ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist_id)
+        )
+
+        setup = ordinariumwork_service.get_setup(db_session, created.id)
+
+        assert (setup.instruments, setup.voices) == ([], [])
+
+
+class TestDeleteOrdinariumwork:
+    def test_not_found_raises(self, db_session: Session):
+        with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
+            ordinariumwork_service.delete_ordinariumwork(db_session, 999)
+
+    def test_deletes_ordinariumwork_and_its_positions(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        instrument = _make_instrument(db_session)
+        created = ordinariumwork_service.create_ordinariumwork(
+            db_session,
+            _request(
+                artist_id,
+                setup=OrdinariumworkSetupInput(
+                    instruments=[
+                        OrdinariumworkPositionInput(id=instrument.id, quantity=1)
+                    ]
+                ),
+            ),
+        )
+
+        ordinariumwork_service.delete_ordinariumwork(db_session, created.id)
+
+        with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
+            ordinariumwork_service.get_ordinariumwork(db_session, created.id)
