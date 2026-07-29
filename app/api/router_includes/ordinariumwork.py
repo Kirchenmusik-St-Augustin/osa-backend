@@ -16,6 +16,7 @@ from app.schemas.ordinariumwork import (
 )
 from app.services import ordinariumwork_service
 from app.services.ordinariumwork_service import (
+    OrdinariumworkInUseError,
     OrdinariumworkNotFoundError,
     OrdinariumworkValidationError,
 )
@@ -24,6 +25,7 @@ ordinariumwork_router = APIRouter()
 
 _MAINTAIN = Depends(require_permission("ordinariumworkMaintain"))
 _NOT_FOUND_DETAIL = "Nicht gefunden."
+_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
 
 
 @ordinariumwork_router.get("/search")
@@ -117,5 +119,10 @@ def delete_ordinariumwork(
     except OrdinariumworkNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
+        ) from None
+    except OrdinariumworkInUseError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=field_errors_to_detail([("general", _IN_USE_DETAIL)]),
         ) from None
     return {"status": "ok", "message": "Element wurde gelöscht."}

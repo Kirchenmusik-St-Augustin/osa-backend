@@ -10,6 +10,9 @@ from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
+from app.db.models.performance import Performance
+from app.db.models.performance_position import PerformancePosition
+from app.db.models.performance_proprium import PerformanceProprium
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.role import Role
 from app.db.models.user_role import UserRole
@@ -63,20 +66,21 @@ def _role_has_dependent_users(db: Session, role: CoreelementModel) -> bool:
     return count > 0
 
 
-def _make_ordinariumwork_position_dependency_check(
+def _make_position_dependency_check(
     position_type: str,
 ) -> Callable[[Session, CoreelementModel], bool]:
-    """Instrument/Voice can be referenced by an Ordinariumwork's Positions
-    setup (Schritt 4/Repertoire) -- retrofitted now that
-    ordinariumwork_positions exists, per the plan already noted here
-    before Schritt 4 landed. Choirjob/Location/Propriumelement still have
-    zero real dependents in osa-backend today (their Legacy dependencies
-    -- performances/user_positions -- land in Schritt 5+); checking
-    against tables that don't exist yet would be speculative dead code,
-    not parity."""
+    """Instrument/Voice/Choirjob can be referenced by an Ordinariumwork's
+    Positions setup (Schritt 4 -- choirjobs never actually match here,
+    excluded by ordinariumwork_positions' own CHECK constraint, so that
+    query is simply always empty for position_type='choirjobs') AND/OR a
+    Performance's Positions setup (Schritt 5, all three types). Legacy's
+    own Instrument/Voice/Choirjob $dependencies also list `users`
+    (user_positions) -- that table doesn't exist in osa-backend yet (User
+    domain, a later Schritt), deferred the same way this check itself was
+    deferred before Schritt 4/5 landed."""
 
     def _check(db: Session, item: CoreelementModel) -> bool:
-        count = db.execute(
+        ordinariumwork_count = db.execute(
             select(func.count())
             .select_from(OrdinariumworkPosition)
             .where(
@@ -84,28 +88,65 @@ def _make_ordinariumwork_position_dependency_check(
                 OrdinariumworkPosition.position_id == item.id,
             )
         ).scalar_one()
-        return count > 0
+        performance_count = db.execute(
+            select(func.count())
+            .select_from(PerformancePosition)
+            .where(
+                PerformancePosition.position_type == position_type,
+                PerformancePosition.position_id == item.id,
+            )
+        ).scalar_one()
+        return ordinariumwork_count > 0 or performance_count > 0
 
     return _check
+
+
+def _location_has_dependent_performances(
+    db: Session, location: CoreelementModel
+) -> bool:
+    count = db.execute(
+        select(func.count())
+        .select_from(Performance)
+        .where(Performance.location_id == location.id)
+    ).scalar_one()
+    return count > 0
+
+
+def _propriumelement_has_dependent_performances(
+    db: Session, element: CoreelementModel
+) -> bool:
+    count = db.execute(
+        select(func.count())
+        .select_from(PerformanceProprium)
+        .where(PerformanceProprium.propriumelement_id == element.id)
+    ).scalar_one()
+    return count > 0
 
 
 COREELEMENT_CONFIG: dict[CoreelementType, CoreelementTypeConfig] = {
     CoreelementType.instrument: CoreelementTypeConfig(
         model=Instrument,
-        has_dependencies=_make_ordinariumwork_position_dependency_check("instruments"),
+        has_dependencies=_make_position_dependency_check("instruments"),
     ),
     CoreelementType.voice: CoreelementTypeConfig(
         model=Voice,
-        has_dependencies=_make_ordinariumwork_position_dependency_check("voices"),
+        has_dependencies=_make_position_dependency_check("voices"),
     ),
-    CoreelementType.choirjob: CoreelementTypeConfig(model=Choirjob),
-    CoreelementType.propriumelement: CoreelementTypeConfig(model=Propriumelement),
+    CoreelementType.choirjob: CoreelementTypeConfig(
+        model=Choirjob,
+        has_dependencies=_make_position_dependency_check("choirjobs"),
+    ),
+    CoreelementType.propriumelement: CoreelementTypeConfig(
+        model=Propriumelement,
+        has_dependencies=_propriumelement_has_dependent_performances,
+    ),
     CoreelementType.location: CoreelementTypeConfig(
         model=Location,
         extra_fields=(
             FieldSpec("address", min_length=3, max_length=60),
             FieldSpec("color", min_length=3, max_length=6),
         ),
+        has_dependencies=_location_has_dependent_performances,
     ),
     CoreelementType.role: CoreelementTypeConfig(
         model=Role,

@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 
 def _unique(base: str = "Element") -> str:
@@ -216,6 +217,202 @@ class TestDeleteInUseViaOrdinariumworkPosition:
 
         delete_response = client.delete(
             f"/coreelements/instrument/{instrument_id}", headers=headers
+        )
+
+        assert delete_response.status_code == 422
+        assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
+
+
+def _make_performance_dependencies(
+    client, make_user
+) -> tuple[dict[str, str], int, int]:
+    """Returns (planner_headers, composer_artist_id, ordinariumwork_id) --
+    shared scaffolding for the Performance-based retrofit tests below."""
+    planner_headers = _auth_headers(client, make_user, roles=["planner"])
+    artist_response = client.post(
+        "/artists",
+        json={
+            "surname": _unique(),
+            "givenname": _unique(),
+            "description": None,
+            "birthyear": None,
+            "deathyear": None,
+            "composer": True,
+            "conductor": False,
+        },
+        headers=planner_headers,
+    )
+    artist_id = artist_response.json()["id"]
+    ordinariumwork_response = client.post(
+        "/ordinariumworks",
+        json={
+            "name": _unique("Werk"),
+            "description": None,
+            "artist_id": artist_id,
+            "duration": None,
+            "demanding": False,
+            "setup": {"instruments": [], "voices": []},
+        },
+        headers=planner_headers,
+    )
+    return planner_headers, artist_id, ordinariumwork_response.json()["id"]
+
+
+def _performance_payload(
+    location_id: int, ordinariumwork_id: int, **overrides: object
+) -> dict:
+    payload: dict[str, object] = {
+        "schedule": (datetime.now(UTC) + timedelta(days=2)).strftime(
+            "%Y-%m-%dT%H:%M:%S"
+        ),
+        "location_id": location_id,
+        "ordinariumwork_id": ordinariumwork_id,
+        "artist_id": None,
+        "description": None,
+        "choirjob_defaultfee": 35,
+        "instrument_defaultfee": 60,
+        "voice_defaultfee": 110,
+        "extracost_amount": None,
+        "extracost_description": None,
+        "setup": {"instruments": [], "voices": [], "choirjobs": []},
+        "proprium": [],
+        "rehearsals": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestDeleteInUseViaPerformancePosition:
+    """Retrofit regression guard (Schritt 5): Instrument/Voice/Choirjob
+    delete is now also blocked once a Performance's Positionskonfiguration
+    references them -- Choirjob gets its FIRST real dependency check here
+    (it had none before Schritt 5, unlike Instrument/Voice which already
+    got the Ordinariumwork-position retrofit in Schritt 4)."""
+
+    def test_choirjob_delete_blocked_while_referenced_by_performance(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        choirjob_response = client.post(
+            "/coreelements/choirjob",
+            json={"name": _unique("Substitut")},
+            headers=headers,
+        )
+        choirjob_id = choirjob_response.json()["id"]
+        planner_headers, _artist_id, ordinariumwork_id = _make_performance_dependencies(
+            client, make_user
+        )
+        location_response = client.post(
+            "/coreelements/location",
+            json={"name": _unique("Ort"), "address": "Adresse 1", "color": "ff0000"},
+            headers=headers,
+        )
+        location_id = location_response.json()["id"]
+        client.post(
+            "/performances",
+            json=_performance_payload(
+                location_id,
+                ordinariumwork_id,
+                setup={
+                    "instruments": [],
+                    "voices": [],
+                    "choirjobs": [{"id": choirjob_id, "quantity": 1}],
+                },
+            ),
+            headers=planner_headers,
+        )
+
+        delete_response = client.delete(
+            f"/coreelements/choirjob/{choirjob_id}", headers=headers
+        )
+
+        assert delete_response.status_code == 422
+        assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
+
+
+class TestDeleteInUseViaPerformanceLocation:
+    """Retrofit regression guard (Schritt 5): Location's first-ever real
+    dependency check, against Performance.location_id."""
+
+    def test_location_delete_blocked_while_referenced_by_performance(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        location_response = client.post(
+            "/coreelements/location",
+            json={"name": _unique("Ort"), "address": "Adresse 1", "color": "ff0000"},
+            headers=headers,
+        )
+        location_id = location_response.json()["id"]
+        planner_headers, _artist_id, ordinariumwork_id = _make_performance_dependencies(
+            client, make_user
+        )
+        client.post(
+            "/performances",
+            json=_performance_payload(location_id, ordinariumwork_id),
+            headers=planner_headers,
+        )
+
+        delete_response = client.delete(
+            f"/coreelements/location/{location_id}", headers=headers
+        )
+
+        assert delete_response.status_code == 422
+        assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
+
+
+class TestDeleteInUseViaPerformanceProprium:
+    """Retrofit regression guard (Schritt 5): Propriumelement's first-ever
+    real dependency check, against performance_proprium.propriumelement_id."""
+
+    def test_propriumelement_delete_blocked_while_referenced_by_performance(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        element_response = client.post(
+            "/coreelements/propriumelement",
+            json={"name": _unique("Graduale")},
+            headers=headers,
+        )
+        element_id = element_response.json()["id"]
+        planner_headers, artist_id, ordinariumwork_id = _make_performance_dependencies(
+            client, make_user
+        )
+        location_response = client.post(
+            "/coreelements/location",
+            json={"name": _unique("Ort"), "address": "Adresse 1", "color": "ff0000"},
+            headers=headers,
+        )
+        location_id = location_response.json()["id"]
+        propriumwork_response = client.post(
+            "/propriumworks",
+            json={
+                "name": _unique("Proprium"),
+                "description": None,
+                "artist_id": artist_id,
+                "duration": None,
+                "demanding": False,
+            },
+            headers=planner_headers,
+        )
+        propriumwork_id = propriumwork_response.json()["id"]
+        client.post(
+            "/performances",
+            json=_performance_payload(
+                location_id,
+                ordinariumwork_id,
+                proprium=[
+                    {
+                        "propriumelement_id": element_id,
+                        "propriumwork_id": propriumwork_id,
+                    }
+                ],
+            ),
+            headers=planner_headers,
+        )
+
+        delete_response = client.delete(
+            f"/coreelements/propriumelement/{element_id}", headers=headers
         )
 
         assert delete_response.status_code == 422

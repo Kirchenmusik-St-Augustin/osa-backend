@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.human_names import normalize_givenname, normalize_surname
 from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
+from app.db.models.performance import Performance
 from app.db.models.propriumwork import Propriumwork
 from app.schemas.artist import ArtistRequest
 
@@ -167,7 +168,13 @@ def get_artist(db: Session, artist_id: int) -> Artist:
 
 
 def _artist_has_dependencies(db: Session, artist_id: int) -> bool:
-    for model in (Ordinariumwork, Propriumwork):
+    # Ordinariumwork/Propriumwork's artist_id is the composer; Performance's
+    # is the conductor (Dirigent) -- both point at the same `artists` table,
+    # and Legacy's own $dependencies = ['ordinariumworks', 'propriumworks',
+    # 'performances'] treats either role as "in use" alike. Performance
+    # retrofitted once Schritt 5 built that domain (was deferred before,
+    # mirroring the Instrument/Voice retrofit in coreelement_service.py).
+    for model in (Ordinariumwork, Propriumwork, Performance):
         count = db.execute(
             select(func.count()).select_from(model).where(model.artist_id == artist_id)
         ).scalar_one()

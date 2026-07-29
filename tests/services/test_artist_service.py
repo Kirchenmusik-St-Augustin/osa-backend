@@ -1,12 +1,20 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
 
+from app.db.models.location import Location
 from app.schemas.artist import ArtistRequest
 from app.schemas.ordinariumwork import OrdinariumworkRequest, OrdinariumworkSetupInput
+from app.schemas.performance import PerformanceRequest, PerformanceSetupInput
 from app.schemas.propriumwork import PropriumworkRequest
-from app.services import artist_service, ordinariumwork_service, propriumwork_service
+from app.services import (
+    artist_service,
+    ordinariumwork_service,
+    performance_service,
+    propriumwork_service,
+)
 
 
 def _unique(base: str = "Name") -> str:
@@ -197,3 +205,53 @@ class TestDeleteArtist:
 
         with pytest.raises(artist_service.ArtistInUseError):
             artist_service.delete_artist(db_session, artist.id)
+
+    def test_blocked_when_performance_references_artist_as_conductor(
+        self, db_session: Session
+    ):
+        """Retrofit regression guard (Schritt 5): Performance.artist_id is
+        the CONDUCTOR, a distinct role from Ordinariumwork/Propriumwork's
+        composer artist_id, but both point at the same `artists` table and
+        Legacy's own $dependencies treats either role as "in use" alike."""
+        composer = artist_service.create_artist(db_session, _request(composer=True))
+        conductor = artist_service.create_artist(db_session, _request(conductor=True))
+        ordinariumwork = ordinariumwork_service.create_ordinariumwork(
+            db_session,
+            OrdinariumworkRequest(
+                name=_unique("Werk"),
+                artist_id=composer.id,
+                setup=OrdinariumworkSetupInput(),
+            ),
+        )
+        now = datetime.now(UTC)
+        location = Location(
+            name=_unique("Location"),
+            order=0,
+            address="Adresse 1",
+            color="000000",
+            created_at=now,
+            updated_at=now,
+        )
+        db_session.add(location)
+        db_session.commit()
+        performance_service.create_performance(
+            db_session,
+            PerformanceRequest(
+                schedule=now + timedelta(days=2),
+                location_id=location.id,
+                ordinariumwork_id=ordinariumwork.id,
+                artist_id=conductor.id,
+                description=None,
+                choirjob_defaultfee=35,
+                instrument_defaultfee=60,
+                voice_defaultfee=110,
+                extracost_amount=None,
+                extracost_description=None,
+                setup=PerformanceSetupInput(),
+                proprium=[],
+                rehearsals=[],
+            ),
+        )
+
+        with pytest.raises(artist_service.ArtistInUseError):
+            artist_service.delete_artist(db_session, conductor.id)

@@ -1,10 +1,11 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.db.models.instrument import Instrument
+from app.db.models.location import Location
 from app.db.models.voice import Voice
 from app.schemas.artist import ArtistRequest
 from app.schemas.ordinariumwork import (
@@ -12,7 +13,8 @@ from app.schemas.ordinariumwork import (
     OrdinariumworkRequest,
     OrdinariumworkSetupInput,
 )
-from app.services import artist_service, ordinariumwork_service
+from app.schemas.performance import PerformanceRequest, PerformanceSetupInput
+from app.services import artist_service, ordinariumwork_service, performance_service
 
 
 def _unique(base: str = "Name") -> str:
@@ -45,6 +47,44 @@ def _make_voice(db_session: Session) -> Voice:
     db_session.add(voice)
     db_session.commit()
     return voice
+
+
+def _make_location(db_session: Session) -> Location:
+    now = datetime.now(UTC)
+    location = Location(
+        name=_unique("Location"),
+        order=0,
+        address="Adresse 1",
+        color="000000",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(location)
+    db_session.commit()
+    return location
+
+
+def _make_performance(
+    db_session: Session, location_id: int, ordinariumwork_id: int
+) -> None:
+    performance_service.create_performance(
+        db_session,
+        PerformanceRequest(
+            schedule=datetime.now(UTC) + timedelta(days=2),
+            location_id=location_id,
+            ordinariumwork_id=ordinariumwork_id,
+            artist_id=None,
+            description=None,
+            choirjob_defaultfee=35,
+            instrument_defaultfee=60,
+            voice_defaultfee=110,
+            extracost_amount=None,
+            extracost_description=None,
+            setup=PerformanceSetupInput(),
+            proprium=[],
+            rehearsals=[],
+        ),
+    )
 
 
 def _request(
@@ -335,3 +375,17 @@ class TestDeleteOrdinariumwork:
 
         with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
             ordinariumwork_service.get_ordinariumwork(db_session, created.id)
+
+    def test_blocked_when_performance_references_it(self, db_session: Session):
+        """Retrofit regression guard (Schritt 5): Legacy's only
+        HasDependencies target for Ordinariumwork (`performances`) now
+        exists in osa-backend."""
+        artist_id = _make_artist(db_session)
+        location = _make_location(db_session)
+        created = ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist_id)
+        )
+        _make_performance(db_session, location.id, created.id)
+
+        with pytest.raises(ordinariumwork_service.OrdinariumworkInUseError):
+            ordinariumwork_service.delete_ordinariumwork(db_session, created.id)

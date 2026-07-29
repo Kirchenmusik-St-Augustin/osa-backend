@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.artist import Artist
+from app.db.models.performance_proprium import PerformanceProprium
 from app.db.models.propriumwork import Propriumwork
 from app.schemas.propriumwork import (
     PropriumworkRequest,
@@ -37,6 +38,14 @@ class PropriumworkValidationError(Exception):
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
         super().__init__("Propriumwork validation failed")
+
+
+class PropriumworkInUseError(Exception):
+    """Raised when delete is blocked by a Performance referencing this
+    Propriumwork -- Legacy's only HasDependencies target (`performances`),
+    retrofitted now that Schritt 5 built that domain. Unlike Ordinariumwork
+    (a direct `ordinariumwork_id` column on `performances`), a Propriumwork
+    is only referenced through the `performance_proprium` pivot table."""
 
 
 def _get_or_404(db: Session, propriumwork_id: int) -> Propriumwork:
@@ -172,11 +181,18 @@ def get_propriumwork(db: Session, propriumwork_id: int) -> PropriumworkResponse:
     return _to_response(db, propriumwork)
 
 
+def _propriumwork_has_dependencies(db: Session, propriumwork_id: int) -> bool:
+    count = db.execute(
+        select(func.count())
+        .select_from(PerformanceProprium)
+        .where(PerformanceProprium.propriumwork_id == propriumwork_id)
+    ).scalar_one()
+    return count > 0
+
+
 def delete_propriumwork(db: Session, propriumwork_id: int) -> None:
-    # Legacy's only HasDependencies target for Propriumwork
-    # (`performances`) doesn't exist in osa-backend yet (Schritt 5) --
-    # delete always succeeds today; a dependency check gets added here
-    # once that domain lands.
     propriumwork = _get_or_404(db, propriumwork_id)
+    if _propriumwork_has_dependencies(db, propriumwork_id):
+        raise PropriumworkInUseError
     db.delete(propriumwork)
     db.commit()

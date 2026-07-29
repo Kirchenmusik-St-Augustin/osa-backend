@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, NoReturn, overload
+from typing import Any, Literal, NoReturn
 
 import jwt
 from google.auth.transport import requests as google_requests
@@ -8,6 +8,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings, require_setting
+from app.core.datetime_utils import ensure_tz_aware
 from app.core.human_names import normalize_givenname, normalize_surname
 from app.core.security import (
     ALGORITHM,
@@ -41,18 +42,6 @@ MAX_LOGIN_ATTEMPTS = 5
 LOGIN_THROTTLE_WINDOW_SECONDS = 60
 
 AuthFailureReason = Literal["unknown_email", "wrong_password", "account_locked"]
-
-
-@overload
-def _ensure_tz_aware(dt: datetime) -> datetime: ...
-@overload
-def _ensure_tz_aware(dt: None) -> None: ...
-def _ensure_tz_aware(dt: datetime | None) -> datetime | None:
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt
 
 
 def log_auth_event(
@@ -107,7 +96,7 @@ def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None
         .order_by(AuthLog.fired_at.desc())
         .limit(1)
     )
-    last_success = _ensure_tz_aware(db.execute(last_success_stmt).scalar_one_or_none())
+    last_success = ensure_tz_aware(db.execute(last_success_stmt).scalar_one_or_none())
 
     effective_start = window_start
     if last_success is not None and last_success > effective_start:
@@ -124,7 +113,7 @@ def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None
         .order_by(AuthLog.fired_at.asc())
     )
     raw_failed_times = db.execute(failed_stmt).scalars().all()
-    failed_times = [_ensure_tz_aware(t) for t in raw_failed_times if t is not None]
+    failed_times = [ensure_tz_aware(t) for t in raw_failed_times if t is not None]
 
     if len(failed_times) < MAX_LOGIN_ATTEMPTS:
         return None
@@ -214,12 +203,12 @@ def refresh_session(
         _invalidate_session(db, session, "Token reuse detected")
 
     now = datetime.now(UTC)
-    last_used = _ensure_tz_aware(session.last_used_at)
+    last_used = ensure_tz_aware(session.last_used_at)
     if last_used and (now - last_used) > timedelta(
         minutes=SESSION_IDLE_TIMEOUT_MINUTES
     ):
         _invalidate_session(db, session, "Session expired due to inactivity")
-    created = _ensure_tz_aware(session.created_at)
+    created = ensure_tz_aware(session.created_at)
     if created and (now - created) > timedelta(days=REFRESH_TOKEN_LIFETIME_DAYS):
         _invalidate_session(db, session, "Session expired")
 
@@ -418,7 +407,7 @@ def execute_password_reset(
     if reset_row is None or not verify_reset_token(token, reset_row.token):
         raise ValueError(invalid_token_msg)
 
-    created_at = _ensure_tz_aware(reset_row.created_at) or datetime.now(UTC)
+    created_at = ensure_tz_aware(reset_row.created_at) or datetime.now(UTC)
     if datetime.now(UTC) - created_at > timedelta(
         minutes=settings.password_reset_ttl_minutes
     ):

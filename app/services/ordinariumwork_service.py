@@ -8,6 +8,7 @@ from app.db.models.artist import Artist
 from app.db.models.instrument import Instrument
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
+from app.db.models.performance import Performance
 from app.db.models.voice import Voice
 from app.schemas.coreelement import CoreelementType
 from app.schemas.ordinariumwork import (
@@ -53,6 +54,13 @@ class OrdinariumworkValidationError(Exception):
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
         super().__init__("Ordinariumwork validation failed")
+
+
+class OrdinariumworkInUseError(Exception):
+    """Raised when delete is blocked by a Performance referencing this
+    Ordinariumwork -- Legacy's only HasDependencies target (`performances`),
+    retrofitted now that Schritt 5 built that domain (was deferred before,
+    mirroring the Instrument/Voice retrofit in coreelement_service.py)."""
 
 
 def _get_or_404(db: Session, ordinariumwork_id: int) -> Ordinariumwork:
@@ -337,13 +345,19 @@ def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
     return OrdinariumworkSetupOutput(instruments=instruments_out, voices=voices_out)
 
 
+def _ordinariumwork_has_dependencies(db: Session, ordinariumwork_id: int) -> bool:
+    count = db.execute(
+        select(func.count())
+        .select_from(Performance)
+        .where(Performance.ordinariumwork_id == ordinariumwork_id)
+    ).scalar_one()
+    return count > 0
+
+
 def delete_ordinariumwork(db: Session, ordinariumwork_id: int) -> None:
-    # Legacy's only HasDependencies target for Ordinariumwork
-    # (`performances`) doesn't exist in osa-backend yet (Schritt 5) --
-    # delete always succeeds today; a dependency check gets added here
-    # once that domain lands, mirroring the Instrument/Voice retrofit in
-    # coreelement_service.py.
     ordinariumwork = _get_or_404(db, ordinariumwork_id)
+    if _ordinariumwork_has_dependencies(db, ordinariumwork_id):
+        raise OrdinariumworkInUseError
     db.execute(
         delete(OrdinariumworkPosition).where(
             OrdinariumworkPosition.ordinariumwork_id == ordinariumwork_id

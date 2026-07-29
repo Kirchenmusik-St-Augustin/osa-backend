@@ -11,7 +11,11 @@ def test_get_db_session_enforces_foreign_keys():
 
 
 def test_get_db_session_can_query_legacy_schema():
+    """A plain smoke test that the legacy schema is queryable at all --
+    not a row-count assertion: `performances` used to always be empty
+    (pre-Schritt-5), but Schritt 5's own tests now populate it in this
+    same shared, non-rolled-back test DB (see conftest.py)."""
     for session in get_db():
         result = session.execute(text("SELECT count(*) FROM performances"))
-        assert result.scalar() == 0
+        assert result.scalar() >= 0
         break

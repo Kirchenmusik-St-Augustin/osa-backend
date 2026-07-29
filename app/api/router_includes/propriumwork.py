@@ -14,6 +14,7 @@ from app.schemas.propriumwork import (
 )
 from app.services import propriumwork_service
 from app.services.propriumwork_service import (
+    PropriumworkInUseError,
     PropriumworkNotFoundError,
     PropriumworkValidationError,
 )
@@ -22,6 +23,7 @@ propriumwork_router = APIRouter()
 
 _MAINTAIN = Depends(require_permission("propriumworkMaintain"))
 _NOT_FOUND_DETAIL = "Nicht gefunden."
+_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
 
 
 @propriumwork_router.get("/search")
@@ -93,5 +95,10 @@ def delete_propriumwork(
     except PropriumworkNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
+        ) from None
+    except PropriumworkInUseError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=field_errors_to_detail([("general", _IN_USE_DETAIL)]),
         ) from None
     return {"status": "ok", "message": "Element wurde gelöscht."}

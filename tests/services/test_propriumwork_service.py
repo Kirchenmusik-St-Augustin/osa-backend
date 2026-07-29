@@ -1,11 +1,20 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
 
+from app.db.models.location import Location
+from app.db.models.ordinariumwork import Ordinariumwork
+from app.db.models.propriumelement import Propriumelement
 from app.schemas.artist import ArtistRequest
+from app.schemas.performance import (
+    PerformancePropriumEntryInput,
+    PerformanceRequest,
+    PerformanceSetupInput,
+)
 from app.schemas.propriumwork import PropriumworkRequest
-from app.services import artist_service, propriumwork_service
+from app.services import artist_service, performance_service, propriumwork_service
 
 
 def _unique(base: str = "Name") -> str:
@@ -20,6 +29,77 @@ def _make_artist(db_session: Session) -> int:
         ),
     )
     return artist.id
+
+
+def _make_location(db_session: Session) -> Location:
+    now = datetime.now(UTC)
+    location = Location(
+        name=_unique("Location"),
+        order=0,
+        address="Adresse 1",
+        color="000000",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(location)
+    db_session.commit()
+    return location
+
+
+def _make_ordinariumwork(db_session: Session, artist_id: int) -> Ordinariumwork:
+    now = datetime.now(UTC)
+    work = Ordinariumwork(
+        name=_unique("Ordinariumwerk"),
+        artist_id=artist_id,
+        demanding=False,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(work)
+    db_session.commit()
+    return work
+
+
+def _make_propriumelement(db_session: Session) -> Propriumelement:
+    now = datetime.now(UTC)
+    element = Propriumelement(
+        name=_unique("Element"), order=0, created_at=now, updated_at=now
+    )
+    db_session.add(element)
+    db_session.commit()
+    return element
+
+
+def _make_performance_with_proprium(
+    db_session: Session,
+    location_id: int,
+    ordinariumwork_id: int,
+    propriumelement_id: int,
+    propriumwork_id: int,
+) -> None:
+    performance_service.create_performance(
+        db_session,
+        PerformanceRequest(
+            schedule=datetime.now(UTC) + timedelta(days=2),
+            location_id=location_id,
+            ordinariumwork_id=ordinariumwork_id,
+            artist_id=None,
+            description=None,
+            choirjob_defaultfee=35,
+            instrument_defaultfee=60,
+            voice_defaultfee=110,
+            extracost_amount=None,
+            extracost_description=None,
+            setup=PerformanceSetupInput(),
+            proprium=[
+                PerformancePropriumEntryInput(
+                    propriumelement_id=propriumelement_id,
+                    propriumwork_id=propriumwork_id,
+                )
+            ],
+            rehearsals=[],
+        ),
+    )
 
 
 def _request(
@@ -187,3 +267,21 @@ class TestDeletePropriumwork:
 
         with pytest.raises(propriumwork_service.PropriumworkNotFoundError):
             propriumwork_service.get_propriumwork(db_session, created.id)
+
+    def test_blocked_when_performance_proprium_references_it(self, db_session: Session):
+        """Retrofit regression guard (Schritt 5): unlike Ordinariumwork (a
+        direct column on `performances`), Propriumwork is only referenced
+        through the `performance_proprium` pivot table."""
+        artist_id = _make_artist(db_session)
+        location = _make_location(db_session)
+        ordinariumwork = _make_ordinariumwork(db_session, artist_id)
+        element = _make_propriumelement(db_session)
+        created = propriumwork_service.create_propriumwork(
+            db_session, _request(artist_id)
+        )
+        _make_performance_with_proprium(
+            db_session, location.id, ordinariumwork.id, element.id, created.id
+        )
+
+        with pytest.raises(propriumwork_service.PropriumworkInUseError):
+            propriumwork_service.delete_propriumwork(db_session, created.id)

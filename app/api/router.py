@@ -7,6 +7,7 @@ from app.api.router_includes.artist import artist_router
 from app.api.router_includes.auth import auth_router
 from app.api.router_includes.coreelement import coreelement_router
 from app.api.router_includes.ordinariumwork import ordinariumwork_router
+from app.api.router_includes.performance import performance_router
 from app.api.router_includes.propriumwork import propriumwork_router
 
 api_router = APIRouter()
@@ -20,4 +21,7 @@ api_router.include_router(
 )
 api_router.include_router(
     propriumwork_router, prefix="/propriumworks", tags=["propriumworks"]
+)
+api_router.include_router(
+    performance_router, prefix="/performances", tags=["performances"]
 )
