@@ -8,7 +8,11 @@ main.py) -- 1:1 vb-api pattern (app/db/base.py)."""
 from app.db.database import Base  # noqa: F401
 from app.db.models.artist import Artist  # noqa: F401
 from app.db.models.auth_log import AuthLog  # noqa: F401
+from app.db.models.booking import Booking  # noqa: F401
+from app.db.models.booking_log import BookingLog  # noqa: F401
+from app.db.models.booking_request import BookingRequest  # noqa: F401
 from app.db.models.choirjob import Choirjob  # noqa: F401
+from app.db.models.fee import Fee  # noqa: F401
 from app.db.models.instrument import Instrument  # noqa: F401
 from app.db.models.location import Location  # noqa: F401
 from app.db.models.oauth2_binding import Oauth2Binding  # noqa: F401
@@ -25,5 +29,6 @@ from app.db.models.propriumwork import Propriumwork  # noqa: F401
 from app.db.models.role import Role  # noqa: F401
 from app.db.models.sent_email import SentEmail  # noqa: F401
 from app.db.models.user import User  # noqa: F401
+from app.db.models.user_position import UserPosition  # noqa: F401
 from app.db.models.user_role import UserRole  # noqa: F401
 from app.db.models.voice import Voice  # noqa: F401

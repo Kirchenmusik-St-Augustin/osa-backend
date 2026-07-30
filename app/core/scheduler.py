@@ -7,9 +7,6 @@ pg_try_advisory_lock guard against duplicate job registration across
 multiple Gunicorn worker processes. Under SQLite (Phase 1, always a single
 dev process) that guard is a no-op; it only becomes active once Phase 2
 (Postgres) runs multiple prod workers, exactly as in vb-api today.
-
-Schritt 1 registers zero jobs on purpose -- real jobs land with their
-respective domain slices (e.g. token/log cleanup, BookingStatus mail).
 """
 
 import logging
@@ -19,6 +16,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from app.db.database import engine
+from app.services.booking_jobs import (
+    notify_upcoming_booking_status,
+    purge_stale_booking_requests,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,28 @@ def start_scheduler() -> None:
             "Scheduler lock held by another worker process -- skipping startup here."
         )
         return
+
+    # Replaces Legacy's Performance::booted() anti-pattern (ran on every
+    # single Model boot); hourly is an arbitrary, reasonable cadence --
+    # Legacy itself had no grace period at all, just "runs constantly".
+    scheduler.add_job(
+        purge_stale_booking_requests,
+        "interval",
+        hours=1,
+        id="purge_stale_booking_requests",
+        replace_existing=True,
+    )
+    # Port of `osa:schedule:send-status-for-upcoming-performances`
+    # (BookingLog::checkNotificationForUpcomingPerformances()), Legacy's
+    # exact 05:00 daily cadence.
+    scheduler.add_job(
+        notify_upcoming_booking_status,
+        "cron",
+        hour=5,
+        minute=0,
+        id="notify_upcoming_booking_status",
+        replace_existing=True,
+    )
 
     scheduler.start()
     logger.info("Scheduler started with %d job(s).", len(scheduler.get_jobs()))

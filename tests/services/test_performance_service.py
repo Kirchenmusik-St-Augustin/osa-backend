@@ -1,5 +1,6 @@
 import itertools
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -7,6 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
+from app.db.models.booking import Booking
+from app.db.models.booking_log import BookingLog
+from app.db.models.booking_request import BookingRequest
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
 from app.db.models.location import Location
@@ -14,6 +18,7 @@ from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.propriumwork import Propriumwork
+from app.db.models.user import User
 from app.db.models.voice import Voice
 from app.schemas.artist import ArtistRequest
 from app.schemas.performance import (
@@ -182,7 +187,7 @@ def _request(
 
 class TestListPerformancesForMonth:
     def test_returns_only_performances_in_the_given_month_ordered_by_schedule(
-        self, db_session: Session
+        self, db_session: Session, make_user: Callable[..., User]
     ):
         # A far-future, dedicated month keeps this test isolated from
         # _unique_schedule()'s day-incrementing performances elsewhere in
@@ -238,7 +243,10 @@ class TestListPerformancesForMonth:
             ),
         )
 
-        items = performance_service.list_performances_for_month(db_session, 2031, 6)
+        user = make_user()
+        items = performance_service.list_performances_for_month(
+            db_session, 2031, 6, user.id
+        )
 
         assert [item.id for item in items] == [earlier.id, later.id]
         later_item = items[1]
@@ -251,10 +259,14 @@ class TestListPerformancesForMonth:
         assert later_item.demanding_proprium is True
         assert later_item.rehearsals[0].comment == "GP"
 
-    def test_empty_month_returns_empty_list(self, db_session: Session):
-        assert (
-            performance_service.list_performances_for_month(db_session, 1999, 1) == []
+    def test_empty_month_returns_empty_list(
+        self, db_session: Session, make_user: Callable[..., User]
+    ):
+        user = make_user()
+        result = performance_service.list_performances_for_month(
+            db_session, 1999, 1, user.id
         )
+        assert result == []
 
 
 class TestCreatePerformance:
@@ -768,6 +780,120 @@ class TestUpdatePerformance:
         ]
         assert [(item.id, item.quantity) for item in setup.voices] == [(added.id, 2)]
 
+    def test_setup_shrink_reconciles_bookings_via_booking_service(
+        self, db_session: Session, make_user
+    ):
+        """Retrofit A.5b (see project_osa_migration_plan memory, Schritt 6
+        plan): shrinking a position's quantity must demote the now-standby
+        booking, and removing a position entirely must purge its bookings
+        -- both via booking_service.reconcile_setup_change, wired in from
+        update_performance()."""
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        kept_instrument = _make_instrument(db_session)
+        removed_instrument = _make_instrument(db_session)
+        schedule = _unique_schedule()
+        created = performance_service.create_performance(
+            db_session,
+            _request(
+                location.id,
+                work.id,
+                schedule=schedule,
+                setup=PerformanceSetupInput(
+                    instruments=[
+                        PerformancePositionInput(id=kept_instrument.id, quantity=2),
+                        PerformancePositionInput(id=removed_instrument.id, quantity=1),
+                    ]
+                ),
+            ),
+        )
+        regular_user, standby_user = make_user(), make_user()
+        removed_user = make_user()
+        now = datetime.now(UTC)
+        db_session.add_all(
+            [
+                Booking(
+                    performance_id=created.id,
+                    user_id=regular_user.id,
+                    position_type="instruments",
+                    position_id=kept_instrument.id,
+                    fee=80,
+                    order=0,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                Booking(
+                    performance_id=created.id,
+                    user_id=standby_user.id,
+                    position_type="instruments",
+                    position_id=kept_instrument.id,
+                    fee=80,
+                    order=1,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                Booking(
+                    performance_id=created.id,
+                    user_id=removed_user.id,
+                    position_type="instruments",
+                    position_id=removed_instrument.id,
+                    fee=80,
+                    order=0,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        db_session.commit()
+
+        performance_service.update_performance(
+            db_session,
+            created.id,
+            _request(
+                location.id,
+                work.id,
+                schedule=schedule,
+                setup=PerformanceSetupInput(
+                    instruments=[
+                        PerformancePositionInput(id=kept_instrument.id, quantity=1)
+                    ]
+                ),
+            ),
+        )
+
+        # Shrinking a quantity does NOT remove the now-standby booking row
+        # (its "regular"/"standby" status is derived from order < quantity,
+        # not stored) -- only the REMOVED position's booking is actually
+        # purged. This mirrors Legacy exactly: saveCastItem's demote path
+        # only logs the transition, it never deletes on its own.
+        remaining = (
+            db_session.execute(
+                select(Booking).where(Booking.performance_id == created.id)
+            )
+            .scalars()
+            .all()
+        )
+        assert {b.user_id for b in remaining} == {regular_user.id, standby_user.id}
+
+        logs = (
+            db_session.execute(
+                select(BookingLog)
+                .where(BookingLog.performance_id == created.id)
+                .order_by(BookingLog.id)
+            )
+            .scalars()
+            .all()
+        )
+        assert any(
+            log.user_id == standby_user.id and log.booking_type == "unbook"
+            for log in logs
+        )
+        assert any(
+            log.user_id == removed_user.id and log.booking_type == "unbook"
+            for log in logs
+        )
+
     def test_proprium_sync_removes_updates_and_adds_entries(self, db_session: Session):
         composer_id = _make_artist(db_session, composer=True)
         location = _make_location(db_session)
@@ -890,11 +1016,104 @@ class TestDeletePerformance:
         with pytest.raises(performance_service.PerformanceInPastError):
             performance_service.delete_performance(db_session, created.id)
 
+    def test_blocked_when_booking_exists(self, db_session: Session, make_user):
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        instrument = _make_instrument(db_session)
+        created = performance_service.create_performance(
+            db_session,
+            _request(
+                location.id,
+                work.id,
+                setup=PerformanceSetupInput(
+                    instruments=[PerformancePositionInput(id=instrument.id, quantity=1)]
+                ),
+            ),
+        )
+        user = make_user()
+        now = datetime.now(UTC)
+        db_session.add(
+            Booking(
+                performance_id=created.id,
+                user_id=user.id,
+                position_type="instruments",
+                position_id=instrument.id,
+                fee=80,
+                order=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db_session.commit()
+
+        with pytest.raises(performance_service.PerformanceInUseError):
+            performance_service.delete_performance(db_session, created.id)
+
+    def test_blocked_when_booking_request_exists(self, db_session: Session, make_user):
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        created = performance_service.create_performance(
+            db_session, _request(location.id, work.id)
+        )
+        user = make_user()
+        now = datetime.now(UTC)
+        db_session.add(
+            BookingRequest(
+                performance_id=created.id,
+                user_id=user.id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db_session.commit()
+
+        with pytest.raises(performance_service.PerformanceInUseError):
+            performance_service.delete_performance(db_session, created.id)
+
 
 class TestGetFormData:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(performance_service.PerformanceNotFoundError):
             performance_service.get_form_data(db_session, 999)
+
+    def test_deletable_is_false_when_booking_exists(
+        self, db_session: Session, make_user
+    ):
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        instrument = _make_instrument(db_session)
+        created = performance_service.create_performance(
+            db_session,
+            _request(
+                location.id,
+                work.id,
+                setup=PerformanceSetupInput(
+                    instruments=[PerformancePositionInput(id=instrument.id, quantity=1)]
+                ),
+            ),
+        )
+        user = make_user()
+        now = datetime.now(UTC)
+        db_session.add(
+            Booking(
+                performance_id=created.id,
+                user_id=user.id,
+                position_type="instruments",
+                position_id=instrument.id,
+                fee=80,
+                order=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db_session.commit()
+
+        form_data = performance_service.get_form_data(db_session, created.id)
+
+        assert form_data.deletable is False
 
     def test_past_performance_raises_immediately(self, db_session: Session):
         composer_id = _make_artist(db_session, composer=True)

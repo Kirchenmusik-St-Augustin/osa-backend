@@ -33,7 +33,10 @@ def test_start_and_stop_scheduler_toggle_running_state():
 
         start_scheduler()
         assert scheduler.running is True
-        assert scheduler.get_jobs() == []
+        assert {job.id for job in scheduler.get_jobs()} == {
+            "purge_stale_booking_requests",
+            "notify_upcoming_booking_status",
+        }
 
         stop_scheduler()
         # AsyncIOScheduler.shutdown() defers the actual state flip via

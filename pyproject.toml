@@ -80,6 +80,7 @@ max-complexity = 8
 # SessionLocal-direct-instantiation exceptions for background-job files
 # without a request context (no Depends(get_db) available there).
 "app/core/mailer.py" = ["TID251"]
+"app/services/booking_jobs.py" = ["TID251"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -19,6 +19,7 @@ from app.schemas.performance import (
 from app.services import performance_service
 from app.services.performance_service import (
     PerformanceInPastError,
+    PerformanceInUseError,
     PerformanceNotFoundError,
     PerformanceValidationError,
 )
@@ -28,6 +29,10 @@ performance_router = APIRouter()
 _MAINTAIN = Depends(require_permission("performanceMaintain"))
 _NOT_FOUND_DETAIL = "Nicht gefunden."
 _IN_PAST_DETAIL = "Die Aufführung liegt bereits in der Vergangenheit."
+_IN_USE_DETAIL = (
+    "Die Aufführung kann nicht gelöscht werden, da bereits Buchungen oder "
+    "Anfragen vorliegen."
+)
 
 
 @performance_router.get("")
@@ -35,9 +40,13 @@ def list_performances(
     year: Annotated[int, Query()],
     month: Annotated[int, Query(ge=1, le=12)],
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> list[PerformanceCalendarItem]:
-    return list(performance_service.list_performances_for_month(db, year, month))
+    return list(
+        performance_service.list_performances_for_month(
+            db, year, month, current_user.id
+        )
+    )
 
 
 @performance_router.get("/available")
@@ -134,5 +143,9 @@ def delete_performance(
     except PerformanceInPastError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=_IN_PAST_DETAIL
+        ) from None
+    except PerformanceInUseError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_IN_USE_DETAIL
         ) from None
     return {"status": "ok", "message": "Element wurde gelöscht."}

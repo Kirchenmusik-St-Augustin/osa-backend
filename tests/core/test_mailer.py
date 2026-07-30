@@ -26,9 +26,13 @@ def test_count_recipients_handles_none_empty_and_multiple():
     assert mailer._count_recipients("a@example.test, b@example.test") == 2
 
 
-def test_format_registration_timestamp():
+def test_format_ymd_timestamp():
     now = datetime(2026, 3, 5, 9, 7, tzinfo=UTC)
-    assert mailer._format_registration_timestamp(now) == "2026-03-05 09:07"
+    assert mailer._format_ymd_timestamp(now) == "2026-03-05 09:07"
+
+
+def test_format_short_date_has_no_leading_zeros():
+    assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 3. 2026"
 
 
 def test_format_notification_timestamp_has_no_leading_zeros():
@@ -219,3 +223,125 @@ def test_log_sent_email_swallows_db_errors(caplog):
         mailer._log_sent_email("a@example.test", "Subject", "<p>hi</p>", "test-key")
 
     assert "Failed to log sent email" in caplog.text
+
+
+def _booking_status_entry(**overrides: object) -> mailer.BookingStatusMailEntry:
+    defaults: dict[str, object] = {
+        "ordinariumwork_artist_name": "MOZART Wolfgang Amadé",
+        "ordinariumwork_name": "Krönungsmesse",
+        "schedule": datetime(2026, 8, 9, 11, 0, tzinfo=UTC),
+        "location_name": "Augustinerkirche",
+        "location_address": "Augustinerstraße 3",
+        "user_name": "Muster, Max",
+        "booked": True,
+    }
+    defaults.update(overrides)
+    return mailer.BookingStatusMailEntry(**defaults)  # type: ignore[arg-type]
+
+
+class TestSendBookingStatusEmail:
+    def test_sends_and_logs_with_singular_intro_for_one_entry(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_booking_status_email(
+                "user@example.test", [_booking_status_entry()]
+            )
+
+        recipients = mock_send.call_args.args[1]
+        assert recipients == ["user@example.test"]
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "booking-status")
+            .one()
+        )
+        assert "die folgende Aufführung" in row.body
+        assert "gebucht" in row.body
+
+    def test_plural_intro_for_multiple_entries(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        with patch("app.core.mailer._send_message"):
+            mailer.send_booking_status_email(
+                "user@example.test",
+                [_booking_status_entry(), _booking_status_entry(booked=False)],
+            )
+
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "booking-status")
+            .one()
+        )
+        assert "die folgenden Aufführungen" in row.body
+        assert "nicht gebucht" in row.body
+
+
+class TestSendBookedOrStandbyCanceledEmail:
+    def test_sends_to_all_disponent_addresses(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        entry = mailer.BookingCanceledMailEntry(
+            ordinariumwork_artist_name="HAYDN Joseph",
+            ordinariumwork_name="Nelsonmesse",
+            schedule=datetime(2026, 9, 1, 10, 0, tzinfo=UTC),
+            location_name="Stephansdom",
+            location_address=None,
+            previous_status=4,
+            position_name="Violine 1",
+        )
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_booked_or_standby_canceled_email(
+                ["disponent1@example.test", "disponent2@example.test"],
+                "Muster, Max",
+                entry,
+            )
+
+        recipients = mock_send.call_args.args[1]
+        assert recipients == ["disponent1@example.test", "disponent2@example.test"]
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "booked-or-standby-canceled")
+            .one()
+        )
+        assert "Muster, Max hat soeben folgende Buchung storniert" in row.body
+        assert "Gebucht" in row.body
+        assert "Violine 1" in row.body
+
+
+class TestSendUserMessageEmail:
+    def test_sends_and_logs_message_body(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_user_message_email(
+                ["a@example.test", "b@example.test"], "Muster, Max", "Hallo zusammen!"
+            )
+
+        recipients = mock_send.call_args.args[1]
+        assert recipients == ["a@example.test", "b@example.test"]
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "user-message")
+            .one()
+        )
+        assert "Muster, Max hat folgende Nachricht geschickt" in row.body
+        assert "Hallo zusammen!" in row.body
+
+    def test_message_html_is_escaped(self, db_session, monkeypatch: pytest.MonkeyPatch):
+        _make_smtp_settings(monkeypatch)
+        with patch("app.core.mailer._send_message"):
+            mailer.send_user_message_email(
+                ["a@example.test"], "Angreifer", "<script>alert(1)</script>"
+            )
+
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "user-message")
+            .one()
+        )
+        assert "<script>" not in row.body
+        assert "&lt;script&gt;" in row.body

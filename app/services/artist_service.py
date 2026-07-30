@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.human_names import normalize_givenname, normalize_surname
+from app.core.human_names import label_for_name, normalize_givenname, normalize_surname
 from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
@@ -39,9 +39,7 @@ def label_for(artist: Artist) -> str:
     """Mirrors Legacy's HasHumanNames::name() virtual attribute
     ("SURNAME, Givenname"), used as the display label in search results
     and embedded in Ordinariumwork/Propriumwork responses."""
-    if not artist.givenname:
-        return artist.surname or ""
-    return f"{artist.surname}, {artist.givenname}"
+    return label_for_name(artist.surname or "", artist.givenname)
 
 
 def _name_year_range_error(field: str, value: int | None) -> tuple[str, str] | None:

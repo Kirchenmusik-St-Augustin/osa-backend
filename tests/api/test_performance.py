@@ -320,3 +320,5 @@ class TestQueryCount:
         assert large_response.status_code == 200
         assert len(large_response.json()) > len(small_response.json())
         assert large.count == small.count
+        assert "user_booking" in small_response.json()[0]
+        assert small_response.json()[0]["user_booking"]["status"] in range(6)

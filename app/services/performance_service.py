@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
 from app.db.models.artist import Artist
+from app.db.models.booking import Booking
+from app.db.models.booking_request import BookingRequest
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
 from app.db.models.location import Location
@@ -35,6 +37,7 @@ from app.schemas.performance import (
 )
 from app.services.artist_service import label_for
 from app.services.coreelement_service import list_coreelements
+from app.services.position_types import POSITION_MODELS, PositionType
 
 _SCHEDULE_TOO_EARLY = "Aufführungs-Datum muss frühestens morgen sein."
 _REHEARSAL_TOO_EARLY = "Proben-Datum muss frühestens morgen sein."
@@ -45,15 +48,6 @@ _LOCATION_HOUR_COLLISION = (
 _LOCATION_HOUR_ARTIST_COLLISION = (
     "Die Kombination aus Aufführungs-Stunde, Ort und Dirigent muss eindeutig sein."
 )
-
-# Legacy's Relation::morphMap allows all three position types for
-# Performance (unlike Ordinariumwork, which excludes choirjobs) -- see
-# project_osa_performance_domain_research memory.
-_POSITION_MODELS: dict[str, type[Instrument | Voice | Choirjob]] = {
-    "instruments": Instrument,
-    "voices": Voice,
-    "choirjobs": Choirjob,
-}
 
 
 class PerformanceNotFoundError(Exception):
@@ -77,6 +71,14 @@ class PerformanceInPastError(Exception):
     2026-07-29, see project_osa_performance_domain_research memory)."""
 
 
+class PerformanceInUseError(Exception):
+    """Raised when delete is blocked by an existing Booking/BookingRequest
+    row -- mirrors Legacy's HasDependencies check
+    (`Performance::$dependencies = ['bookings', 'bookingrequests']`), added
+    once the Booking domain landed (Schritt 6, see
+    project_osa_migration_plan memory plan A.5a)."""
+
+
 def _get_or_404(db: Session, performance_id: int) -> Performance:
     result = db.execute(select(Performance).where(Performance.id == performance_id))
     performance = result.scalar_one_or_none()
@@ -96,9 +98,9 @@ def _tomorrow_start() -> datetime:
 
 
 def _validate_positions(
-    db: Session, items: list[PerformancePositionInput], position_type: str
+    db: Session, items: list[PerformancePositionInput], position_type: PositionType
 ) -> list[tuple[str, str]]:
-    model = _POSITION_MODELS[position_type]
+    model = POSITION_MODELS[position_type]
     errors: list[tuple[str, str]] = []
     seen_ids: set[int] = set()
     for item in items:
@@ -229,7 +231,18 @@ def _validate(
     return errors
 
 
-def _sync_positions(db: Session, performance_id: int, data: PerformanceRequest) -> None:
+def _sync_positions(
+    db: Session, performance_id: int, data: PerformanceRequest
+) -> tuple[set[tuple[str, int]], dict[tuple[str, int], int]]:
+    """Returns (removed_keys, old_quantities) for
+    booking_service.reconcile_setup_change (see project_osa_migration_plan
+    memory, Schritt 6 plan A.5b) -- old_quantities covers only positions
+    that existed for THIS performance before the update, not every
+    Instrument/Voice/Choirjob row system-wide the way Legacy's setup()
+    does: a position never previously configured here cannot have any
+    pre-existing bookings to reconcile against, so the wider sweep would be
+    inert. create_performance() ignores this return value -- a brand-new
+    performance has no prior cast/bookings to reconcile at all."""
     existing = (
         db.execute(
             select(PerformancePosition).where(
@@ -240,6 +253,9 @@ def _sync_positions(db: Session, performance_id: int, data: PerformanceRequest) 
         .all()
     )
     existing_by_key = {(p.position_type, p.position_id): p for p in existing}
+    old_quantities = {
+        key: position.quantity for key, position in existing_by_key.items()
+    }
 
     desired: dict[tuple[str, int], int] = {}
     for item in data.setup.instruments:
@@ -249,9 +265,9 @@ def _sync_positions(db: Session, performance_id: int, data: PerformanceRequest) 
     for item in data.setup.choirjobs:
         desired[("choirjobs", item.id)] = item.quantity
 
-    for key, position in existing_by_key.items():
-        if key not in desired:
-            db.delete(position)
+    removed_keys = {key for key in existing_by_key if key not in desired}
+    for key in removed_keys:
+        db.delete(existing_by_key[key])
 
     now = datetime.now(UTC)
     for (position_type, position_id), quantity in desired.items():
@@ -270,6 +286,7 @@ def _sync_positions(db: Session, performance_id: int, data: PerformanceRequest) 
                     updated_at=now,
                 )
             )
+    return removed_keys, old_quantities
 
 
 def _sync_proprium(db: Session, performance_id: int, data: PerformanceRequest) -> None:
@@ -546,7 +563,7 @@ def get_rehearsals(
 
 
 def list_performances_for_month(
-    db: Session, year: int, month: int
+    db: Session, year: int, month: int, user_id: int
 ) -> Sequence[PerformanceCalendarItem]:
     """Real indexed DB query (SQLite `strftime`), mirroring Legacy's own
     `Performance::ofMonth()` (already a real query there, not an
@@ -599,6 +616,22 @@ def list_performances_for_month(
     proprium_by_performance = _build_proprium_by_performance(db, performance_ids)
     rehearsals_by_performance = _build_rehearsals_by_performance(db, performance_ids)
 
+    # Narrow, function-local import: booking_service imports
+    # PerformanceInPastError/PerformanceNotFoundError from this module at
+    # module level, so a module-level import here would be circular. Port of
+    # the Short resource's `auth_user_booking` accessor (see
+    # project_osa_migration_plan memory, Schritt 6 plan B.4 correction) --
+    # the calendar's self-service badge/trigger needs the real status per
+    # row, batched N+1-safe across the whole month instead of Legacy's own
+    # per-row query.
+    from app.services.booking_service import (  # noqa: PLC0415
+        user_booking_status_for_performances,
+    )
+
+    user_booking_by_performance = user_booking_status_for_performances(
+        db, list(performances), user_id
+    )
+
     items: list[PerformanceCalendarItem] = []
     for performance in performances:
         location = locations_by_id[performance.location_id]
@@ -619,6 +652,7 @@ def list_performances_for_month(
                 ),
                 ordinariumwork_demanding=ordinariumwork.demanding,
                 artist_name=label_for(artist) if artist else None,
+                user_booking=user_booking_by_performance[performance.id],
                 proprium=proprium,
                 demanding_proprium=any(entry.demanding for entry in proprium),
                 rehearsals=rehearsals_by_performance.get(performance.id, []),
@@ -699,10 +733,7 @@ def get_form_data(db: Session, performance_id: int) -> PerformanceFormData:
         setup=get_setup(db, performance_id),
         proprium=get_proprium(db, performance_id),
         rehearsals=get_rehearsals(db, performance_id),
-        # Booking domain (Schritt 6) doesn't exist in osa-backend yet -- the
-        # only current block on deletion is the past-lock above, which
-        # already raised if this performance were past.
-        deletable=True,
+        deletable=not _has_bookings_or_requests(db, performance_id),
     )
 
 
@@ -764,7 +795,7 @@ def create_performance(db: Session, data: PerformanceRequest) -> PerformanceResp
     )
     db.add(performance)
     db.flush()
-    _sync_positions(db, performance.id, data)
+    _sync_positions(db, performance.id, data)  # no prior cast/bookings to reconcile
     _sync_proprium(db, performance.id, data)
     _sync_rehearsals(db, performance.id, data)
     db.commit()
@@ -791,21 +822,51 @@ def update_performance(
     performance.extracost_amount = data.extracost_amount
     performance.extracost_description = data.extracost_description
     performance.updated_at = datetime.now(UTC)
-    _sync_positions(db, performance_id, data)
+    removed_keys, old_quantities = _sync_positions(db, performance_id, data)
     _sync_proprium(db, performance_id, data)
     _sync_rehearsals(db, performance_id, data)
+
+    # Narrow, function-local import: booking_service imports
+    # PerformanceInPastError/PerformanceNotFoundError from this module at
+    # module level, so a module-level import here would be circular. Port
+    # of Performance::setup()'s cast-reconciliation step (see
+    # project_osa_migration_plan memory, Schritt 6 plan A.5b) -- purges
+    # bookings on removed positions and re-evaluates promote/demote on
+    # every remaining position against its old quantity.
+    from app.services.booking_service import reconcile_setup_change  # noqa: PLC0415
+
+    reconcile_setup_change(db, performance_id, removed_keys, old_quantities)
+
     db.commit()
     return _to_response(performance)
 
 
+def _has_bookings_or_requests(db: Session, performance_id: int) -> bool:
+    """Mirrors Legacy's `Performance::$dependencies = ['bookings',
+    'bookingrequests']` -- queries the Booking/BookingRequest models
+    directly (not booking_service) since that's all this needs, avoiding
+    the circular import update_performance's reconcile_setup_change call
+    already has to work around."""
+    booking_count = db.execute(
+        select(func.count())
+        .select_from(Booking)
+        .where(Booking.performance_id == performance_id)
+    ).scalar_one()
+    if booking_count > 0:
+        return True
+    request_count = db.execute(
+        select(func.count())
+        .select_from(BookingRequest)
+        .where(BookingRequest.performance_id == performance_id)
+    ).scalar_one()
+    return request_count > 0
+
+
 def delete_performance(db: Session, performance_id: int) -> None:
-    # Legacy's HasDependencies target for Performance (bookings/
-    # booking_requests) doesn't exist in osa-backend yet (Schritt 6) --
-    # delete is unconditional (besides the past-lock) until that domain
-    # lands, mirroring the Ordinariumwork/Propriumwork precedent from
-    # Schritt 4.
     performance = _get_or_404(db, performance_id)
     _ensure_not_past(performance)
+    if _has_bookings_or_requests(db, performance_id):
+        raise PerformanceInUseError
     db.execute(
         delete(PerformancePosition).where(
             PerformancePosition.performance_id == performance_id

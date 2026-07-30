@@ -101,6 +101,24 @@ class PerformanceLocationOutput(BaseModel):
     address: str | None
 
 
+class PositionRefOutput(BaseModel):
+    id: int
+    name: str
+
+
+class BookingStatusOutput(BaseModel):
+    """Port of `userBookingStatus()`'s 6-state result: 0=not bookable,
+    1=bookable/unrequested, 2=requested, 3=standby, 4=booked/regular,
+    5=rejected ("nicht gebucht"). Lives here (not app.schemas.booking)
+    because PerformanceCalendarItem below needs it too, and booking.py
+    already depends on this module for Location/Proprium/Rehearsal/Setup --
+    the other direction would be circular."""
+
+    status: int
+    position: PositionRefOutput | None = None
+    at: datetime | None = None
+
+
 class PerformanceCalendarItem(BaseModel):
     id: int
     schedule: datetime
@@ -110,6 +128,7 @@ class PerformanceCalendarItem(BaseModel):
     ordinariumwork_artist_name: str
     ordinariumwork_demanding: bool
     artist_name: str | None
+    user_booking: BookingStatusOutput
     proprium: list[PerformancePropriumOutput]
     demanding_proprium: bool
     rehearsals: list[PerformanceRehearsalOutput]

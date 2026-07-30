@@ -10,6 +10,7 @@ see pyproject.toml's per-file-ignores).
 
 import logging
 import smtplib
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -34,7 +35,18 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "email"
 _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=True)
 
 
-def _format_registration_timestamp(now: datetime) -> str:
+def _format_short_date(value: datetime) -> str:
+    # Legacy's `schedule->format('j. m. Y')` -- day/month without leading
+    # zeros, same reasoning as _format_notification_timestamp (strftime's
+    # non-padded %-d/%-m is a glibc-only extension, not portable). Rendered
+    # in Python rather than as a Jinja template filter/global -- Jinja's
+    # type stubs don't model arbitrary-callable globals cleanly, and every
+    # other value already reaches these templates pre-formatted the same
+    # way (see e.g. send_password_reset_email's `count=`).
+    return f"{value.day}. {value.month}. {value.year}"
+
+
+def _format_ymd_timestamp(now: datetime) -> str:
     return now.strftime("%Y-%m-%d %H:%M")
 
 
@@ -205,7 +217,7 @@ def send_new_registration_notice(
     thus the User instance's attribute access) has already been closed."""
     settings = get_settings()
     now = datetime.now(UTC)
-    timestamp = _format_registration_timestamp(now)
+    timestamp = _format_ymd_timestamp(now)
     subject = f"Benachrichtigung über eine neue Registrierung ({timestamp})"
     _send_templated_email(
         [settings.mail_disponent],
@@ -216,4 +228,93 @@ def send_new_registration_notice(
         givenname=givenname,
         email=email,
         phone=phone,
+    )
+
+
+@dataclass(frozen=True)
+class BookingStatusMailEntry:
+    """One row of a `send_booking_status_email` mail -- 1:1 port of
+    Legacy's `booking_status.blade.php` per-BookingLog panel."""
+
+    ordinariumwork_artist_name: str
+    ordinariumwork_name: str
+    schedule: datetime
+    location_name: str
+    location_address: str | None
+    user_name: str
+    booked: bool
+
+
+def _booking_status_entry_context(entry: BookingStatusMailEntry) -> dict[str, object]:
+    return {**asdict(entry), "schedule": _format_short_date(entry.schedule)}
+
+
+def send_booking_status_email(
+    to_email: str, entries: list[BookingStatusMailEntry]
+) -> None:
+    """Port of Legacy's `BookingStatus` mail, sent by the
+    `notify_upcoming_booking_status` scheduled job (see
+    app.services.booking_jobs) -- one mail per user, bundling every
+    booking-log transition they haven't been notified about yet."""
+    now = datetime.now(UTC)
+    subject = f"Benachrichtigung Buchungs-Status ({_format_ymd_timestamp(now)})"
+    _send_templated_email(
+        [to_email],
+        subject,
+        "booking_status.html",
+        "booking-status",
+        entries=[_booking_status_entry_context(entry) for entry in entries],
+    )
+
+
+@dataclass(frozen=True)
+class BookingCanceledMailEntry:
+    """1:1 port of Legacy's `booked_or_standby_canceled.blade.php`
+    template variables."""
+
+    ordinariumwork_artist_name: str
+    ordinariumwork_name: str
+    schedule: datetime
+    location_name: str
+    location_address: str | None
+    previous_status: int
+    position_name: str
+
+
+def send_booked_or_standby_canceled_email(
+    to_emails: list[str], canceling_user_name: str, entry: BookingCanceledMailEntry
+) -> None:
+    """Port of Legacy's `BookedOrStandbyCanceled` mail -- sent synchronously
+    to every `disponent` user when someone self-cancels a booking/standby
+    (booking_service.change_user_request_status)."""
+    now = datetime.now(UTC)
+    subject = f"Eine Buchung wurde storniert! ({_format_ymd_timestamp(now)})"
+    _send_templated_email(
+        to_emails,
+        subject,
+        "booked_or_standby_canceled.html",
+        "booked-or-standby-canceled",
+        canceling_user_name=canceling_user_name,
+        entry={**asdict(entry), "schedule": _format_short_date(entry.schedule)},
+    )
+
+
+def send_user_message_email(
+    to_emails: list[str], sender_name: str, message: str
+) -> None:
+    """Port of Legacy's `UserMessage` mail/`user_message.blade.php` template
+    -- previously only wired up for the unrelated Selfadmin/Support
+    "message a contact person" feature (Schritt 7 scope), now reused for
+    the Schritt-6 MessageToCast send bugfix (see
+    booking_service.send_message_to_cast, project_osa_migration_plan
+    memory)."""
+    now = datetime.now(UTC)
+    subject = f"Kirchenmusik-Benachrichtigung ({_format_ymd_timestamp(now)})"
+    _send_templated_email(
+        to_emails,
+        subject,
+        "user_message.html",
+        "user-message",
+        sender_name=sender_name,
+        message=message,
     )
