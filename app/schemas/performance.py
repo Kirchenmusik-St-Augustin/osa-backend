@@ -107,6 +107,7 @@ class PerformanceCalendarItem(BaseModel):
     location: PerformanceLocationOutput
     ordinariumwork_id: int
     ordinariumwork_name: str
+    ordinariumwork_artist_name: str
     ordinariumwork_demanding: bool
     artist_name: str | None
     proprium: list[PerformancePropriumOutput]
@@ -120,6 +121,8 @@ class PerformanceShowResponse(BaseModel):
     location: PerformanceLocationOutput
     ordinariumwork_id: int
     ordinariumwork_name: str
+    ordinariumwork_artist_name: str
+    ordinariumwork_artist_description: str | None
     ordinariumwork_description: str | None
     ordinariumwork_demanding: bool
     artist_id: int | None

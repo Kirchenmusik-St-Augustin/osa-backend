@@ -78,6 +78,16 @@ def test_too_short_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
         Settings()
 
 
+def test_app_timezone_defaults_to_europe_vienna():
+    assert Settings().app_timezone == "Europe/Vienna"
+
+
+def test_app_timezone_can_be_overridden(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_TIMEZONE", "America/New_York")
+
+    assert Settings().app_timezone == "America/New_York"
+
+
 def test_valid_secret_key_and_tier2_defaults(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.datetime_utils import local_now
 from app.db.models.location import Location
 from app.schemas.artist import ArtistRequest
 from app.schemas.ordinariumwork import OrdinariumworkRequest, OrdinariumworkSetupInput
@@ -237,7 +238,7 @@ class TestDeleteArtist:
         performance_service.create_performance(
             db_session,
             PerformanceRequest(
-                schedule=now + timedelta(days=2),
+                schedule=local_now() + timedelta(days=2),
                 location_id=location.id,
                 ordinariumwork_id=ordinariumwork.id,
                 artist_id=conductor.id,

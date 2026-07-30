@@ -150,6 +150,7 @@ class TestCrudRoundtrip:
         show_response = client.get(f"/performances/{created['id']}", headers=headers)
         assert show_response.status_code == 200
         assert show_response.json()["ordinariumwork_id"] == work_id
+        assert show_response.json()["ordinariumwork_artist_name"]
 
         update_response = client.put(
             f"/performances/{created['id']}",

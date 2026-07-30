@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.datetime_utils import local_now
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
 from app.db.models.location import Location
@@ -38,9 +39,12 @@ def _unique_schedule() -> datetime:
     hour-boundary arithmetic in collision tests (+/- N minutes) is
     deterministic regardless of the wall-clock minute the suite happens to
     run at (an earlier version of this helper was flaky right around the
-    top of an hour for exactly that reason)."""
+    top of an hour for exactly that reason). Naive local_now()-based, not
+    datetime.now(UTC) -- `schedule` is a naive wall-clock value, and
+    comparing it against an aware datetime raises TypeError (see
+    app.core.datetime_utils.local_now())."""
     days_ahead = next(_schedule_counter)
-    base = datetime.now(UTC) + timedelta(days=days_ahead)
+    base = local_now() + timedelta(days=days_ahead)
     return base.replace(minute=0, second=0, microsecond=0)
 
 
@@ -146,7 +150,7 @@ def _move_to_past(db_session: Session, performance_id: int) -> None:
     performance = db_session.execute(
         select(Performance).where(Performance.id == performance_id)
     ).scalar_one()
-    performance.schedule = datetime.now(UTC) - timedelta(days=1)
+    performance.schedule = local_now() - timedelta(days=1)
     db_session.commit()
 
 
@@ -201,7 +205,7 @@ class TestListPerformancesForMonth:
             _request(
                 location.id,
                 work.id,
-                schedule=datetime(2031, 6, 20, 11, 0, tzinfo=UTC),
+                schedule=datetime(2031, 6, 20, 11, 0),  # noqa: DTZ001 -- naive on purpose
                 artist_id=conductor.id,
                 proprium=[
                     PerformancePropriumEntryInput(
@@ -210,7 +214,8 @@ class TestListPerformancesForMonth:
                 ],
                 rehearsals=[
                     PerformanceRehearsalInput(
-                        schedule=datetime(2031, 6, 19, 18, 0, tzinfo=UTC), comment="GP"
+                        schedule=datetime(2031, 6, 19, 18, 0),  # noqa: DTZ001 -- naive on purpose
+                        comment="GP",
                     )
                 ],
             ),
@@ -218,14 +223,18 @@ class TestListPerformancesForMonth:
         earlier = performance_service.create_performance(
             db_session,
             _request(
-                location.id, work.id, schedule=datetime(2031, 6, 6, 9, 0, tzinfo=UTC)
+                location.id,
+                work.id,
+                schedule=datetime(2031, 6, 6, 9, 0),  # noqa: DTZ001 -- naive on purpose
             ),
         )
         # A different month must not appear in the June 2031 result.
         performance_service.create_performance(
             db_session,
             _request(
-                location.id, work.id, schedule=datetime(2031, 7, 6, 9, 0, tzinfo=UTC)
+                location.id,
+                work.id,
+                schedule=datetime(2031, 7, 6, 9, 0),  # noqa: DTZ001 -- naive on purpose
             ),
         )
 
@@ -235,6 +244,10 @@ class TestListPerformancesForMonth:
         later_item = items[1]
         assert later_item.location.id == location.id
         assert later_item.artist_name == "ORTNER, Erwin"
+        assert (
+            later_item.ordinariumwork_artist_name
+            == f"{composer.surname}, {composer.givenname}"
+        )
         assert later_item.demanding_proprium is True
         assert later_item.rehearsals[0].comment == "GP"
 
@@ -266,7 +279,7 @@ class TestCreatePerformance:
         with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
             performance_service.create_performance(
                 db_session,
-                _request(location.id, work.id, schedule=datetime.now(UTC)),
+                _request(location.id, work.id, schedule=local_now()),
             )
 
         assert exc_info.value.errors == [
@@ -492,9 +505,7 @@ class TestCreatePerformance:
                     location.id,
                     work.id,
                     rehearsals=[
-                        PerformanceRehearsalInput(
-                            schedule=datetime.now(UTC), comment=None
-                        )
+                        PerformanceRehearsalInput(schedule=local_now(), comment=None)
                     ],
                 ),
             )

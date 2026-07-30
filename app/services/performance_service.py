@@ -4,7 +4,7 @@ from datetime import UTC, datetime, time, timedelta
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.core.datetime_utils import ensure_tz_aware
+from app.core.datetime_utils import local_now
 from app.db.models.artist import Artist
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
@@ -86,13 +86,13 @@ def _get_or_404(db: Session, performance_id: int) -> Performance:
 
 
 def _ensure_not_past(performance: Performance) -> None:
-    if ensure_tz_aware(performance.schedule) < datetime.now(UTC):
+    if performance.schedule < local_now():
         raise PerformanceInPastError
 
 
 def _tomorrow_start() -> datetime:
-    now = datetime.now(UTC)
-    return datetime.combine(now.date() + timedelta(days=1), time.min, tzinfo=UTC)
+    now = local_now()
+    return datetime.combine(now.date() + timedelta(days=1), time.min)
 
 
 def _validate_positions(
@@ -144,9 +144,9 @@ def _validate_proprium(db: Session, data: PerformanceRequest) -> list[tuple[str,
 def _validate_rehearsals(data: PerformanceRequest) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
     tomorrow_start = _tomorrow_start()
-    schedule = ensure_tz_aware(data.schedule)
+    schedule = data.schedule
     for rehearsal in data.rehearsals:
-        rehearsal_schedule = ensure_tz_aware(rehearsal.schedule)
+        rehearsal_schedule = rehearsal.schedule
         if rehearsal_schedule < tomorrow_start:
             errors.append(("rehearsals", _REHEARSAL_TOO_EARLY))
         if rehearsal_schedule > schedule:
@@ -161,7 +161,7 @@ def _validate_collision(
     indexes) and, per User-Entscheidung 2026-07-29, now runs on both
     create AND update (Legacy itself only ran this on create -- a real gap,
     fixed here, see project_osa_performance_domain_research memory)."""
-    schedule = ensure_tz_aware(data.schedule)
+    schedule = data.schedule
     hour_start = schedule.replace(minute=0, second=0, microsecond=0)
     hour_end = hour_start + timedelta(hours=1)
 
@@ -172,7 +172,7 @@ def _validate_collision(
     same_hour = [
         performance
         for performance in same_location
-        if hour_start <= ensure_tz_aware(performance.schedule) < hour_end
+        if hour_start <= performance.schedule < hour_end
     ]
 
     errors: list[tuple[str, str]] = []
@@ -187,7 +187,7 @@ def _validate(
     db: Session, data: PerformanceRequest, exclude_id: int | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
-    schedule = ensure_tz_aware(data.schedule)
+    schedule = data.schedule
 
     if schedule < _tomorrow_start():
         errors.append(("schedule", _SCHEDULE_TOO_EARLY))
@@ -323,7 +323,7 @@ def _sync_rehearsals(
     now = datetime.now(UTC)
     seen_schedules: set[datetime] = set()
     for rehearsal in data.rehearsals:
-        schedule = ensure_tz_aware(rehearsal.schedule)
+        schedule = rehearsal.schedule
         if schedule in seen_schedules:
             continue
         seen_schedules.add(schedule)
@@ -551,8 +551,9 @@ def list_performances_for_month(
     """Real indexed DB query (SQLite `strftime`), mirroring Legacy's own
     `Performance::ofMonth()` (already a real query there, not an
     anti-pattern to fix) -- relies on `schedule` always being written as a
-    UTC-normalized, offset-free string (see ensure_tz_aware/datetime.now(UTC)
-    convention), so a plain '%Y-%m' prefix match is reliable."""
+    naive local wall-clock string (Settings.app_timezone, see
+    app.core.datetime_utils.local_now()), never UTC-converted, so a plain
+    '%Y-%m' prefix match is reliable."""
     month_str = f"{year:04d}-{month:02d}"
     performances = (
         db.execute(
@@ -569,7 +570,6 @@ def list_performances_for_month(
     performance_ids = [p.id for p in performances]
     location_ids = {p.location_id for p in performances}
     ordinariumwork_ids = {p.ordinariumwork_id for p in performances}
-    artist_ids = {p.artist_id for p in performances if p.artist_id is not None}
 
     locations_by_id = {
         location.id: location
@@ -587,16 +587,15 @@ def list_performances_for_month(
         .scalars()
         .all()
     }
-    artists_by_id = (
-        {
-            artist.id: artist
-            for artist in db.execute(select(Artist).where(Artist.id.in_(artist_ids)))
-            .scalars()
-            .all()
-        }
-        if artist_ids
-        else {}
-    )
+    artist_ids = {p.artist_id for p in performances if p.artist_id is not None} | {
+        work.artist_id for work in ordinariumworks_by_id.values()
+    }
+    artists_by_id = {
+        artist.id: artist
+        for artist in db.execute(select(Artist).where(Artist.id.in_(artist_ids)))
+        .scalars()
+        .all()
+    }
     proprium_by_performance = _build_proprium_by_performance(db, performance_ids)
     rehearsals_by_performance = _build_rehearsals_by_performance(db, performance_ids)
 
@@ -615,6 +614,9 @@ def list_performances_for_month(
                 location=_location_output(location),
                 ordinariumwork_id=ordinariumwork.id,
                 ordinariumwork_name=ordinariumwork.name,
+                ordinariumwork_artist_name=label_for(
+                    artists_by_id[ordinariumwork.artist_id]
+                ),
                 ordinariumwork_demanding=ordinariumwork.demanding,
                 artist_name=label_for(artist) if artist else None,
                 proprium=proprium,
@@ -633,6 +635,9 @@ def get_performance_detail(db: Session, performance_id: int) -> PerformanceShowR
     ordinariumwork = db.execute(
         select(Ordinariumwork).where(Ordinariumwork.id == performance.ordinariumwork_id)
     ).scalar_one()
+    ordinariumwork_artist = db.execute(
+        select(Artist).where(Artist.id == ordinariumwork.artist_id)
+    ).scalar_one()
     artist = (
         db.execute(
             select(Artist).where(Artist.id == performance.artist_id)
@@ -648,6 +653,8 @@ def get_performance_detail(db: Session, performance_id: int) -> PerformanceShowR
         location=_location_output(location),
         ordinariumwork_id=ordinariumwork.id,
         ordinariumwork_name=ordinariumwork.name,
+        ordinariumwork_artist_name=label_for(ordinariumwork_artist),
+        ordinariumwork_artist_description=ordinariumwork_artist.description,
         ordinariumwork_description=ordinariumwork.description,
         ordinariumwork_demanding=ordinariumwork.demanding,
         artist_id=performance.artist_id,
@@ -742,7 +749,7 @@ def create_performance(db: Session, data: PerformanceRequest) -> PerformanceResp
 
     now = datetime.now(UTC)
     performance = Performance(
-        schedule=ensure_tz_aware(data.schedule),
+        schedule=data.schedule,
         location_id=data.location_id,
         ordinariumwork_id=data.ordinariumwork_id,
         artist_id=data.artist_id,
@@ -773,7 +780,7 @@ def update_performance(
     if errors:
         raise PerformanceValidationError(errors)
 
-    performance.schedule = ensure_tz_aware(data.schedule)
+    performance.schedule = data.schedule
     performance.location_id = data.location_id
     performance.ordinariumwork_id = data.ordinariumwork_id
     performance.artist_id = data.artist_id

@@ -58,6 +58,13 @@ class Settings(BaseSettings):
         default=7, validation_alias="REFRESH_TOKEN_LIFETIME_DAYS"
     )
     password_min_length: int = Field(default=8, validation_alias="PASSWORD_MIN_LENGTH")
+    # Mirrors Legacy's config('app.timezone') -- the single source of truth
+    # for interpreting/comparing naive wall-clock columns like
+    # Performance.schedule (see app.core.datetime_utils.local_now()). Not a
+    # Tier 1 setting: a sane default keeps the app bootable, but stays a real
+    # setting (not a hardcoded literal) so a future multi-timezone deployment
+    # is a config change, not a code change.
+    app_timezone: str = Field(default="Europe/Vienna", validation_alias="APP_TIMEZONE")
 
     # Tier 2 (mail) -- defaults taken from Legacy's config/mail.php /
     # config/osa.php so the migrated values stay identical.

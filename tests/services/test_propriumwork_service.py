@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.datetime_utils import local_now
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.propriumelement import Propriumelement
@@ -80,7 +81,7 @@ def _make_performance_with_proprium(
     performance_service.create_performance(
         db_session,
         PerformanceRequest(
-            schedule=datetime.now(UTC) + timedelta(days=2),
+            schedule=local_now() + timedelta(days=2),
             location_id=location_id,
             ordinariumwork_id=ordinariumwork_id,
             artist_id=None,
