@@ -1434,7 +1434,7 @@ def get_message_recipients(
             id=user.id,
             surname=user.surname,
             givenname=user.givenname,
-            has_email=user.email is not None,
+            has_email=user.email_verified_at is not None,
             email=user.email if user.email_verified_at is not None else None,
             phone=user.phone,
         )

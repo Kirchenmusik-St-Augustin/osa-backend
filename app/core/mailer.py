@@ -117,7 +117,12 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
 
 
 def _log_sent_email(
-    to_str: str, subject: str, html_body: str, template_key: str
+    to_str: str,
+    subject: str,
+    html_body: str,
+    template_key: str,
+    *,
+    use_bcc: bool = False,
 ) -> None:
     settings = get_settings()
     try:
@@ -127,7 +132,8 @@ def _log_sent_email(
             db.add(
                 SentEmail(
                     mail_from=settings.smtp_from_email,
-                    to=to_str,
+                    to=None if use_bcc else to_str,
+                    bcc=to_str if use_bcc else None,
                     subject=subject,
                     body=html_body,
                     headers=template_key,
@@ -150,6 +156,8 @@ def _send_templated_email(
     subject: str,
     template_name: str,
     template_key: str,
+    *,
+    use_bcc: bool = False,
     **context: object,
 ) -> None:
     settings = get_settings()
@@ -178,12 +186,19 @@ def _send_templated_email(
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = from_header
-    msg["To"] = to_str
+    # BCC: every address in `to_emails` is still delivered individually via
+    # the SMTP envelope (`_send_message`'s `recipients` argument controls
+    # actual delivery, independent of this header) -- but the visible "To"
+    # header shows only our own sender address instead of the full list, so
+    # a multi-recipient blast (e.g. MessageToCast) never exposes one
+    # recipient's address to another (Datenschutz, User-confirmed
+    # 2026-07-31).
+    msg["To"] = from_header if use_bcc else to_str
     msg["Reply-To"] = f'"{settings.smtp_from_name}" <{settings.mail_disponent}>'
     msg.attach(MIMEText(html_content, "html", "utf-8"))
 
     _send_message(msg, to_emails)
-    _log_sent_email(to_str, subject, html_content, template_key)
+    _log_sent_email(to_str, subject, html_content, template_key, use_bcc=use_bcc)
 
 
 def send_verification_email(to_email: str, verify_url: str) -> None:
@@ -307,7 +322,11 @@ def send_user_message_email(
     "message a contact person" feature (Schritt 7 scope), now reused for
     the Schritt-6 MessageToCast send bugfix (see
     booking_service.send_message_to_cast, project_osa_migration_plan
-    memory)."""
+    memory). Sent via Bcc (User-confirmed 2026-07-31, Datenschutz) --
+    `to_emails` here is a disponent-picked, potentially large group of
+    musicians/singers who don't necessarily know each other and have no
+    reason to see one another's address, unlike e.g. the small, fixed
+    disponent group send_booked_or_standby_canceled_email addresses."""
     now = datetime.now(UTC)
     subject = f"Kirchenmusik-Benachrichtigung ({_format_ymd_timestamp(now)})"
     _send_templated_email(
@@ -315,6 +334,7 @@ def send_user_message_email(
         subject,
         "user_message.html",
         "user-message",
+        use_bcc=True,
         sender_name=sender_name,
         message=message,
     )

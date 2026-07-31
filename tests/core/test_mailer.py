@@ -331,6 +331,33 @@ class TestSendUserMessageEmail:
         assert "Muster, Max hat folgende Nachricht geschickt" in row.body
         assert "Hallo zusammen!" in row.body
 
+    def test_sends_via_bcc_so_recipients_never_see_each_other(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Datenschutz (User-confirmed 2026-07-31): a MessageToCast blast
+        can go out to dozens of musicians/singers who don't know each
+        other -- none of their addresses may appear in a header any of
+        them can see, even though every one of them still gets delivered
+        the message via the SMTP envelope (`_send_message`'s `recipients`
+        argument, asserted above/unaffected by this)."""
+        _make_smtp_settings(monkeypatch)
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_user_message_email(
+                ["a@example.test", "b@example.test"], "Muster, Max", "Hallo zusammen!"
+            )
+
+        msg = mock_send.call_args.args[0]
+        assert "a@example.test" not in msg["To"]
+        assert "b@example.test" not in msg["To"]
+
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "user-message")
+            .one()
+        )
+        assert row.to is None
+        assert row.bcc == "a@example.test, b@example.test"
+
     def test_message_html_is_escaped(self, db_session, monkeypatch: pytest.MonkeyPatch):
         _make_smtp_settings(monkeypatch)
         with patch("app.core.mailer._send_message"):

@@ -1221,27 +1221,57 @@ class TestMessageToCast:
 
         assert [r.id for r in recipients] == [voice_user.id]
 
-    def test_get_message_recipients_distinguishes_has_email_from_verified_email(
+    def test_get_message_recipients_has_email_reflects_verification_status(
         self, db_session: Session, make_user
     ):
-        instrument = _make_instrument(db_session)
-        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
-        user = make_user()
+        """`has_email` mirrors Legacy's Directory resource `hasEmail` --
+        which IS `hasVerifiedEmail()`, not merely "has any email address"
+        -- so a recipient whose switch is enabled in the MessageToCast UI
+        is always someone who can actually receive the message (matches
+        send_message_to_cast()'s own verified-only filter one-to-one,
+        instead of letting an unverified address look selectable while
+        silently going nowhere)."""
+        unverified_instrument = _make_instrument(db_session)
+        unverified_performance_id = _make_performance(
+            db_session, instruments={unverified_instrument.id: 1}
+        )
+        unverified_user = make_user()
         booking_service._save_cast_item(
             db_session,
-            performance_id,
+            unverified_performance_id,
             "instruments",
-            instrument.id,
-            new_cast=[(user.id, 80)],
+            unverified_instrument.id,
+            new_cast=[(unverified_user.id, 80)],
             old_quantity=None,
         )
 
-        recipients = booking_service.get_message_recipients(
-            db_session, performance_id, None, None
+        verified_instrument = _make_instrument(db_session)
+        verified_performance_id = _make_performance(
+            db_session, instruments={verified_instrument.id: 1}
+        )
+        verified_user = make_user()
+        verified_user.email_verified_at = datetime.now(UTC)
+        db_session.commit()
+        booking_service._save_cast_item(
+            db_session,
+            verified_performance_id,
+            "instruments",
+            verified_instrument.id,
+            new_cast=[(verified_user.id, 80)],
+            old_quantity=None,
         )
 
-        assert recipients[0].has_email is True
-        assert recipients[0].email is None  # make_user() never verifies the email
+        unverified_recipients = booking_service.get_message_recipients(
+            db_session, unverified_performance_id, None, None
+        )
+        assert unverified_recipients[0].has_email is False
+        assert unverified_recipients[0].email is None
+
+        verified_recipients = booking_service.get_message_recipients(
+            db_session, verified_performance_id, None, None
+        )
+        assert verified_recipients[0].has_email is True
+        assert verified_recipients[0].email == verified_user.email
 
     def test_send_message_to_cast_returns_verified_recipients_only(
         self, db_session: Session, make_user
