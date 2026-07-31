@@ -589,11 +589,20 @@ def _get_staff(
         for item in items:
             requesting: list[BookableUserOutput] = []
             other: list[BookableUserOutput] = []
-            for user_id in qualified.get((position_type, item.id), set()):
-                user = users_by_id.get(user_id)
-                if user is None:
-                    continue
-                bucket = requesting if user_id in requesting_user_ids else other
+            # Legacy sorts these implicitly via User's global
+            # OrderBySurnameGivenname scope (Performance::staff() itself
+            # has no explicit orderBy) -- qualified user ids come out of a
+            # plain set here, so the sort has to happen explicitly.
+            candidates = sorted(
+                (
+                    user
+                    for user_id in qualified.get((position_type, item.id), set())
+                    if (user := users_by_id.get(user_id)) is not None
+                ),
+                key=lambda user: (user.surname, user.givenname),
+            )
+            for user in candidates:
+                bucket = requesting if user.id in requesting_user_ids else other
                 bucket.append(BookableUserOutput(id=user.id, name=_display_name(user)))
             sections[position_type].append(
                 StaffItemOutput(

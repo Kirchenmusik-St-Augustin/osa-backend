@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
+from app.core.security import get_password_hash
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.booking_request import BookingRequest
@@ -16,6 +17,7 @@ from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from app.db.models.user import User
 from app.db.models.voice import Voice
 from app.schemas.artist import ArtistRequest
 from app.schemas.booking import (
@@ -226,6 +228,18 @@ def _make_booking_request(
     db_session.add(request)
     db_session.commit()
     return request
+
+
+def _make_named_user(db_session: Session, *, surname: str, givenname: str) -> User:
+    user = User(
+        surname=surname,
+        givenname=givenname,
+        email=f"{_unique('user')}@example.test",
+        auth_password=get_password_hash("correct-horse-battery-staple"),
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
 
 
 def _qualify(
@@ -736,6 +750,36 @@ class TestGetCastPageAndSaveCast:
         assert page.setup.instruments[0].id == instrument.id
         assert page.setup.instruments[0].quantity == 2
         assert len(page.fees) >= 1
+
+    def test_get_cast_page_sorts_bookable_candidates_alphabetically(
+        self, db_session: Session
+    ):
+        # Legacy sorts these implicitly via User's global
+        # OrderBySurnameGivenname scope, not any explicit orderBy in
+        # Performance::staff() itself -- qualified user ids come out of a
+        # plain Python set on this side, so this is a real regression risk,
+        # not just cosmetic (see project_osa_migration_plan memory).
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        zimmermann = _make_named_user(
+            db_session, surname="ZIMMERMANN", givenname="Anna"
+        )
+        adler = _make_named_user(db_session, surname="ADLER", givenname="Bernd")
+        mueller = _make_named_user(db_session, surname="MUELLER", givenname="Clara")
+        for user in (zimmermann, adler, mueller):
+            _qualify(db_session, user.id, "instruments", instrument.id)
+        _make_booking_request(db_session, performance_id, mueller.id)
+
+        page = booking_service.get_cast_page(db_session, performance_id)
+
+        bookable = page.staff.instruments[0].bookable
+        assert [candidate.name for candidate in bookable.other] == [
+            "ADLER, Bernd",
+            "ZIMMERMANN, Anna",
+        ]
+        assert [candidate.name for candidate in bookable.requesting] == [
+            "MUELLER, Clara",
+        ]
 
     def test_get_cast_page_raises_for_past_performance(self, db_session: Session):
         instrument = _make_instrument(db_session)
