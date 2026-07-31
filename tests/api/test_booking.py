@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
@@ -296,11 +297,17 @@ class TestMessageToCast:
             session.merge(recipient)
             session.commit()
 
-        response = client.post(
-            f"/performances/{performance_id}/message-to-cast/send",
-            json={"recipient_ids": [recipient.id], "message": "Hallo!"},
-            headers=headers,
-        )
+        # The send endpoint fires the actual email via a BackgroundTask,
+        # which BaseHTTPMiddleware/TestClient runs synchronously as part of
+        # the request -- without mocking it out, this test would need a
+        # real SMTP_HOST and silently depended on the dev container's
+        # Mailpit config, breaking in CI (no SMTP_HOST there).
+        with patch("app.core.mailer.send_user_message_email"):
+            response = client.post(
+                f"/performances/{performance_id}/message-to-cast/send",
+                json={"recipient_ids": [recipient.id], "message": "Hallo!"},
+                headers=headers,
+            )
 
         assert response.status_code == 200
 
