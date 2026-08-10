@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import app.db.base
+from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.api.router import api_router
 from app.api.system import system_router
 from app.core.config import get_settings
@@ -136,6 +137,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+# Registered AFTER CORSMiddleware so add_middleware's LIFO stacking makes it
+# the outermost layer -- it sees the actual final response (Admin-/Audit-
+# Viewer, Schritt 9), not an intermediate one.
+app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(system_router)  # root-level health check, no prefix
 app.include_router(api_router)  # wiring point for future domain routers, empty today

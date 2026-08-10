@@ -12,7 +12,11 @@ from app.api.router_includes.ordinariumwork import ordinariumwork_router
 from app.api.router_includes.performance import performance_router
 from app.api.router_includes.profile import profile_router
 from app.api.router_includes.propriumwork import propriumwork_router
+from app.api.router_includes.request_log import request_log_router
+from app.api.router_includes.sent_email import sent_email_router
+from app.api.router_includes.statistics import statistics_router
 from app.api.router_includes.support import support_router
+from app.api.router_includes.system import system_router
 from app.api.router_includes.user import user_router
 from app.api.router_includes.user_administration import user_administration_router
 from app.api.router_includes.userdirectory import userdirectory_router
@@ -45,3 +49,11 @@ api_router.include_router(
 )
 api_router.include_router(profile_router, prefix="/profile", tags=["profile"])
 api_router.include_router(support_router, prefix="/support", tags=["support"])
+api_router.include_router(
+    sent_email_router, prefix="/administrator/sent-emails", tags=["sent-emails"]
+)
+api_router.include_router(
+    request_log_router, prefix="/administrator/request-logs", tags=["request-logs"]
+)
+api_router.include_router(statistics_router, prefix="/statistics", tags=["statistics"])
+api_router.include_router(system_router, prefix="/system", tags=["system"])

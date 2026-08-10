@@ -64,11 +64,16 @@ def _count_recipients(value: str | None) -> int:
 
 @dataclass(frozen=True)
 class MailKillSwitchStatus:
-    """Frontend-facing kill-switch status -- see get_kill_switch_status()."""
+    """Frontend-facing kill-switch status -- see get_kill_switch_status().
+    `sent` is exclusively for the Statistics page (Schritt 9) -- deliberately
+    NOT added to EmailKillSwitchStatusOutput/GET /auth/me (see Schritt 7's
+    cross-cutting decision: a live counter on every login is unnecessary
+    weight, it belongs on its own dedicated endpoint instead)."""
 
     active: bool
     period_days: int
     threshold: int
+    sent: int
 
 
 def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
@@ -79,11 +84,15 @@ def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
     pure logging -- never a failed request, see _send_templated_email.
     Public (unlike the private helpers around it) because it also drives
     the frontend's proactive warning icon/card (GET /auth/me,
-    MessageToContactpersonView, MessageToCastView -- Schritt 7).
+    MessageToContactpersonView, MessageToCastView -- Schritt 7) and the
+    Statistics page's "sent" counter (Schritt 9).
 
     Fail-safe, 1:1 Legacy's `SentEmail::ensureThresholdCompliance()`: if the
     counting query itself fails, treat mail as disabled rather than risk
-    silently missing an over-threshold state."""
+    silently missing an over-threshold state. `sent` reports the configured
+    threshold itself in that case (the real count is genuinely unknown, but
+    `active=True` already signals "at/over limit" -- reporting anything
+    below threshold there would visually contradict that)."""
     settings = get_settings()
     try:
         window_start = datetime.now(UTC) - timedelta(
@@ -100,6 +109,7 @@ def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
             active=True,
             period_days=settings.mail_kill_switch_period_days,
             threshold=settings.mail_kill_switch_threshold,
+            sent=settings.mail_kill_switch_threshold,
         )
     total_recipients = sum(
         _count_recipients(row.to)
@@ -111,6 +121,7 @@ def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
         active=total_recipients >= settings.mail_kill_switch_threshold,
         period_days=settings.mail_kill_switch_period_days,
         threshold=settings.mail_kill_switch_threshold,
+        sent=total_recipients,
     )
 
 

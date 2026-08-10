@@ -12,6 +12,7 @@ from app.db.models.booking import Booking  # noqa: F401
 from app.db.models.booking_log import BookingLog  # noqa: F401
 from app.db.models.booking_request import BookingRequest  # noqa: F401
 from app.db.models.choirjob import Choirjob  # noqa: F401
+from app.db.models.client_user_agent import ClientUserAgent  # noqa: F401
 from app.db.models.fee import Fee  # noqa: F401
 from app.db.models.instrument import Instrument  # noqa: F401
 from app.db.models.location import Location  # noqa: F401
@@ -26,6 +27,7 @@ from app.db.models.performance_rehearsal import PerformanceRehearsal  # noqa: F4
 from app.db.models.personal_access_token import PersonalAccessToken  # noqa: F401
 from app.db.models.propriumelement import Propriumelement  # noqa: F401
 from app.db.models.propriumwork import Propriumwork  # noqa: F401
+from app.db.models.request_log import RequestLog  # noqa: F401
 from app.db.models.role import Role  # noqa: F401
 from app.db.models.sent_email import SentEmail  # noqa: F401
 from app.db.models.user import User  # noqa: F401

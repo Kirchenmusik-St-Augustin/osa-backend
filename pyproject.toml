@@ -81,6 +81,7 @@ max-complexity = 8
 # without a request context (no Depends(get_db) available there).
 "app/core/mailer.py" = ["TID251"]
 "app/services/booking_jobs.py" = ["TID251"]
+"app/api/middleware/request_logging.py" = ["TID251"]
 
 [tool.ruff.format]
 quote-style = "double"

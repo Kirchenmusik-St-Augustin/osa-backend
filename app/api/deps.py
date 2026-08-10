@@ -37,6 +37,22 @@ def _decode_token(token: str) -> tuple[str, str]:
         return email, token_id
 
 
+def try_decode_token(token: str) -> str | None:
+    """Best-effort variant of `_decode_token()` for callers that must never
+    raise or 401 -- currently only `RequestLoggingMiddleware`, which wants
+    a `user_id` for log attribution but must never block/reject a request
+    over a missing or stale token (no idle-timeout/session-revocation check
+    either, unlike the real `get_current_user` dependency -- this is purely
+    "who probably made this request", not an auth gate). Returns the email
+    on success, None on any decode failure."""
+    try:
+        email, _token_id = _decode_token(token)
+    except HTTPException:
+        return None
+    else:
+        return email
+
+
 def _get_session_record(db: Session, token_id: str) -> PersonalAccessToken:
     result = db.execute(
         select(PersonalAccessToken).where(PersonalAccessToken.token == token_id)

@@ -45,6 +45,7 @@ def test_kill_switch_inactive_with_no_prior_emails(db_session):
     assert status.active is False
     assert status.period_days == 30
     assert status.threshold == 950
+    assert status.sent == 0
 
 
 def test_kill_switch_activates_at_threshold(
@@ -60,6 +61,7 @@ def test_kill_switch_activates_at_threshold(
     status = mailer.get_kill_switch_status(db_session)
     assert status.active is True
     assert status.threshold == 3
+    assert status.sent == 3
 
 
 def test_kill_switch_ignores_emails_outside_rolling_window(
@@ -85,6 +87,9 @@ def test_kill_switch_fails_safe_to_active_on_db_error():
     assert status.active is True
     assert status.period_days == 30
     assert status.threshold == 950
+    # Real count is unknown -- reports the threshold itself, consistent
+    # with active=True (not a false "0 sent" contradicting the warning).
+    assert status.sent == 950
 
 
 def _make_smtp_settings(monkeypatch: pytest.MonkeyPatch) -> None:
