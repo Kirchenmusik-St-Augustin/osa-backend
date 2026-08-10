@@ -1,41 +1,11 @@
-import re
-
 from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
 from app.schemas.base import StrictInputModel
-
-# Legacy's App\Rules\ValidPhone: `^\+?[0-9\ \/\(\)-]{4,60}$`, single fixed
-# error message regardless of which sub-condition fails.
-_PHONE_PATTERN = re.compile(r"^\+?[0-9 /()-]{4,60}$")
-
-# Legacy's App\Rules\Password\ValidNewPassword: 8-16 chars from this exact
-# charset, at least one letter AND one digit. Same fixed error message for
-# every sub-rule violation (Legacy shows one generic text, never
-# specifying which part failed).
-_PASSWORD_CHARSET_PATTERN = re.compile(r"^[a-zA-Z0-9./+!@:_-]{8,16}$")
-# User-facing error text, not a credential.
-_PASSWORD_POLICY_MESSAGE = (
-    "Das neue Passwort entspricht nicht den Richtlinien (8-16 Zeichen, "  # noqa: S105
-    "mind. eine Ziffer, mind. ein Buchstabe. Muss sich vom bestehenden "
-    "Passwort unterscheiden.)."
+from app.schemas.validators import (
+    PHONE_PATTERN,
+    validate_confirmation,
+    validate_password_policy,
 )
-
-
-def _validate_password_policy(value: str) -> str:
-    if (
-        not _PASSWORD_CHARSET_PATTERN.match(value)
-        or not re.search(r"[a-zA-Z]", value)
-        or not re.search(r"[0-9]", value)
-    ):
-        raise ValueError(_PASSWORD_POLICY_MESSAGE)
-    return value
-
-
-def _validate_confirmation(value: str, info: ValidationInfo) -> str:
-    if value != info.data.get("password"):
-        msg = "Die Passwort-Bestätigung stimmt nicht überein."
-        raise ValueError(msg)
-    return value
 
 
 class RegisterRequest(StrictInputModel):
@@ -49,7 +19,7 @@ class RegisterRequest(StrictInputModel):
     @field_validator("phone")
     @classmethod
     def _validate_phone(cls, value: str) -> str:
-        if not _PHONE_PATTERN.match(value):
+        if not PHONE_PATTERN.match(value):
             msg = "Ungültige Telefonnummer"
             raise ValueError(msg)
         return value
@@ -57,12 +27,12 @@ class RegisterRequest(StrictInputModel):
     @field_validator("password")
     @classmethod
     def _validate_password(cls, value: str) -> str:
-        return _validate_password_policy(value)
+        return validate_password_policy(value)
 
     @field_validator("password_confirmation")
     @classmethod
     def _validate_password_confirmation(cls, value: str, info: ValidationInfo) -> str:
-        return _validate_confirmation(value, info)
+        return validate_confirmation(value, info.data.get("password"))
 
 
 class VerifyEmailRequest(StrictInputModel):
@@ -82,12 +52,12 @@ class ResetPasswordRequest(StrictInputModel):
     @field_validator("password")
     @classmethod
     def _validate_password(cls, value: str) -> str:
-        return _validate_password_policy(value)
+        return validate_password_policy(value)
 
     @field_validator("password_confirmation")
     @classmethod
     def _validate_password_confirmation(cls, value: str, info: ValidationInfo) -> str:
-        return _validate_confirmation(value, info)
+        return validate_confirmation(value, info.data.get("password"))
 
 
 class GoogleCallbackRequest(StrictInputModel):
@@ -98,6 +68,16 @@ class GoogleLinkRequest(StrictInputModel):
     credential: str
     email: EmailStr
     password: str
+
+
+class EmailKillSwitchStatusOutput(BaseModel):
+    """Mirrors app.core.mailer.MailKillSwitchStatus, minus `sent` (the live
+    counter belongs to the future Statistics page/Schritt 9, not every
+    login) -- drives the navbar warning icon (Schritt 7)."""
+
+    active: bool
+    period_days: int
+    threshold: int
 
 
 class UserProfileResponse(BaseModel):
@@ -112,3 +92,4 @@ class UserProfileResponse(BaseModel):
     givenname: str
     administrator: bool
     permissions: list[str]
+    email_kill_switch: EmailKillSwitchStatusOutput

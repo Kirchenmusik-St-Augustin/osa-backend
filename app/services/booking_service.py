@@ -340,7 +340,11 @@ def user_booking_status_batch(
 
 
 def user_booking_status_for_performances(
-    db: Session, performances: list[Performance], user_id: int
+    db: Session,
+    performances: list[Performance],
+    user_id: int,
+    *,
+    keep_past_status: bool = False,
 ) -> dict[int, BookingStatusOutput]:
     """N+1-safe variant of user_booking_status_batch() for the other axis:
     ONE user across MANY performances -- what the calendar list needs for
@@ -348,25 +352,32 @@ def user_booking_status_for_performances(
     (Short resource's `auth_user_booking` accessor) runs userBookingStatus()
     once per row, a real N+1 there; CLAUDE.md's N+1-protection requirement
     means the business RESULT is ported here, not that query pattern (see
-    project_osa_migration_plan memory, Schritt 6 plan A.8)."""
+    project_osa_migration_plan memory, Schritt 6 plan A.8).
+
+    `keep_past_status` mirrors Legacy's `userBookingStatus($user,
+    $keepPastStatus)` second argument: every caller so far passes nothing
+    (past performances always collapse to status=0), EXCEPT the System-
+    admin per-user "Anfragen und Buchungen" view, which calls `...(true)`
+    so historic bookings still show their real status instead of going
+    blank."""
     if not performances:
         return {}
 
     result: dict[int, BookingStatusOutput] = {
         performance.id: BookingStatusOutput(status=0) for performance in performances
     }
-    upcoming_ids = [
+    eligible_ids = [
         performance.id
         for performance in performances
-        if performance.schedule >= local_now()
+        if keep_past_status or performance.schedule >= local_now()
     ]
-    if not upcoming_ids:
+    if not eligible_ids:
         return result
 
     setup_rows = (
         db.execute(
             select(PerformancePosition).where(
-                PerformancePosition.performance_id.in_(upcoming_ids)
+                PerformancePosition.performance_id.in_(eligible_ids)
             )
         )
         .scalars()
@@ -374,10 +385,10 @@ def user_booking_status_for_performances(
     )
     setup_ids_by_performance: dict[int, dict[PositionType, set[int]]] = {
         performance_id: {position_type: set() for position_type in POSITION_TYPES}
-        for performance_id in upcoming_ids
+        for performance_id in eligible_ids
     }
     quantity_by_performance: dict[int, dict[tuple[str, int], int]] = {
-        performance_id: {} for performance_id in upcoming_ids
+        performance_id: {} for performance_id in eligible_ids
     }
     for row in setup_rows:
         setup_ids_by_performance[row.performance_id][
@@ -401,7 +412,7 @@ def user_booking_status_for_performances(
     bookings = (
         db.execute(
             select(Booking).where(
-                Booking.user_id == user_id, Booking.performance_id.in_(upcoming_ids)
+                Booking.user_id == user_id, Booking.performance_id.in_(eligible_ids)
             )
         )
         .scalars()
@@ -413,7 +424,7 @@ def user_booking_status_for_performances(
         db.execute(
             select(BookingRequest).where(
                 BookingRequest.user_id == user_id,
-                BookingRequest.performance_id.in_(upcoming_ids),
+                BookingRequest.performance_id.in_(eligible_ids),
             )
         )
         .scalars()
@@ -425,7 +436,7 @@ def user_booking_status_for_performances(
         db, {(booking.position_type, booking.position_id) for booking in bookings}
     )
 
-    for performance_id in upcoming_ids:
+    for performance_id in eligible_ids:
         result[performance_id] = _resolve_calendar_status(
             performance_id,
             user_position_ids=user_position_ids,
@@ -1378,6 +1389,84 @@ def get_requests_and_bookings(
     user_booking = user_booking_status(db, performance, current_user.id)
     short = _to_short_output(detail, user_booking)
     return PerformanceRequestsAndBookingsResponse(**short.model_dump(), entries=entries)
+
+
+# --- Selfadmin-Support (Schritt 7) --------------------------------------------
+
+
+def get_upcoming_requests_and_bookings_for_user(
+    db: Session, user_id: int, *, upcoming_only: bool = True
+) -> list[PerformanceShortOutput]:
+    """1:1 Legacy's `User::requestsAndBookings($upcomingOnly, false)`: every
+    Performance the user has either a confirmed Booking for, or (failing
+    that) an open BookingRequest for -- Bookings take precedence on the
+    rare case both exist for the same performance, matching Legacy's own
+    "booked ids first, then requesting ids not already covered" de-dup
+    order (no filter on BookingRequest.notbooked_at -- Legacy includes
+    rejected requests here too).
+
+    `upcoming_only` defaults to True (Legacy's Selfadmin/SupportController
+    calls `->requestsAndBookings(true)`), but the System-admin per-user
+    "Anfragen und Buchungen" view (Baustelle 1's `GET /users/{id}/requests-
+    and-bookings`) calls Legacy's `System\\UserController::
+    requestsAndBookings()`, which uses the bare, ALL-history default
+    (`$upcomingOnly = false`). Generic on `user_id` (not necessarily the
+    caller) so this one function backs both callers."""
+    now = local_now()
+    booked_query = (
+        select(Booking.performance_id)
+        .join(Performance, Performance.id == Booking.performance_id)
+        .where(Booking.user_id == user_id)
+        .distinct()
+    )
+    requested_query = (
+        select(BookingRequest.performance_id)
+        .join(Performance, Performance.id == BookingRequest.performance_id)
+        .where(BookingRequest.user_id == user_id)
+    )
+    if upcoming_only:
+        booked_query = booked_query.where(Performance.schedule >= now)
+        requested_query = requested_query.where(Performance.schedule >= now)
+    booked_ids = list(db.execute(booked_query).scalars().all())
+    requested_ids = list(db.execute(requested_query).scalars().all())
+    ordered_ids: list[int] = []
+    seen: set[int] = set()
+    for performance_id in booked_ids + requested_ids:
+        if performance_id not in seen:
+            seen.add(performance_id)
+            ordered_ids.append(performance_id)
+    if not ordered_ids:
+        return []
+
+    performances = (
+        db.execute(
+            select(Performance)
+            .where(Performance.id.in_(ordered_ids))
+            .order_by(Performance.schedule)
+        )
+        .scalars()
+        .all()
+    )
+    batch = performance_service.load_performance_batch_data(db, performances)
+    user_booking_by_performance = user_booking_status_for_performances(
+        db, list(performances), user_id, keep_past_status=not upcoming_only
+    )
+
+    return [
+        PerformanceShortOutput(
+            id=performance.id,
+            ordinariumwork_name=batch[performance.id].ordinariumwork_name,
+            ordinariumwork_artist_name=batch[performance.id].ordinariumwork_artist_name,
+            artist_name=batch[performance.id].artist_name,
+            schedule=performance.schedule,
+            location=batch[performance.id].location,
+            user_booking=user_booking_by_performance[performance.id],
+            proprium=batch[performance.id].proprium,
+            demanding_proprium=batch[performance.id].demanding_proprium,
+            rehearsals=batch[performance.id].rehearsals,
+        )
+        for performance in performances
+    ]
 
 
 # --- MessageToCast ------------------------------------------------------------

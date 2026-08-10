@@ -83,3 +83,41 @@ def create_user_position(
     db.add(user_position)
     db.commit()
     return user_position
+
+
+def sync_user_positions(
+    db: Session, *, user_id: int, desired: dict[PositionType, set[int]]
+) -> None:
+    """Schritt 7: replaces a User's Instrument/Voice/Choirjob assignments
+    with exactly `desired` -- remove-not-in-new/insert-new, 1:1 Legacy's
+    `$user->instruments()->sync(...)`/`->voices()->sync(...)`/
+    `->choirjobs()->sync(...)` (System::UserController::save()). No commit
+    here -- the caller (user_service.create_user/update_user) controls the
+    transaction, same convention as ordinariumwork_service._sync_positions."""
+    existing = (
+        db.execute(select(UserPosition).where(UserPosition.user_id == user_id))
+        .scalars()
+        .all()
+    )
+    existing_keys = {(p.position_type, p.position_id) for p in existing}
+    desired_keys = {
+        (position_type, position_id)
+        for position_type, position_ids in desired.items()
+        for position_id in position_ids
+    }
+
+    for position in existing:
+        if (position.position_type, position.position_id) not in desired_keys:
+            db.delete(position)
+
+    now = datetime.now(UTC)
+    for position_type, position_id in desired_keys - existing_keys:
+        db.add(
+            UserPosition(
+                user_id=user_id,
+                position_type=position_type,
+                position_id=position_id,
+                created_at=now,
+                updated_at=now,
+            )
+        )

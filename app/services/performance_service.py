@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 
 from sqlalchemy import delete, func, select
@@ -562,27 +563,35 @@ def get_rehearsals(
     )
 
 
-def list_performances_for_month(
-    db: Session, year: int, month: int, user_id: int
-) -> Sequence[PerformanceCalendarItem]:
-    """Real indexed DB query (SQLite `strftime`), mirroring Legacy's own
-    `Performance::ofMonth()` (already a real query there, not an
-    anti-pattern to fix) -- relies on `schedule` always being written as a
-    naive local wall-clock string (Settings.app_timezone, see
-    app.core.datetime_utils.local_now()), never UTC-converted, so a plain
-    '%Y-%m' prefix match is reliable."""
-    month_str = f"{year:04d}-{month:02d}"
-    performances = (
-        db.execute(
-            select(Performance)
-            .where(func.strftime("%Y-%m", Performance.schedule) == month_str)
-            .order_by(Performance.schedule)
-        )
-        .scalars()
-        .all()
-    )
+@dataclass(frozen=True)
+class PerformanceBatchEntry:
+    """Everything list_performances_for_month() and
+    booking_service.get_upcoming_requests_and_bookings_for_user() (Schritt
+    7) both need to enrich a raw Performance row -- extracted so the two
+    N+1-safe batch loaders share ONE implementation instead of duplicating
+    it (CLAUDE.md: striktes DRY im Backend)."""
+
+    location: PerformanceLocationOutput
+    ordinariumwork_id: int
+    ordinariumwork_name: str
+    ordinariumwork_artist_name: str
+    ordinariumwork_demanding: bool
+    artist_name: str | None
+    proprium: list[PerformancePropriumOutput]
+    demanding_proprium: bool
+    rehearsals: list[PerformanceRehearsalOutput]
+
+
+def load_performance_batch_data(
+    db: Session, performances: Sequence[Performance]
+) -> dict[int, PerformanceBatchEntry]:
+    """N+1-safe batch loader for Location/Ordinariumwork/Artist/Proprium/
+    Rehearsals across an arbitrary list of Performances -- a fixed number
+    of queries regardless of list length, the shared building block behind
+    both list_performances_for_month() (month-filtered) and
+    booking_service's user-scoped equivalent (Schritt 7)."""
     if not performances:
-        return []
+        return {}
 
     performance_ids = [p.id for p in performances]
     location_ids = {p.location_id for p in performances}
@@ -616,6 +625,54 @@ def list_performances_for_month(
     proprium_by_performance = _build_proprium_by_performance(db, performance_ids)
     rehearsals_by_performance = _build_rehearsals_by_performance(db, performance_ids)
 
+    result: dict[int, PerformanceBatchEntry] = {}
+    for performance in performances:
+        location = locations_by_id[performance.location_id]
+        ordinariumwork = ordinariumworks_by_id[performance.ordinariumwork_id]
+        artist = (
+            artists_by_id.get(performance.artist_id) if performance.artist_id else None
+        )
+        proprium = proprium_by_performance.get(performance.id, [])
+        result[performance.id] = PerformanceBatchEntry(
+            location=_location_output(location),
+            ordinariumwork_id=ordinariumwork.id,
+            ordinariumwork_name=ordinariumwork.name,
+            ordinariumwork_artist_name=label_for(
+                artists_by_id[ordinariumwork.artist_id]
+            ),
+            ordinariumwork_demanding=ordinariumwork.demanding,
+            artist_name=label_for(artist) if artist else None,
+            proprium=proprium,
+            demanding_proprium=any(entry.demanding for entry in proprium),
+            rehearsals=rehearsals_by_performance.get(performance.id, []),
+        )
+    return result
+
+
+def list_performances_for_month(
+    db: Session, year: int, month: int, user_id: int
+) -> Sequence[PerformanceCalendarItem]:
+    """Real indexed DB query (SQLite `strftime`), mirroring Legacy's own
+    `Performance::ofMonth()` (already a real query there, not an
+    anti-pattern to fix) -- relies on `schedule` always being written as a
+    naive local wall-clock string (Settings.app_timezone, see
+    app.core.datetime_utils.local_now()), never UTC-converted, so a plain
+    '%Y-%m' prefix match is reliable."""
+    month_str = f"{year:04d}-{month:02d}"
+    performances = (
+        db.execute(
+            select(Performance)
+            .where(func.strftime("%Y-%m", Performance.schedule) == month_str)
+            .order_by(Performance.schedule)
+        )
+        .scalars()
+        .all()
+    )
+    if not performances:
+        return []
+
+    batch = load_performance_batch_data(db, performances)
+
     # Narrow, function-local import: booking_service imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
     # module level, so a module-level import here would be circular. Port of
@@ -632,33 +689,23 @@ def list_performances_for_month(
         db, list(performances), user_id
     )
 
-    items: list[PerformanceCalendarItem] = []
-    for performance in performances:
-        location = locations_by_id[performance.location_id]
-        ordinariumwork = ordinariumworks_by_id[performance.ordinariumwork_id]
-        artist = (
-            artists_by_id.get(performance.artist_id) if performance.artist_id else None
+    return [
+        PerformanceCalendarItem(
+            id=performance.id,
+            schedule=performance.schedule,
+            location=batch[performance.id].location,
+            ordinariumwork_id=batch[performance.id].ordinariumwork_id,
+            ordinariumwork_name=batch[performance.id].ordinariumwork_name,
+            ordinariumwork_artist_name=batch[performance.id].ordinariumwork_artist_name,
+            ordinariumwork_demanding=batch[performance.id].ordinariumwork_demanding,
+            artist_name=batch[performance.id].artist_name,
+            user_booking=user_booking_by_performance[performance.id],
+            proprium=batch[performance.id].proprium,
+            demanding_proprium=batch[performance.id].demanding_proprium,
+            rehearsals=batch[performance.id].rehearsals,
         )
-        proprium = proprium_by_performance.get(performance.id, [])
-        items.append(
-            PerformanceCalendarItem(
-                id=performance.id,
-                schedule=performance.schedule,
-                location=_location_output(location),
-                ordinariumwork_id=ordinariumwork.id,
-                ordinariumwork_name=ordinariumwork.name,
-                ordinariumwork_artist_name=label_for(
-                    artists_by_id[ordinariumwork.artist_id]
-                ),
-                ordinariumwork_demanding=ordinariumwork.demanding,
-                artist_name=label_for(artist) if artist else None,
-                user_booking=user_booking_by_performance[performance.id],
-                proprium=proprium,
-                demanding_proprium=any(entry.demanding for entry in proprium),
-                rehearsals=rehearsals_by_performance.get(performance.id, []),
-            )
-        )
-    return items
+        for performance in performances
+    ]
 
 
 def get_performance_detail(db: Session, performance_id: int) -> PerformanceShowResponse:

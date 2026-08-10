@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.db.models.oauth2_binding import Oauth2Binding
+from app.db.models.sent_email import SentEmail
 from app.services import auth_service
 
 
@@ -164,7 +165,14 @@ def test_logout_success_clears_cookie(client, make_user):
     assert response.json()["message"] == "Erfolgreich abgemeldet."
 
 
-def test_me_returns_profile_with_permissions(client, make_user):
+def test_me_returns_profile_with_permissions(client, make_user, db_session):
+    # The shared test-session SQLite DB has no per-test rollback -- the
+    # kill-switch assertion below counts ALL `sent_emails` rows, so it must
+    # start from a clean table (same reasoning as test_mailer.py's
+    # `_clear_sent_emails` fixture).
+    db_session.query(SentEmail).delete()
+    db_session.commit()
+
     user = make_user(password="correct-password", roles=["disponent"])
     login_response = client.post(
         "/auth/login",
@@ -183,12 +191,46 @@ def test_me_returns_profile_with_permissions(client, make_user):
     assert body["givenname"] == user.givenname
     assert body["administrator"] is False
     assert "userMaintain" in body["permissions"]
+    assert body["email_kill_switch"] == {
+        "active": False,
+        "period_days": 30,
+        "threshold": 950,
+    }
 
 
 def test_me_requires_authentication(client):
     response = client.get("/auth/me")
 
     assert response.status_code == 401
+
+
+def test_me_reflects_kill_switch_status(
+    client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    """Schritt 7: /auth/me is the transport for the navbar warning icon --
+    see app.core.mailer.get_kill_switch_status()."""
+    db_session.query(SentEmail).delete()
+    monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
+    db_session.add(SentEmail(to="a@example.test", created_at=datetime.now(UTC)))
+    db_session.commit()
+
+    user = make_user(password="correct-password")
+    login_response = client.post(
+        "/auth/login",
+        data={"username": user.email, "password": "correct-password"},
+    )
+    access_token = login_response.json()["access_token"]
+
+    response = client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {access_token}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email_kill_switch"] == {
+        "active": True,
+        "period_days": 30,
+        "threshold": 1,
+    }
 
 
 def test_get_current_user_rejects_locked_account_mid_session(

@@ -62,28 +62,56 @@ def _count_recipients(value: str | None) -> int:
     return len([part for part in value.split(",") if part.strip()])
 
 
-def _is_kill_switch_active(db: Session) -> bool:
+@dataclass(frozen=True)
+class MailKillSwitchStatus:
+    """Frontend-facing kill-switch status -- see get_kill_switch_status()."""
+
+    active: bool
+    period_days: int
+    threshold: int
+
+
+def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
     """30-day rolling window over `sent_emails`, ported from Legacy's
     config/mail.php `limit.periodDays`/`limit.allMessagesThreshold` (30 /
     950): once the summed recipient count (to+cc+bcc) of everything sent
     in the window reaches the threshold, mail sending switches globally to
-    pure logging -- never a failed request, see _send_templated_email."""
+    pure logging -- never a failed request, see _send_templated_email.
+    Public (unlike the private helpers around it) because it also drives
+    the frontend's proactive warning icon/card (GET /auth/me,
+    MessageToContactpersonView, MessageToCastView -- Schritt 7).
+
+    Fail-safe, 1:1 Legacy's `SentEmail::ensureThresholdCompliance()`: if the
+    counting query itself fails, treat mail as disabled rather than risk
+    silently missing an over-threshold state."""
     settings = get_settings()
-    window_start = datetime.now(UTC) - timedelta(
-        days=settings.mail_kill_switch_period_days
-    )
-    rows = db.execute(
-        select(SentEmail.to, SentEmail.cc, SentEmail.bcc).where(
-            SentEmail.created_at >= window_start
+    try:
+        window_start = datetime.now(UTC) - timedelta(
+            days=settings.mail_kill_switch_period_days
         )
-    ).all()
+        rows = db.execute(
+            select(SentEmail.to, SentEmail.cc, SentEmail.bcc).where(
+                SentEmail.created_at >= window_start
+            )
+        ).all()
+    except SQLAlchemyError:
+        logger.exception("Failed to evaluate mail kill switch; treating as active.")
+        return MailKillSwitchStatus(
+            active=True,
+            period_days=settings.mail_kill_switch_period_days,
+            threshold=settings.mail_kill_switch_threshold,
+        )
     total_recipients = sum(
         _count_recipients(row.to)
         + _count_recipients(row.cc)
         + _count_recipients(row.bcc)
         for row in rows
     )
-    return total_recipients >= settings.mail_kill_switch_threshold
+    return MailKillSwitchStatus(
+        active=total_recipients >= settings.mail_kill_switch_threshold,
+        period_days=settings.mail_kill_switch_period_days,
+        threshold=settings.mail_kill_switch_threshold,
+    )
 
 
 def _build_from_header() -> tuple[str, str]:
@@ -165,11 +193,11 @@ def _send_templated_email(
 
     db = SessionLocal()
     try:
-        kill_switch_active = _is_kill_switch_active(db)
+        kill_switch_status = get_kill_switch_status(db)
     finally:
         db.close()
 
-    if kill_switch_active:
+    if kill_switch_status.active:
         logger.warning(
             "Mail suppressed by kill switch (>=%d recipients in the last %d days): "
             "template=%s, to=%s",

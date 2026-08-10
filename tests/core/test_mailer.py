@@ -41,7 +41,10 @@ def test_format_notification_timestamp_has_no_leading_zeros():
 
 
 def test_kill_switch_inactive_with_no_prior_emails(db_session):
-    assert mailer._is_kill_switch_active(db_session) is False
+    status = mailer.get_kill_switch_status(db_session)
+    assert status.active is False
+    assert status.period_days == 30
+    assert status.threshold == 950
 
 
 def test_kill_switch_activates_at_threshold(
@@ -54,7 +57,9 @@ def test_kill_switch_activates_at_threshold(
     )
     db_session.commit()
 
-    assert mailer._is_kill_switch_active(db_session) is True
+    status = mailer.get_kill_switch_status(db_session)
+    assert status.active is True
+    assert status.threshold == 3
 
 
 def test_kill_switch_ignores_emails_outside_rolling_window(
@@ -66,7 +71,20 @@ def test_kill_switch_ignores_emails_outside_rolling_window(
     db_session.add(SentEmail(to="a@example.test", created_at=stale))
     db_session.commit()
 
-    assert mailer._is_kill_switch_active(db_session) is False
+    assert mailer.get_kill_switch_status(db_session).active is False
+
+
+def test_kill_switch_fails_safe_to_active_on_db_error():
+    """1:1 Legacy's SentEmail::ensureThresholdCompliance(): a failed count
+    query must never silently look like "mail sending is fine"."""
+    broken_session = MagicMock()
+    broken_session.execute.side_effect = SQLAlchemyError("boom")
+
+    status = mailer.get_kill_switch_status(broken_session)
+
+    assert status.active is True
+    assert status.period_days == 30
+    assert status.threshold == 950
 
 
 def _make_smtp_settings(monkeypatch: pytest.MonkeyPatch) -> None:

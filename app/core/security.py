@@ -52,6 +52,20 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 
+# A charset, not a credential.
+_RANDOM_PASSWORD_ALPHABET = (
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"  # noqa: S105
+)
+
+
+def generate_random_password(length: int = 10) -> str:
+    """Port of Legacy's `Str::random(10)`, used by
+    UserAdministrationController::setPassword (Schritt 7) to generate a
+    one-time password an administrator sets for another user -- shown once
+    in the response, never logged, never emailed."""
+    return "".join(secrets.choice(_RANDOM_PASSWORD_ALPHABET) for _ in range(length))
+
+
 def create_access_token(
     subject: str,
     expires_delta: timedelta | None = None,

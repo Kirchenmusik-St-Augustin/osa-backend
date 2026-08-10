@@ -1,9 +1,13 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
+
+if TYPE_CHECKING:
+    from app.db.models.user import User
 
 
 class Role(Base):
@@ -21,3 +25,15 @@ class Role(Base):
     order: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime | None] = mapped_column(DateTime())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+
+    # Back-reference to User.roles -- added for Schritt 7's "Meine
+    # Ansprechpersonen" (support_service.list_roles_with_contacts()), which
+    # needs one N+1-safe selectinload(Role.users) query for all roles+their
+    # assigned users at once.
+    users: Mapped[list["User"]] = relationship(
+        "User",
+        secondary="user_roles",
+        primaryjoin="Role.id == UserRole.role_id",
+        secondaryjoin="User.id == UserRole.user_id",
+        viewonly=True,
+    )

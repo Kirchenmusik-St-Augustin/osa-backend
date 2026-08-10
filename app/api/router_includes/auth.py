@@ -20,6 +20,7 @@ from app.core.security import (
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.auth import (
+    EmailKillSwitchStatusOutput,
     ForgotPasswordRequest,
     GoogleCallbackRequest,
     GoogleLinkRequest,
@@ -204,11 +205,15 @@ def logout(
 @auth_router.get("/me")
 def get_current_user_profile(
     current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> UserProfileResponse:
     """No Legacy route equivalent -- Legacy's Inertia setup injects the
     user into every server-rendered page's shared props, a pure SPA has
     no such channel. The frontend calls this once after login/on boot to
-    populate its auth store (navbar display, permission-gated UI)."""
+    populate its auth store (navbar display, permission-gated UI,
+    Schritt 7's email-kill-switch warning icon -- same lifecycle as
+    `permissions`, no separate polling endpoint)."""
+    kill_switch = mailer.get_kill_switch_status(db)
     return UserProfileResponse(
         id=current_user.id,
         email=current_user.email or "",
@@ -216,6 +221,11 @@ def get_current_user_profile(
         givenname=current_user.givenname,
         administrator=current_user.administrator,
         permissions=calculate_permissions(current_user),
+        email_kill_switch=EmailKillSwitchStatusOutput(
+            active=kill_switch.active,
+            period_days=kill_switch.period_days,
+            threshold=kill_switch.threshold,
+        ),
     )
 
 
