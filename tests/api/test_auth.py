@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.sent_email import SentEmail
@@ -213,6 +214,12 @@ def test_me_reflects_kill_switch_status(
     see app.core.mailer.get_kill_switch_status()."""
     db_session.query(SentEmail).delete()
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
+    # The `client` fixture's TestClient(app) context manager already ran the
+    # app's lifespan startup (start_scheduler(), which now reads settings to
+    # decide whether to register backup_koofr) before this point, caching a
+    # Settings snapshot from BEFORE the env change above -- clear it so the
+    # actual request below observes the new threshold.
+    get_settings.cache_clear()
     db_session.add(SentEmail(to="a@example.test", created_at=datetime.now(UTC)))
     db_session.commit()
 

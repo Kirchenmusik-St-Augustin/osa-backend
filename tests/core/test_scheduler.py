@@ -10,6 +10,7 @@ from apscheduler.events import (
 )
 
 from app.core import scheduler as scheduler_module
+from app.core.config import get_settings
 from app.core.scheduler import (
     _acquire_scheduler_lock,
     _log_job_outcome,
@@ -75,6 +76,108 @@ def test_log_job_outcome_logs_error_as_failed(caplog: pytest.LogCaptureFixture):
     with caplog.at_level(logging.ERROR):
         _log_job_outcome(JobEvent(EVENT_JOB_ERROR, "some_job", "default"))
     assert "failed" in caplog.text
+
+
+def test_backup_koofr_job_registers_in_production_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+    monkeypatch.setenv("BACKUP_ENABLED", "true")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert "backup_koofr" in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        # See test_start_and_stop_scheduler_toggle_running_state above --
+        # shutdown() must complete on THIS loop before it closes, or the
+        # module-level scheduler is left in a broken state for later tests.
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_backup_koofr_job_does_not_register_outside_production(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("BACKUP_ENABLED", "true")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert "backup_koofr" not in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_backup_koofr_job_does_not_register_when_disabled_even_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+    monkeypatch.setenv("BACKUP_ENABLED", "false")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert "backup_koofr" not in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_backup_koofr_job_is_explicitly_removed_if_stray(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Targeted unit test for start_scheduler()'s defensive removal branch
+    # (app/core/scheduler.py's `if scheduler.get_job("backup_koofr") is not
+    # None: scheduler.remove_job(...)`): seeds a stray job directly, since a
+    # realistic stop/restart cycle already clears the jobstore on its own,
+    # which would make this branch look unreachable in a more "natural"
+    # test.
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("BACKUP_ENABLED", "true")
+
+    async def _run() -> None:
+        scheduler.add_job(lambda: None, "date", id="backup_koofr")
+        assert scheduler.get_job("backup_koofr") is not None
+
+        start_scheduler()
+
+        assert scheduler.get_job("backup_koofr") is None
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_backup_koofr_job_deregisters_if_a_previous_call_was_production(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Guards start_scheduler()'s idempotency across repeated calls against
+    # the same module-level scheduler instance -- a job registered under
+    # one set of conditions must not linger once conditions change.
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+    monkeypatch.setenv("BACKUP_ENABLED", "true")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert "backup_koofr" in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+        monkeypatch.setenv("APP_ENVIRONMENT", "test")
+        # get_settings() is lru_cache'd -- the autouse _reset_settings_cache
+        # fixture only clears it at test boundaries, not mid-test, so a
+        # second start_scheduler() call within this same test needs an
+        # explicit clear to actually observe the env change above.
+        get_settings.cache_clear()
+        start_scheduler()
+        assert "backup_koofr" not in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
 
 
 def test_start_scheduler_skips_when_lock_unavailable(monkeypatch: pytest.MonkeyPatch):

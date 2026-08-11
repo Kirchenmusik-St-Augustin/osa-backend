@@ -105,3 +105,47 @@ def test_valid_secret_key_and_tier2_defaults(monkeypatch: pytest.MonkeyPatch):
     assert settings.session_idle_timeout_minutes == 120
     assert settings.refresh_token_lifetime_days == 7
     assert settings.password_min_length == 8
+
+
+def test_koofr_backup_defaults(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("KOOFR_BASE_URI", raising=False)
+    monkeypatch.delenv("KOOFR_BACKUP_PATH", raising=False)
+    monkeypatch.delenv("KOOFR_BACKUP_RETENTION_DAYS", raising=False)
+    monkeypatch.delenv("BACKUP_ENABLED", raising=False)
+    monkeypatch.delenv("BACKUP_HOUR", raising=False)
+    monkeypatch.delenv("BACKUP_MINUTE", raising=False)
+    monkeypatch.delenv("KOOFR_USER", raising=False)
+    monkeypatch.delenv("KOOFR_PASSWORD", raising=False)
+
+    settings = Settings()
+
+    assert settings.koofr_base_uri == "https://app.koofr.net/dav/"
+    assert settings.koofr_backup_path == "Koofr/Backups/osa-db"
+    assert settings.koofr_backup_retention_days == 28
+    assert settings.backup_enabled is True
+    assert settings.backup_hour == 10
+    assert settings.backup_minute == 50
+    assert settings.koofr_user is None
+    assert settings.koofr_password is None
+
+
+def test_koofr_backup_settings_can_be_overridden(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("KOOFR_BASE_URI", "https://example.test/dav/")
+    monkeypatch.setenv("KOOFR_BACKUP_PATH", "Backups/other-path")
+    monkeypatch.setenv("KOOFR_BACKUP_RETENTION_DAYS", "14")
+    monkeypatch.setenv("BACKUP_ENABLED", "false")
+    monkeypatch.setenv("BACKUP_HOUR", "3")
+    monkeypatch.setenv("BACKUP_MINUTE", "15")
+    monkeypatch.setenv("KOOFR_USER", "someone")
+    monkeypatch.setenv("KOOFR_PASSWORD", "secret")
+
+    settings = Settings()
+
+    assert settings.koofr_base_uri == "https://example.test/dav/"
+    assert settings.koofr_backup_path == "Backups/other-path"
+    assert settings.koofr_backup_retention_days == 14
+    assert settings.backup_enabled is False
+    assert settings.backup_hour == 3
+    assert settings.backup_minute == 15
+    assert settings.koofr_user == "someone"
+    assert settings.koofr_password == "secret"

@@ -10,6 +10,7 @@ dev process) that guard is a no-op; it only becomes active once Phase 2
 """
 
 import logging
+from zoneinfo import ZoneInfo
 
 from apscheduler.events import (
     EVENT_JOB_ERROR,
@@ -22,7 +23,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from app.core.config import get_settings
 from app.db.database import engine
+from app.services.backup_jobs import job_backup_koofr
 from app.services.booking_jobs import (
     notify_upcoming_booking_status,
     purge_stale_booking_requests,
@@ -133,6 +136,42 @@ def start_scheduler() -> None:
         id="purge_old_request_logs",
         replace_existing=True,
     )
+
+    # Port of Legacy's Schedule::command('osa:schedule:backup-prod-database')
+    # ->environments('production') -- the ONLY job in this codebase gated by
+    # environment. Two independent conditions (app_environment AND
+    # backup_enabled): unlike housekeeping/booking jobs (harmless anywhere),
+    # this job writes into a Koofr path SHARED across every stage -- see
+    # Settings.backup_enabled's docstring. Uses settings.app_timezone
+    # explicitly (Legacy's dailyAt('10:50') meant Vienna wall-clock time) --
+    # unlike the four jobs above, which rely on AsyncIOScheduler()'s unset
+    # (effectively container-OS/UTC) default timezone; that's a pre-existing
+    # gap in this scheduler, out of scope here, but not one this new job
+    # should inherit.
+    settings = get_settings()
+    if settings.app_environment == "production" and settings.backup_enabled:
+        scheduler.add_job(
+            job_backup_koofr,
+            "cron",
+            hour=settings.backup_hour,
+            minute=settings.backup_minute,
+            timezone=ZoneInfo(settings.app_timezone),
+            id="backup_koofr",
+            replace_existing=True,
+        )
+    else:
+        # Explicit removal (not just "don't add") keeps start_scheduler()
+        # idempotent regardless of which environment a previous call ran
+        # under -- relevant across repeated calls against this module-level
+        # scheduler instance (e.g. across tests), and correct in principle
+        # regardless: this branch must always converge to "job absent".
+        if scheduler.get_job("backup_koofr") is not None:
+            scheduler.remove_job("backup_koofr")
+        logger.info(
+            "backup_koofr job not registered (app_environment=%s, backup_enabled=%s).",
+            settings.app_environment,
+            settings.backup_enabled,
+        )
 
     scheduler.add_listener(
         _log_job_outcome, EVENT_JOB_SUBMITTED | EVENT_JOB_EXECUTED | EVENT_JOB_ERROR

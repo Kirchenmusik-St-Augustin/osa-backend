@@ -23,5 +23,9 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+# 1 worker for Phase 1 (SQLite): the scheduler's pg_try_advisory_lock guard
+# (see app/core/scheduler.py) is a no-op under SQLite, so >1 worker would
+# double-fire every cron job, including the daily Koofr backup. Revisit
+# once Phase 2 (Postgres) makes the advisory lock meaningful again.
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", "--access-logfile", "-"]
+     "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-"]

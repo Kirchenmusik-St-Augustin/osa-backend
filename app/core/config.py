@@ -15,10 +15,11 @@ boots.
 
 Tier 3 (feature-required, no default -- checked at first actual use via
 require_setting(), not at boot): SMTP_HOST/SMTP_PORT, GOOGLE_CLIENT_ID,
-FRONTEND_VERIFY_EMAIL_URL, FRONTEND_RESET_PASSWORD_URL. A deployment that
-never sends email or never enables Google Login must not be forced to
-configure these just to boot; the first actual attempt to use the feature
-raises a normal RuntimeError instead of exiting the process.
+FRONTEND_VERIFY_EMAIL_URL, FRONTEND_RESET_PASSWORD_URL, KOOFR_USER,
+KOOFR_PASSWORD. A deployment that never sends email, never enables Google
+Login, or never runs the Koofr backup job must not be forced to configure
+these just to boot; the first actual attempt to use the feature raises a
+normal RuntimeError instead of exiting the process.
 """
 
 import sys
@@ -103,6 +104,34 @@ class Settings(BaseSettings):
         default=60, validation_alias="PASSWORD_RESET_TTL_MINUTES"
     )
 
+    # Tier 2 (Koofr WebDAV backup target + retention) -- defaults match
+    # Legacy's config/filesystems.php 'koofr_backup' disk and
+    # OsaScheduleBackupProdDB.php's hardcoded 4-week retention 1:1. Do not
+    # change koofr_base_uri/koofr_backup_path without also migrating
+    # existing Koofr-stored backups, or osa-einteilung.hochamt.at/tools/
+    # restore-koofr-backup.sh (hardcoded to the same path) stops finding
+    # them.
+    koofr_base_uri: str = Field(
+        default="https://app.koofr.net/dav/", validation_alias="KOOFR_BASE_URI"
+    )
+    koofr_backup_path: str = Field(
+        default="Koofr/Backups/osa-db", validation_alias="KOOFR_BACKUP_PATH"
+    )
+    koofr_backup_retention_days: int = Field(
+        default=28, validation_alias="KOOFR_BACKUP_RETENTION_DAYS"
+    )
+    # Job-registration gate (app.core.scheduler.start_scheduler()) -- two
+    # independent conditions (APP_ENVIRONMENT == "production" AND this
+    # flag), not this flag alone: unlike a per-stage-isolated storage
+    # bucket, OSA's Koofr path is ONE shared destination across every
+    # stage, so a single settings toggle must not be enough to make a
+    # dev/qa process write into it.
+    backup_enabled: bool = Field(default=True, validation_alias="BACKUP_ENABLED")
+    # Legacy's exact dailyAt('10:50') cadence (routes/console.php), kept
+    # for continuity.
+    backup_hour: int = Field(default=10, validation_alias="BACKUP_HOUR")
+    backup_minute: int = Field(default=50, validation_alias="BACKUP_MINUTE")
+
     # Tier 3 -- feature-required, no default, checked at first use via
     # require_setting() below.
     smtp_host: str | None = Field(default=None, validation_alias="SMTP_HOST")
@@ -116,6 +145,8 @@ class Settings(BaseSettings):
     frontend_reset_password_url: str | None = Field(
         default=None, validation_alias="FRONTEND_RESET_PASSWORD_URL"
     )
+    koofr_user: str | None = Field(default=None, validation_alias="KOOFR_USER")
+    koofr_password: str | None = Field(default=None, validation_alias="KOOFR_PASSWORD")
 
     @model_validator(mode="after")
     def _validate_tier1(self) -> "Settings":
