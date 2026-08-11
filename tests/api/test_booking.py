@@ -319,7 +319,7 @@ class TestMessageToCast:
         performance_id = _make_performance(
             client, make_user, headers, instrument_id=instrument_id
         )
-        recipient = make_user()
+        recipient = make_user(verified=False)
 
         response = client.post(
             f"/performances/{performance_id}/message-to-cast/send",

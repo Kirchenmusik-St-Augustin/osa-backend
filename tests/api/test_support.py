@@ -162,8 +162,6 @@ class TestSendMessageToContactperson:
     ):
         headers, _sender = _auth_headers(client, make_user)
         recipient = make_user(email=f"{_unique('kontakt')}@example.test")
-        recipient.email_verified_at = datetime.now(UTC)
-        db_session.commit()
 
         with patch("app.core.mailer.send_user_message_email") as mock_send:
             response = client.post(
@@ -184,7 +182,7 @@ class TestSendMessageToContactperson:
         # verification silently drops the send, but the endpoint still
         # answers 200 -- no leak of who's verified vs. not.
         headers, _sender = _auth_headers(client, make_user)
-        recipient = make_user()  # email_verified_at stays unset
+        recipient = make_user(verified=False)
 
         with patch("app.core.mailer.send_user_message_email") as mock_send:
             response = client.post(

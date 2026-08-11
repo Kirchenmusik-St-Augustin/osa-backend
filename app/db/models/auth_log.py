@@ -14,10 +14,11 @@ class AuthLog(Base):
     referenced user is later deleted). No `created_at`/`updated_at`:
     `fired_at` is the only timestamp legacy ever had for this table.
 
-    Event set is deliberately narrower than legacy's Laravel listeners
-    (Login/Failed/Lockout/Logout/Verified/PasswordReset only) -- see
-    feedback_sister_project_parity / the Schritt-2 plan for the "dropped
-    Attempting/Validated/(Current|Other)DeviceLogout" reasoning."""
+    Event set is deliberately narrower than legacy's 10 Laravel listeners --
+    Login/Failed/Lockout/Logout/Verified/PasswordReset are kept (see
+    app.api.router_includes.auth for the call sites), Attempting/Validated/
+    (Current|Other)DeviceLogout are dropped as YAGNI (redundant with
+    Failed/Login, or no multi-device-logout feature exists here at all)."""
 
     __tablename__ = "auth_logs"
 

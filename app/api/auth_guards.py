@@ -21,10 +21,26 @@ def ensure_permission(user: User, required_permission: str) -> None:
         )
 
 
+def get_verified_user(current_user: User = Depends(get_current_user)) -> User:
+    """1:1 Legacy's `verified` middleware on the `content.*` route group --
+    everything except auth's own endpoints (login/refresh/logout/me/
+    verify-email/resend-verification-email) requires a verified email.
+    Deliberately a separate dependency from get_current_user (not merged
+    into it) so those few auth endpoints stay reachable for an
+    unverified-but-logged-in user -- otherwise nobody could ever reach the
+    resend endpoint to fix their own state."""
+    if current_user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="E-Mail-Adresse nicht verifiziert.",
+        )
+    return current_user
+
+
 def require_permission(required_permission: str) -> Callable[..., User]:
     """Usage: Depends(require_permission("userMaintain"))"""
 
-    def _guard(current_user: User = Depends(get_current_user)) -> User:
+    def _guard(current_user: User = Depends(get_verified_user)) -> User:
         ensure_permission(current_user, required_permission)
         return current_user
 

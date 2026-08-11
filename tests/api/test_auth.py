@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.sent_email import SentEmail
 from app.services import auth_service
@@ -187,6 +188,7 @@ def test_me_returns_profile_with_permissions(client, make_user, db_session):
     assert response.status_code == 200
     body = response.json()
     assert body["email"] == user.email
+    assert body["email_verified_at"] is not None
     assert body["surname"] == user.surname
     assert body["givenname"] == user.givenname
     assert body["administrator"] is False
@@ -284,8 +286,14 @@ def _registration_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def test_register_success_auto_logs_in_and_notifies_disponent(client):
-    with patch("app.core.mailer.send_new_registration_notice") as mock_notify:
+def test_register_success_auto_logs_in_and_notifies_disponent(
+    client, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    with (
+        patch("app.core.mailer.send_new_registration_notice") as mock_notify,
+        patch("app.core.mailer.send_verification_email") as mock_verify,
+    ):
         response = client.post("/auth/register", json=_registration_payload())
 
     assert response.status_code == 200
@@ -293,15 +301,23 @@ def test_register_success_auto_logs_in_and_notifies_disponent(client):
     assert body["access_token"]
     assert "refresh_token" in response.cookies
     mock_notify.assert_called_once()
+    mock_verify.assert_called_once()
 
 
-def test_register_rejects_duplicate_email(client):
+def test_register_rejects_duplicate_email(client, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
     payload = _registration_payload()
-    with patch("app.core.mailer.send_new_registration_notice"):
+    with (
+        patch("app.core.mailer.send_new_registration_notice"),
+        patch("app.core.mailer.send_verification_email"),
+    ):
         first = client.post("/auth/register", json=payload)
     assert first.status_code == 200
 
-    with patch("app.core.mailer.send_new_registration_notice"):
+    with (
+        patch("app.core.mailer.send_new_registration_notice"),
+        patch("app.core.mailer.send_verification_email"),
+    ):
         second = client.post(
             "/auth/register",
             json=_registration_payload(
@@ -367,6 +383,127 @@ def test_verify_email_rejects_invalid_token(client):
     assert response.status_code == 400
 
 
+def test_verify_email_logs_a_verified_auth_event(client, make_user, db_session):
+    user = make_user(verified=False)
+    token = auth_service.build_email_verification_token(user)
+
+    response = client.post("/auth/verify-email", json={"token": token})
+
+    assert response.status_code == 200
+    entry = db_session.execute(
+        select(AuthLog).where(AuthLog.event == "Verified", AuthLog.email == user.email)
+    ).scalar_one_or_none()
+    assert entry is not None
+
+
+# ---------------------------------------------------------------------------
+# Resend verification email
+# ---------------------------------------------------------------------------
+
+
+def test_resend_verification_email_sends_for_an_unverified_user(
+    client, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    user = make_user(password="correct-password", verified=False)
+    login_response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    access_token = login_response.json()["access_token"]
+
+    with patch("app.core.mailer.send_verification_email") as mock_send:
+        response = client.post(
+            "/auth/resend-verification-email",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    assert response.status_code == 200
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[0] == user.email
+
+
+def test_resend_verification_email_is_a_noop_for_an_already_verified_user(
+    client, make_user
+):
+    user = make_user(password="correct-password")  # verified=True by default
+    login_response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    access_token = login_response.json()["access_token"]
+
+    with patch("app.core.mailer.send_verification_email") as mock_send:
+        response = client.post(
+            "/auth/resend-verification-email",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    assert response.status_code == 200
+    mock_send.assert_not_called()
+
+
+def test_resend_verification_email_requires_authentication(client):
+    response = client.post("/auth/resend-verification-email")
+
+    assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Verified-email gate (get_verified_user, wired into require_permission() and
+# the direct-Depends business endpoints)
+# ---------------------------------------------------------------------------
+
+
+def test_unverified_user_is_rejected_by_a_verified_gated_endpoint(client, make_user):
+    user = make_user(password="correct-password", verified=False)
+    login_response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    access_token = login_response.json()["access_token"]
+
+    # /profile is a direct-Depends(get_verified_user) endpoint (1:1 Legacy's
+    # `content.` route group), not a require_permission(...) one -- exercises
+    # the other half of the gate's wiring.
+    response = client.get(
+        "/profile", headers={"Authorization": f"Bearer {access_token}"}
+    )
+
+    assert response.status_code == 403
+
+
+def test_verified_user_is_allowed_by_a_verified_gated_endpoint(client, make_user):
+    user = make_user(password="correct-password")  # verified=True by default
+    login_response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    access_token = login_response.json()["access_token"]
+
+    response = client.get(
+        "/profile", headers={"Authorization": f"Bearer {access_token}"}
+    )
+
+    assert response.status_code == 200
+
+
+def test_unverified_user_can_still_reach_me_logout_and_resend(
+    client, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    user = make_user(password="correct-password", verified=False)
+    login_response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    access_token = login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    assert client.get("/auth/me", headers=headers).status_code == 200
+    with patch("app.core.mailer.send_verification_email"):
+        assert (
+            client.post("/auth/resend-verification-email", headers=headers).status_code
+            == 200
+        )
+    assert client.post("/auth/logout", headers=headers).status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Password reset
 # ---------------------------------------------------------------------------
@@ -417,6 +554,29 @@ def test_reset_password_success(client, make_user, db_session):
         "/auth/login", data={"username": user.email, "password": "Passw0rd1"}
     )
     assert login_response.status_code == 200
+
+
+def test_reset_password_logs_a_password_reset_auth_event(client, make_user, db_session):
+    user = make_user(password="old-password", email=_com_email())
+    token = auth_service.request_password_reset(db_session, user.email)
+
+    response = client.post(
+        "/auth/reset-password",
+        json={
+            "email": user.email,
+            "token": token,
+            "password": "Passw0rd1",
+            "password_confirmation": "Passw0rd1",
+        },
+    )
+
+    assert response.status_code == 200
+    entry = db_session.execute(
+        select(AuthLog).where(
+            AuthLog.event == "PasswordReset", AuthLog.email == user.email
+        )
+    ).scalar_one_or_none()
+    assert entry is not None
 
 
 def test_reset_password_rejects_invalid_token(client, make_user):

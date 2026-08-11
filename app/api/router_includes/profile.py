@@ -1,13 +1,11 @@
 from typing import Annotated
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.auth_guards import get_verified_user
 from app.api.error_responses import field_errors_to_detail
 from app.core import mailer
-from app.core.config import get_settings, require_setting
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.profile import ProfileUpdateRequest
@@ -26,7 +24,7 @@ _WRONG_PASSWORD_DETAIL = "Das bestehende Passwort ist falsch."  # noqa: S105 -- 
 @profile_router.get("")
 def get_profile(
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> UserResponse:
     """Reuses user_service.get_user() -- Legacy's ProfileController::show()
     renders the exact same `User\\Show` resource as
@@ -39,7 +37,7 @@ def update_profile(
     data: ProfileUpdateRequest,
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> UserResponse:
     try:
         user, email_changed = profile_service.update_profile(db, current_user, data)
@@ -60,12 +58,7 @@ def update_profile(
     # someone else's account. `user.email` is guaranteed non-None here --
     # ProfileUpdateRequest.email is a required EmailStr, not Optional.
     if email_changed and user.email is not None:
-        settings = get_settings()
-        base_url = require_setting(
-            settings.frontend_verify_email_url, "FRONTEND_VERIFY_EMAIL_URL"
-        )
-        token = auth_service.build_email_verification_token(user)
-        verify_url = f"{base_url}?{urlencode({'token': token})}"
+        verify_url = auth_service.build_verification_email_url(user)
         background_tasks.add_task(
             mailer.send_verification_email, user.email, verify_url
         )

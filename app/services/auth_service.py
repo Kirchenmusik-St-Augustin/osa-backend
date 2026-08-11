@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NoReturn
+from urllib.parse import urlencode
 
 import jwt
 from google.auth.transport import requests as google_requests
@@ -335,6 +336,17 @@ def build_email_verification_token(user: User) -> str:
         msg = "User hat keine E-Mail-Adresse."
         raise ValueError(msg)
     return create_email_verification_token(user.id, user.email)
+
+
+def build_verification_email_url(user: User) -> str:
+    """Shared by registration, the resend endpoint, and profile email
+    changes -- the three triggers that (re)send a verification mail."""
+    settings = get_settings()
+    base_url = require_setting(
+        settings.frontend_verify_email_url, "FRONTEND_VERIFY_EMAIL_URL"
+    )
+    token = build_email_verification_token(user)
+    return f"{base_url}?{urlencode({'token': token})}"
 
 
 def verify_email(db: Session, token: str) -> User:

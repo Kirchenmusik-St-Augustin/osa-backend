@@ -57,7 +57,7 @@ class TestListRolesWithContacts:
         role_name = _unique("disponent")
         verified = make_user(roles=[role_name])
         verified.email_verified_at = datetime.now(UTC)
-        unverified = make_user(roles=[role_name])
+        unverified = make_user(roles=[role_name], verified=False)
         db_session.commit()
 
         roles = support_service.list_roles_with_contacts(db_session)
@@ -134,7 +134,7 @@ class TestSendMessageToContactperson:
 
     def test_silent_noop_for_unverified_recipient(self, db_session: Session, make_user):
         sender = make_user()
-        recipient = make_user()  # no email_verified_at set
+        recipient = make_user(verified=False)
 
         result = support_service.send_message_to_contactperson(
             db_session, sender, self._data(recipient_id=recipient.id)

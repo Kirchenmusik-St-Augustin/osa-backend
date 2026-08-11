@@ -65,7 +65,7 @@ class TestListUsers:
     def test_email_hidden_until_verified(self, client, make_user, db_session):
         headers = _auth_headers(client, make_user)
         marker = _unique("Unverified")
-        user = make_user(email=f"{marker.lower()}@example.com")
+        user = make_user(email=f"{marker.lower()}@example.com", verified=False)
         user.surname = marker
         db_session.commit()
 

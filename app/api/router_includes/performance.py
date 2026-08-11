@@ -3,8 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
-from app.api.deps import get_current_user
+from app.api.auth_guards import get_verified_user, require_permission
 from app.api.error_responses import field_errors_to_detail
 from app.db.database import get_db
 from app.db.models.user import User
@@ -40,7 +39,7 @@ def list_performances(
     year: Annotated[int, Query()],
     month: Annotated[int, Query(ge=1, le=12)],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[PerformanceCalendarItem]:
     return list(
         performance_service.list_performances_for_month(
@@ -61,7 +60,7 @@ def get_available_data(
 def get_performance(
     performance_id: int,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, Depends(get_current_user)],
+    _current_user: Annotated[User, Depends(get_verified_user)],
 ) -> PerformanceShowResponse:
     try:
         return performance_service.get_performance_detail(db, performance_id)

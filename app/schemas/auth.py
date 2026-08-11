@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
 from app.schemas.base import StrictInputModel
@@ -88,6 +90,7 @@ class UserProfileResponse(BaseModel):
 
     id: int
     email: str
+    email_verified_at: datetime | None
     surname: str
     givenname: str
     administrator: bool

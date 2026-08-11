@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
+from app.api.auth_guards import get_verified_user
 from app.api.deps import get_current_user, oauth2_scheme
 from app.api.error_responses import field_errors_to_detail
 from app.core import mailer
@@ -217,6 +218,7 @@ def get_current_user_profile(
     return UserProfileResponse(
         id=current_user.id,
         email=current_user.email or "",
+        email_verified_at=current_user.email_verified_at,
         surname=current_user.surname,
         givenname=current_user.givenname,
         administrator=current_user.administrator,
@@ -254,11 +256,39 @@ def register(
         email=data.email.lower(),
         phone=user.phone,
     )
+    if user.email is not None:
+        verify_url = auth_service.build_verification_email_url(user)
+        background_tasks.add_task(
+            mailer.send_verification_email, user.email, verify_url
+        )
 
     access_token, session_id, refresh_secret = auth_service.create_user_session(
         db, user
     )
     return _build_login_response(access_token, session_id, refresh_secret)
+
+
+@auth_router.post("/resend-verification-email")
+@limiter.limit("6/minute")  # type: ignore[reportUntypedFunctionDecorator]
+def resend_verification_email(
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, str]:
+    """1:1 Legacy's `POST verify-email` (EmailVerificationController::send()).
+    Deliberately uses get_current_user, not get_verified_user -- an
+    unverified user must be able to reach exactly this endpoint. No-op
+    (still 200) if already verified, matching Legacy's own idempotent
+    `hasVerifiedEmail()` short-circuit."""
+    if current_user.email_verified_at is None and current_user.email is not None:
+        verify_url = auth_service.build_verification_email_url(current_user)
+        background_tasks.add_task(
+            mailer.send_verification_email, current_user.email, verify_url
+        )
+    return {
+        "status": "ok",
+        "message": "Die Überprüfungs-E-Mail wurde erneut versandt.",
+    }
 
 
 @auth_router.post("/verify-email")
@@ -276,6 +306,7 @@ def verify_email(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from None
+    auth_service.log_auth_event(db, "Verified", user.email)
 
     access_token, session_id, refresh_secret = auth_service.create_user_session(
         db, user
@@ -322,6 +353,7 @@ def reset_password(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from None
+    auth_service.log_auth_event(db, "PasswordReset", data.email)
     return {"status": "ok", "message": "Das Passwort wurde zurückgesetzt."}
 
 
@@ -377,7 +409,7 @@ def google_link(
 def disconnect_oauth2_binding(
     binding_id: int,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> dict[str, str]:
     """IDOR-fixed replacement for Legacy's `oauth2disconnect($id)` -- see
     auth_service.unlink_oauth_binding for the vulnerability this closes.

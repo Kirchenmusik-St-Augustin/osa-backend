@@ -30,6 +30,7 @@ os.environ["SECRET_KEY"] = "test-secret-key-" + "x" * 32
 import uuid
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,7 +71,11 @@ def db_session() -> Generator[Session, None, None]:
 def make_user(db_session: Session) -> Callable[..., User]:
     """Factory fixture: creates a persisted User (unique email per call
     unless overridden), optionally attached to Role rows (created
-    on-the-fly, reused by name if already present in this test's session)."""
+    on-the-fly, reused by name if already present in this test's session).
+    Defaults to `verified=True` -- most tests need a normal, working user
+    (get_verified_user() gates almost every endpoint); pass
+    `verified=False` for the few tests exercising unverified-user
+    behavior."""
 
     def _make_user(
         *,
@@ -79,6 +84,7 @@ def make_user(db_session: Session) -> Callable[..., User]:
         roles: list[str] | None = None,
         administrator: bool = False,
         auth_locked: bool = False,
+        verified: bool = True,
     ) -> User:
         user = User(
             surname="Muster",
@@ -87,6 +93,7 @@ def make_user(db_session: Session) -> Callable[..., User]:
             auth_password=get_password_hash(password),
             auth_locked=auth_locked,
             administrator=administrator,
+            email_verified_at=datetime.now(UTC) if verified else None,
         )
         db_session.add(user)
         db_session.flush()

@@ -1417,7 +1417,7 @@ class TestMessageToCast:
         unverified_performance_id = _make_performance(
             db_session, instruments={unverified_instrument.id: 1}
         )
-        unverified_user = make_user()
+        unverified_user = make_user(verified=False)
         booking_service._save_cast_item(
             db_session,
             unverified_performance_id,
@@ -1482,7 +1482,7 @@ class TestMessageToCast:
         instrument = _make_instrument(db_session)
         performance_id = _make_performance(db_session, instruments={instrument.id: 1})
         sender = make_user()
-        recipient = make_user()  # never verified
+        recipient = make_user(verified=False)
 
         with pytest.raises(booking_service.MessageRecipientsEmptyError):
             booking_service.send_message_to_cast(

@@ -11,6 +11,13 @@ dev process) that guard is a no-op; it only becomes active once Phase 2
 
 import logging
 
+from apscheduler.events import (
+    EVENT_JOB_ERROR,
+    EVENT_JOB_EXECUTED,
+    EVENT_JOB_SUBMITTED,
+    JobEvent,
+    JobExecutionEvent,
+)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -19,6 +26,10 @@ from app.db.database import engine
 from app.services.booking_jobs import (
     notify_upcoming_booking_status,
     purge_stale_booking_requests,
+)
+from app.services.housekeeping_jobs import (
+    purge_expired_password_reset_tokens,
+    purge_old_request_logs,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +73,18 @@ def _acquire_scheduler_lock() -> bool:
     return True
 
 
+def _log_job_outcome(event: JobEvent | JobExecutionEvent) -> None:
+    """Port of Legacy's ScheduledTask/Starting+Finished listeners --
+    operational log lines only, no DB write, registered once for every job
+    rather than duplicated per job function."""
+    if event.code == EVENT_JOB_SUBMITTED:
+        logger.info("Scheduled job starting: %s", event.job_id)
+    elif event.code == EVENT_JOB_ERROR:
+        logger.error("Scheduled job failed: %s", event.job_id)
+    else:
+        logger.info("Scheduled job finished: %s", event.job_id)
+
+
 def start_scheduler() -> None:
     if not _acquire_scheduler_lock():
         logger.info(
@@ -90,7 +113,30 @@ def start_scheduler() -> None:
         id="notify_upcoming_booking_status",
         replace_existing=True,
     )
+    # Port of `auth:clear-resets`, Legacy's exact weekly Sunday 02:00 cadence.
+    scheduler.add_job(
+        purge_expired_password_reset_tokens,
+        "cron",
+        day_of_week="sun",
+        hour=2,
+        minute=0,
+        id="purge_expired_password_reset_tokens",
+        replace_existing=True,
+    )
+    # Port of `osa:schedule:delete-old-db-log-records`, Legacy's exact
+    # daily 23:00 cadence.
+    scheduler.add_job(
+        purge_old_request_logs,
+        "cron",
+        hour=23,
+        minute=0,
+        id="purge_old_request_logs",
+        replace_existing=True,
+    )
 
+    scheduler.add_listener(
+        _log_job_outcome, EVENT_JOB_SUBMITTED | EVENT_JOB_EXECUTED | EVENT_JOB_ERROR
+    )
     scheduler.start()
     logger.info("Scheduler started with %d job(s).", len(scheduler.get_jobs()))
 
@@ -100,6 +146,11 @@ def stop_scheduler() -> None:
 
     if scheduler.running:
         scheduler.shutdown(wait=False)
+
+    # Undo add_listener() -- start_scheduler() may be called again later
+    # (e.g. across tests sharing this module-level scheduler instance),
+    # and add_listener() has no replace_existing equivalent.
+    scheduler.remove_listener(_log_job_outcome)
 
     if _scheduler_lock_conn is not None:
         _scheduler_lock_conn.close()

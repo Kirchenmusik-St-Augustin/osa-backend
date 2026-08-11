@@ -1,10 +1,18 @@
 import asyncio
+import logging
 
 import pytest
+from apscheduler.events import (
+    EVENT_JOB_ERROR,
+    EVENT_JOB_EXECUTED,
+    EVENT_JOB_SUBMITTED,
+    JobEvent,
+)
 
 from app.core import scheduler as scheduler_module
 from app.core.scheduler import (
     _acquire_scheduler_lock,
+    _log_job_outcome,
     scheduler,
     start_scheduler,
     stop_scheduler,
@@ -36,6 +44,8 @@ def test_start_and_stop_scheduler_toggle_running_state():
         assert {job.id for job in scheduler.get_jobs()} == {
             "purge_stale_booking_requests",
             "notify_upcoming_booking_status",
+            "purge_expired_password_reset_tokens",
+            "purge_old_request_logs",
         }
 
         stop_scheduler()
@@ -46,6 +56,25 @@ def test_start_and_stop_scheduler_toggle_running_state():
         assert scheduler.running is False
 
     asyncio.run(_run())
+
+
+def test_log_job_outcome_logs_submitted_as_starting(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level(logging.INFO):
+        _log_job_outcome(JobEvent(EVENT_JOB_SUBMITTED, "some_job", "default"))
+    assert "starting" in caplog.text
+    assert "some_job" in caplog.text
+
+
+def test_log_job_outcome_logs_executed_as_finished(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level(logging.INFO):
+        _log_job_outcome(JobEvent(EVENT_JOB_EXECUTED, "some_job", "default"))
+    assert "finished" in caplog.text
+
+
+def test_log_job_outcome_logs_error_as_failed(caplog: pytest.LogCaptureFixture):
+    with caplog.at_level(logging.ERROR):
+        _log_job_outcome(JobEvent(EVENT_JOB_ERROR, "some_job", "default"))
+    assert "failed" in caplog.text
 
 
 def test_start_scheduler_skips_when_lock_unavailable(monkeypatch: pytest.MonkeyPatch):

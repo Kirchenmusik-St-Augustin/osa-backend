@@ -3,8 +3,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import ensure_permission
-from app.api.deps import get_current_user
+from app.api.auth_guards import ensure_permission, get_verified_user
 from app.api.error_responses import field_errors_to_detail
 from app.db.database import get_db
 from app.db.models.user import User
@@ -62,7 +61,7 @@ def _to_response(item: CoreelementModel) -> CoreelementResponse:
 def list_items(
     element_type: CoreelementType,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[CoreelementResponse]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     items = coreelement_service.list_coreelements(db, element_type)
@@ -74,7 +73,7 @@ def create_item(
     element_type: CoreelementType,
     data: CoreelementRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     try:
@@ -93,7 +92,7 @@ def update_item(
     element_id: int,
     data: CoreelementRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     try:
@@ -115,7 +114,7 @@ def delete_item(
     element_type: CoreelementType,
     element_id: int,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> dict[str, str]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     try:
@@ -136,7 +135,7 @@ def move_item(
     element_id: int,
     direction: Literal["up", "down"],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[CoreelementResponse]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     try:

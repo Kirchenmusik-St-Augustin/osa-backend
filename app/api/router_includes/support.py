@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.auth_guards import get_verified_user
 from app.core import mailer
 from app.db.database import get_db
 from app.db.models.user import User
@@ -17,7 +17,7 @@ support_router = APIRouter()
 @support_router.get("/requests-and-bookings")
 def get_my_requests_and_bookings(
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[PerformanceShortOutput]:
     """No permission gate beyond being logged in -- 1:1 Legacy's
     SupportController (every user manages only their own requests/
@@ -28,7 +28,7 @@ def get_my_requests_and_bookings(
 @support_router.get("/contactpersons")
 def get_contactpersons(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, Depends(get_current_user)],
+    _current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[RoleWithContactsOutput]:
     """No permission gate beyond being logged in -- 1:1 Legacy's GET branch
     of messageToContactperson()."""
@@ -39,7 +39,7 @@ def get_contactpersons(
 def send_message_to_contactperson(
     data: MessageToContactpersonRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_verified_user)],
     background_tasks: BackgroundTasks,
 ) -> dict[str, str]:
     """Always responds 200 -- 1:1 Legacy's silent no-op for a missing/
