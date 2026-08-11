@@ -57,6 +57,13 @@ def _reset_settings_cache():
 @pytest.fixture
 def client():
     with TestClient(app, base_url="http://testserver") as c:
+        # The lifespan startup above already ran start_scheduler(), which
+        # reads get_settings() to decide whether to register backup_koofr --
+        # caching a Settings snapshot from BEFORE the test body's own
+        # monkeypatch.setenv() calls run. Clear it again so the test body
+        # always observes its own env changes, not whatever was true at
+        # app-startup time.
+        get_settings.cache_clear()
         yield c
 
 
