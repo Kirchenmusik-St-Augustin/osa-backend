@@ -133,7 +133,8 @@ def _to_response(db: Session, user: User) -> UserResponse:
         auth_lastsignal=user.auth_lastsignal,
         auth_locked=user.auth_locked,
         administrator=user.administrator,
-        deletable=_is_deletable(db, user.id),
+        # An administrator is never deletable, regardless of roles/bookings.
+        deletable=not user.administrator and _is_deletable(db, user.id),
         oauth2_bindings=[
             Oauth2BindingOutput(id=b.id, provider=b.provider, remote_name=b.remote_name)
             for b in oauth2_bindings
@@ -259,6 +260,22 @@ def _validate(
     return errors
 
 
+def _apply_administrator_grant(
+    user: User, *, desired: bool, current_user: User
+) -> None:
+    """The administrator flag may only be GRANTED by a real administrator --
+    1:1 the roles pattern (_sync_roles_if_administrator), a silent no-op for
+    anyone else. Deliberately one-way: revoking is not implemented here
+    because it's unreachable through the app anyway -- once granted, the
+    target row is immediately protected by update_user()'s
+    AdministratorProtectedError guard, matching Legacy's existing
+    "administrators can not be updated" protection (Legacy itself has no
+    path to grant the status in the first place; this is an intentional
+    divergence)."""
+    if desired and current_user.administrator:
+        user.administrator = True
+
+
 def _sync_roles_if_administrator(
     db: Session, user_id: int, role_ids: list[int], current_user: User
 ) -> None:
@@ -319,6 +336,9 @@ def create_user(db: Session, data: UserRequest, current_user: User) -> UserRespo
     db.add(user)
     db.flush()
 
+    _apply_administrator_grant(
+        user, desired=data.administrator, current_user=current_user
+    )
     _sync_positions(db, user.id, data)
     _sync_roles_if_administrator(db, user.id, data.roles, current_user)
 
@@ -351,6 +371,9 @@ def update_user(
     user.auth_locked = data.auth_locked
     user.updated_at = datetime.now(UTC)
 
+    _apply_administrator_grant(
+        user, desired=data.administrator, current_user=current_user
+    )
     _sync_positions(db, user.id, data)
     _sync_roles_if_administrator(db, user.id, data.roles, current_user)
 

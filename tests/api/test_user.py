@@ -269,7 +269,8 @@ class TestQuirks:
                 "voices": [],
                 "choirjobs": [],
                 "roles": [],
-                "administrator": True,
+                "administrator": False,
+                "bogus_field": True,
             },
             headers=headers,
         )

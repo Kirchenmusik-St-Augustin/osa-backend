@@ -42,7 +42,11 @@ class UserRequest(StrictInputModel):
     never sent by the frontend), so the real, observable business result is
     that email stays optional here too (see project_osa_migration_plan
     memory). `roles` is accepted from every caller but only actually
-    persisted for a real administrator -- see user_service.update_user()."""
+    persisted for a real administrator -- see user_service.update_user().
+    `administrator` follows the same pattern -- a deliberate divergence
+    from Legacy (which has no such field/path at all): only an acting
+    administrator can grant it, and only ever grant (see
+    user_service._apply_administrator_grant())."""
 
     givenname: str = Field(min_length=3, max_length=32)
     surname: str = Field(min_length=3, max_length=32)
@@ -53,6 +57,7 @@ class UserRequest(StrictInputModel):
     voices: list[int] = Field(default_factory=list)
     choirjobs: list[int] = Field(default_factory=list)
     roles: list[int] = Field(default_factory=list)
+    administrator: bool = False
 
     @field_validator("phone")
     @classmethod

@@ -33,6 +33,7 @@ def _request(
     voices: list[int] | None = None,
     choirjobs: list[int] | None = None,
     roles: list[int] | None = None,
+    administrator: bool = False,
 ) -> UserRequest:
     return UserRequest(
         surname=surname or _unique("Muster"),
@@ -44,6 +45,7 @@ def _request(
         voices=voices or [],
         choirjobs=choirjobs or [],
         roles=roles or [],
+        administrator=administrator,
     )
 
 
@@ -224,6 +226,12 @@ class TestDeletable:
         user = make_user()
         assert user_service.get_user(db_session, user.id).deletable is True
 
+    def test_role_less_administrator_is_not_deletable(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        assert user_service.get_user(db_session, admin.id).deletable is False
+
     def test_instrument_assignment_alone_does_not_block_delete(
         self, db_session: Session, make_user
     ):
@@ -361,6 +369,22 @@ class TestCreateUser:
         )
         assert [r.id for r in response.roles] == [role.id]
 
+    def test_disponent_cannot_grant_administrator(self, db_session: Session, make_user):
+        disponent = make_user(roles=["disponent"])
+        response = user_service.create_user(
+            db_session, _request(administrator=True), disponent
+        )
+        assert response.administrator is False
+
+    def test_administrator_can_grant_administrator(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        response = user_service.create_user(
+            db_session, _request(administrator=True), admin
+        )
+        assert response.administrator is True
+
 
 class TestUpdateUser:
     def test_unknown_id_raises_not_found(self, db_session: Session, make_user):
@@ -428,6 +452,35 @@ class TestUpdateUser:
             db_session, user.id, _request(roles=[role.id]), disponent
         )
         assert response.roles == []
+
+    def test_disponent_cannot_grant_administrator(self, db_session: Session, make_user):
+        disponent = make_user(roles=["disponent"])
+        user = make_user()
+        response = user_service.update_user(
+            db_session, user.id, _request(administrator=True), disponent
+        )
+        assert response.administrator is False
+
+    def test_administrator_can_grant_administrator(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        user = make_user()
+        response = user_service.update_user(
+            db_session, user.id, _request(administrator=True), admin
+        )
+        assert response.administrator is True
+
+    def test_newly_granted_administrator_is_immediately_protected(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        user = make_user()
+        user_service.update_user(
+            db_session, user.id, _request(administrator=True), admin
+        )
+        with pytest.raises(user_service.AdministratorProtectedError):
+            user_service.update_user(db_session, user.id, _request(), admin)
 
     def test_position_sync_removes_unselected_positions(
         self, db_session: Session, make_user
