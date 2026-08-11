@@ -31,6 +31,7 @@ class TestGetStatistics:
             "performances",
             "ordinariumworks",
             "propriumworks",
+            "scores",
             "email",
         }
         assert set(body["email"].keys()) == {
@@ -45,6 +46,12 @@ class TestGetStatistics:
         response = client.get("/statistics", headers=headers)
 
         body = response.json()
-        for key in ("users", "performances", "ordinariumworks", "propriumworks"):
+        for key in (
+            "users",
+            "performances",
+            "ordinariumworks",
+            "propriumworks",
+            "scores",
+        ):
             assert isinstance(body[key], int)
             assert body[key] >= 0

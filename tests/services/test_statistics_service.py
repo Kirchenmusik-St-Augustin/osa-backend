@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.core import mailer
 from app.db.models.sent_email import SentEmail
-from app.services import statistics_service
+from app.schemas.score import ScoreRequest
+from app.services import score_service, statistics_service
 
 
 class TestGetStatistics:
@@ -38,9 +39,22 @@ class TestGetStatistics:
         assert result.email.threshold == kill_switch.threshold
         assert result.email.period_days == kill_switch.period_days
 
-    def test_has_no_scores_field(self, db_session: Session):
-        # Deliberate gap (Schritt 8 doesn't exist yet, see
-        # StatisticsOutput's docstring) -- guards against silently adding
-        # a wrong/placeholder value instead of the real thing later.
+    def test_scores_counts_all_score_rows(self, db_session: Session):
+        before = statistics_service.get_statistics(db_session).scores
+        defaults = score_service.get_defaults()
+        score_service.create_score(
+            db_session,
+            ScoreRequest(
+                **{
+                    **defaults,
+                    "kasten": "A",
+                    "boxnr": "1",
+                    "werk": "Testwerk",
+                    "inhalt": "Partitur",
+                }
+            ),
+        )
+
         result = statistics_service.get_statistics(db_session)
-        assert not hasattr(result, "scores")
+
+        assert result.scores == before + 1

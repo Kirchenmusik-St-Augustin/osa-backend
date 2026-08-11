@@ -13,6 +13,7 @@ from app.api.router_includes.performance import performance_router
 from app.api.router_includes.profile import profile_router
 from app.api.router_includes.propriumwork import propriumwork_router
 from app.api.router_includes.request_log import request_log_router
+from app.api.router_includes.score import score_router
 from app.api.router_includes.sent_email import sent_email_router
 from app.api.router_includes.shorturl import shorturl_router
 from app.api.router_includes.statistics import statistics_router
@@ -59,3 +60,4 @@ api_router.include_router(
 api_router.include_router(statistics_router, prefix="/statistics", tags=["statistics"])
 api_router.include_router(system_router, prefix="/system", tags=["system"])
 api_router.include_router(shorturl_router, prefix="/shorturls", tags=["shorturls"])
+api_router.include_router(score_router, prefix="/scores", tags=["scores"])
