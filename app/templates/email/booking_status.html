@@ -1,0 +1,37 @@
+{% extends "layout.html" %}
+{% block content %}
+{% if entries|length > 1 %}
+<p>Der Buchungs-Status für die folgenden Aufführungen wurde aktualisiert:</p>
+{% else %}
+<p>Der Buchungs-Status für die folgende Aufführung wurde aktualisiert:</p>
+{% endif %}
+{% for entry in entries %}
+<table style="margin-bottom: 1em;">
+  <tr>
+    <td><strong>Name des Werkes:</strong></td>
+    <td>{{ entry.ordinariumwork_artist_name }}: {{ entry.ordinariumwork_name }}</td>
+  </tr>
+  <tr>
+    <td><strong>Zeit:</strong></td>
+    <td>{{ entry.schedule }}</td>
+  </tr>
+  <tr>
+    <td><strong>Ort:</strong></td>
+    <td>
+      {{ entry.location_name }}{% if entry.location_address %}, {{ entry.location_address }}{% endif %}
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Status:</strong></td>
+    <td>
+      {{ entry.user_name }}:
+      {% if entry.booked %}
+      <strong style="color: green;">gebucht</strong>
+      {% else %}
+      <strong style="color: red;">nicht gebucht</strong>
+      {% endif %}
+    </td>
+  </tr>
+</table>
+{% endfor %}
+{% endblock %}

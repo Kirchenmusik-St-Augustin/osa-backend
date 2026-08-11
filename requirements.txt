@@ -2,6 +2,14 @@ fastapi
 uvicorn[standard]
 gunicorn
 sqlalchemy
-aiosqlite
 apscheduler
 pydantic-settings
+bcrypt
+PyJWT
+python-multipart
+slowapi
+jinja2
+google-auth
+requests
+itsdangerous
+email-validator

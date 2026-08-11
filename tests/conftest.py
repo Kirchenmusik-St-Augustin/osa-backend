@@ -24,12 +24,26 @@ with sqlite3.connect(_TEST_DB_PATH) as _conn:
 
 os.environ["APP_ENVIRONMENT"] = "test"
 os.environ["CORS_ORIGINS"] = "http://localhost:21001"
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
+os.environ["SECRET_KEY"] = "test-secret-key-" + "x" * 32
+
+import uuid
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from fastapi.testclient import TestClient
+from sqlalchemy import event, select
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
+from app.core.security import get_password_hash
+from app.db.database import engine, get_db
+from app.db.models.role import Role
+from app.db.models.user import User
+from app.db.models.user_role import UserRole
 from main import app
 
 
@@ -41,7 +55,111 @@ def _reset_settings_cache():
 
 
 @pytest.fixture
-async def client():
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
-        yield ac
+def client():
+    with TestClient(app, base_url="http://testserver") as c:
+        # The lifespan startup above already ran start_scheduler(), which
+        # reads get_settings() to decide whether to register backup_koofr --
+        # caching a Settings snapshot from BEFORE the test body's own
+        # monkeypatch.setenv() calls run. Clear it again so the test body
+        # always observes its own env changes, not whatever was true at
+        # app-startup time.
+        get_settings.cache_clear()
+        yield c
+
+
+@pytest.fixture
+def db_session() -> Generator[Session, None, None]:
+    for session in get_db():
+        yield session
+        break
+
+
+@pytest.fixture
+def make_user(db_session: Session) -> Callable[..., User]:
+    """Factory fixture: creates a persisted User (unique email per call
+    unless overridden), optionally attached to Role rows (created
+    on-the-fly, reused by name if already present in this test's session).
+    Defaults to `verified=True` -- most tests need a normal, working user
+    (get_verified_user() gates almost every endpoint); pass
+    `verified=False` for the few tests exercising unverified-user
+    behavior."""
+
+    def _make_user(
+        *,
+        email: str | None = None,
+        password: str = "correct-horse-battery-staple",
+        roles: list[str] | None = None,
+        administrator: bool = False,
+        auth_locked: bool = False,
+        verified: bool = True,
+    ) -> User:
+        user = User(
+            surname="Muster",
+            givenname=f"Test-{uuid.uuid4().hex[:8]}",
+            email=email or f"test-{uuid.uuid4().hex}@example.test",
+            auth_password=get_password_hash(password),
+            auth_locked=auth_locked,
+            administrator=administrator,
+            email_verified_at=datetime.now(UTC) if verified else None,
+        )
+        db_session.add(user)
+        db_session.flush()
+
+        for role_name in roles or []:
+            result = db_session.execute(select(Role).where(Role.name == role_name))
+            role = result.scalar_one_or_none()
+            if role is None:
+                role = Role(name=role_name, label=role_name, order=0)
+                db_session.add(role)
+                db_session.flush()
+            db_session.add(UserRole(user_id=user.id, role_id=role.id))
+
+        db_session.commit()
+
+        # Plain refresh() doesn't eager-load relationships -- re-fetch with
+        # roles pre-loaded so calculate_permissions() never lazy-loads
+        # outside the request's session (a lazy-load outside an open
+        # session would raise DetachedInstanceError otherwise).
+        result = db_session.execute(
+            select(User).options(selectinload(User.roles)).where(User.id == user.id)
+        )
+        return result.scalar_one()
+
+    return _make_user
+
+
+class QueryCounter:
+    """Counts SQL statements executed on the test engine while active."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+
+@pytest.fixture
+def count_queries() -> Callable[[], Iterator["QueryCounter"]]:
+    """Yield a factory for a context manager that counts executed SQL
+    statements, e.g. `with count_queries() as counter: ...; assert
+    counter.count <= N` -- used to assert N+1 query patterns don't
+    regress (1:1 vb-api pattern, CLAUDE.md testing_constraints)."""
+
+    @contextmanager
+    def _count_queries() -> Iterator[QueryCounter]:
+        counter = QueryCounter()
+
+        def _on_execute(
+            _conn: Connection,
+            _cursor: object,
+            _statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            counter.count += 1
+
+        event.listen(engine, "before_cursor_execute", _on_execute)
+        try:
+            yield counter
+        finally:
+            event.remove(engine, "before_cursor_execute", _on_execute)
+
+    return _count_queries

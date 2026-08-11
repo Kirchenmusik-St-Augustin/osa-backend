@@ -100,9 +100,11 @@ CREATE UNIQUE INDEX "performances_schedule_artist_id_unique" on "performances" (
 
 CREATE UNIQUE INDEX "performances_schedule_location_id_unique" on "performances" ("schedule", "location_id");
 
-CREATE UNIQUE INDEX "personal_access_tokens_token_unique" on "personal_access_tokens" ("token");
+CREATE UNIQUE INDEX "personal_access_tokens_token_unique" on "personal_access_tokens" ("token")
+;
 
-CREATE INDEX "personal_access_tokens_tokenable_type_tokenable_id_index" on "personal_access_tokens" ("tokenable_type", "tokenable_id");
+CREATE INDEX "personal_access_tokens_tokenable_type_tokenable_id_index" on "personal_access_tokens" ("tokenable_type", "tokenable_id")
+;
 
 CREATE UNIQUE INDEX "propriumelements_name_unique" on "propriumelements" ("name");
 
