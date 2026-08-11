@@ -65,6 +65,15 @@ class Settings(BaseSettings):
     # setting (not a hardcoded literal) so a future multi-timezone deployment
     # is a config change, not a code change.
     app_timezone: str = Field(default="Europe/Vienna", validation_alias="APP_TIMEZONE")
+    # Bare hostname of the dedicated short-URL redirect subdomain (Legacy:
+    # hardcoded "go.hochamt.at" in ShorturlController::index()'s
+    # `urlprefix` prop). A real setting (not a literal) so dev
+    # ("go.hochamt.at.dev.schimpl.cc") vs. prod ("go.hochamt.at") is a
+    # config difference only -- see app.services.shorturl_service and the
+    # dedicated go.-domain Caddy vhost that actually routes traffic there.
+    shorturl_domain: str = Field(
+        default="go.hochamt.at", validation_alias="SHORTURL_DOMAIN"
+    )
 
     # Tier 2 (mail) -- defaults taken from Legacy's config/mail.php /
     # config/osa.php so the migrated values stay identical.

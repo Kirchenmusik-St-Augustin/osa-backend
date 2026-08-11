@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 import app.db.base
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.api.router import api_router
+from app.api.router_includes.go import go_router
 from app.api.system import system_router
 from app.core.config import get_settings
 from app.core.logging_config import setup_logging
@@ -144,3 +145,14 @@ app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(system_router)  # root-level health check, no prefix
 app.include_router(api_router)  # wiring point for future domain routers, empty today
+# Public, unauthenticated redirect service for the dedicated go.-subdomain
+# (see app.api.router_includes.go's docstring). Mounted directly on `app`
+# under its own "/go" prefix -- NOT nested under api_router, since it has
+# no relation to "/api" at all. This prefix is unreachable through the
+# main app domain's Caddy route (which only forwards "/api/*" to this
+# container); it is only reached via the go.-domain's own Caddy vhost,
+# which rewrites every request to prepend "/go" before proxying to this
+# same backend port -- the mirror image of the "/api" prefix-stripping
+# already used for the main domain. Same process, same port, no second
+# container (consistent with the in-process scheduler precedent).
+app.include_router(go_router, prefix="/go")

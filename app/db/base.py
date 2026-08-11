@@ -30,6 +30,7 @@ from app.db.models.propriumwork import Propriumwork  # noqa: F401
 from app.db.models.request_log import RequestLog  # noqa: F401
 from app.db.models.role import Role  # noqa: F401
 from app.db.models.sent_email import SentEmail  # noqa: F401
+from app.db.models.shorturl import Shorturl  # noqa: F401
 from app.db.models.user import User  # noqa: F401
 from app.db.models.user_position import UserPosition  # noqa: F401
 from app.db.models.user_role import UserRole  # noqa: F401

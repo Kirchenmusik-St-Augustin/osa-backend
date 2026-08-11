@@ -14,6 +14,7 @@ from app.api.router_includes.profile import profile_router
 from app.api.router_includes.propriumwork import propriumwork_router
 from app.api.router_includes.request_log import request_log_router
 from app.api.router_includes.sent_email import sent_email_router
+from app.api.router_includes.shorturl import shorturl_router
 from app.api.router_includes.statistics import statistics_router
 from app.api.router_includes.support import support_router
 from app.api.router_includes.system import system_router
@@ -57,3 +58,4 @@ api_router.include_router(
 )
 api_router.include_router(statistics_router, prefix="/statistics", tags=["statistics"])
 api_router.include_router(system_router, prefix="/system", tags=["system"])
+api_router.include_router(shorturl_router, prefix="/shorturls", tags=["shorturls"])
