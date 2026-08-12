@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel
+
+from app.core.datetime_utils import UtcDatetime
 
 
 class RequestLogUserSummaryOutput(BaseModel):
@@ -16,7 +16,7 @@ class RequestLogEntryOutput(BaseModel):
     """1:1 Legacy's `RequestLog\\Short` resource."""
 
     id: int
-    created_at: datetime
+    created_at: UtcDatetime
     request_method: str
     request_path: str
 
@@ -44,4 +44,4 @@ class RequestLogShowOutput(BaseModel):
     response_status: int
     response_content: object
     memory_usage: int
-    created_at: datetime
+    created_at: UtcDatetime

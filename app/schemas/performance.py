@@ -3,6 +3,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import StrictInputModel
 
 # Pydantic's model-level strict=True (StrictInputModel) rejects ISO-8601
@@ -116,7 +117,7 @@ class BookingStatusOutput(BaseModel):
 
     status: int
     position: PositionRefOutput | None = None
-    at: datetime | None = None
+    at: UtcDatetime | None = None
 
 
 class PerformanceCalendarItem(BaseModel):
