@@ -42,11 +42,12 @@ def test_start_and_stop_scheduler_toggle_running_state():
 
         start_scheduler()
         assert scheduler.running is True
+        # Only the always-on job registers under the test env (APP_ENVIRONMENT
+        # is "test" here, see conftest.py) -- the other three, like
+        # backup_koofr below, are production-only (see
+        # test_production_only_jobs_register_in_production).
         assert {job.id for job in scheduler.get_jobs()} == {
             "purge_stale_booking_requests",
-            "notify_upcoming_booking_status",
-            "purge_expired_password_reset_tokens",
-            "purge_old_request_logs",
         }
 
         stop_scheduler()
@@ -174,6 +175,70 @@ def test_backup_koofr_job_deregisters_if_a_previous_call_was_production(
         get_settings.cache_clear()
         start_scheduler()
         assert "backup_koofr" not in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+_PRODUCTION_ONLY_JOB_IDS = {
+    "notify_upcoming_booking_status",
+    "purge_expired_password_reset_tokens",
+    "purge_old_request_logs",
+}
+
+
+def test_production_only_jobs_register_in_production(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert {job.id for job in scheduler.get_jobs()} >= _PRODUCTION_ONLY_JOB_IDS
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_production_only_jobs_do_not_register_outside_production(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert _PRODUCTION_ONLY_JOB_IDS.isdisjoint(
+            {job.id for job in scheduler.get_jobs()}
+        )
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_production_only_jobs_deregister_if_a_previous_call_was_production(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Mirrors test_backup_koofr_job_deregisters_if_a_previous_call_was_production
+    # above -- same _sync_job_registration() helper, exercised here for the
+    # three newly-gated jobs instead of backup_koofr. The helper's stray-job
+    # removal branch itself is already covered by
+    # test_backup_koofr_job_is_explicitly_removed_if_stray (shared code, no
+    # need to duplicate that case per job).
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert {job.id for job in scheduler.get_jobs()} >= _PRODUCTION_ONLY_JOB_IDS
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+        monkeypatch.setenv("APP_ENVIRONMENT", "test")
+        get_settings.cache_clear()
+        start_scheduler()
+        assert _PRODUCTION_ONLY_JOB_IDS.isdisjoint(
+            {job.id for job in scheduler.get_jobs()}
+        )
         stop_scheduler()
         await asyncio.sleep(0)
 
