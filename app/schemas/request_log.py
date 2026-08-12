@@ -1,15 +1,29 @@
+from datetime import date
+
 from pydantic import BaseModel
 
 from app.core.datetime_utils import UtcDatetime
 
 
 class RequestLogUserSummaryOutput(BaseModel):
-    """One row of Legacy's `Content/Administrator/RequestLogs/Index.vue`
-    user list -- users who have at least one RequestLog row in the
-    requested month."""
+    """One user row nested under RequestLogDayGroupOutput.users below --
+    users who were active on that day."""
 
     id: int
     label: str
+
+
+class RequestLogDayGroupOutput(BaseModel):
+    """One row of the Index endpoint's response -- a local
+    (Settings.app_timezone) calendar day within the requested month that
+    had at least one RequestLog entry, with the users active on that day.
+    No Legacy equivalent -- Legacy's Content/Administrator/RequestLogs/
+    Index.vue only ever returns a flat month-scoped user list; day grouping
+    is a real functional change for post-cutover monitoring (User decision
+    2026-08-12), not a 1:1 migration slice."""
+
+    day: date
+    users: list[RequestLogUserSummaryOutput]
 
 
 class RequestLogEntryOutput(BaseModel):

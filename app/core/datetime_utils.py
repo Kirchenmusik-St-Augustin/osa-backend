@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, overload
 from zoneinfo import ZoneInfo
 
@@ -60,3 +60,21 @@ def local_now() -> datetime:
     silently be off by the configured zone's UTC offset (1-2h depending on
     DST), exactly like the bug this replaced."""
     return datetime.now(ZoneInfo(get_settings().app_timezone)).replace(tzinfo=None)
+
+
+def local_day_bounds_utc(day: date) -> tuple[datetime, datetime]:
+    """Returns the [start, end) UTC instant bounds of one local calendar day
+    in Settings.app_timezone (default Europe/Vienna) -- for range-filtering
+    genuinely-UTC audit columns like RequestLog.created_at by a local
+    calendar day (see module docstring above for the naive-local vs. UTC
+    column distinction; contrast with local_now() above, which is for naive
+    wall-clock BUSINESS columns instead, not this case).
+
+    DST-safe: builds the local midnight-to-midnight boundary through
+    ZoneInfo instead of a fixed 24h timedelta -- Vienna's two annual DST
+    transition days are 23h (spring-forward) or 25h (fall-back) long, never
+    exactly 24h."""
+    tz = ZoneInfo(get_settings().app_timezone)
+    start_local = datetime.combine(day, time.min, tzinfo=tz)
+    end_local = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
