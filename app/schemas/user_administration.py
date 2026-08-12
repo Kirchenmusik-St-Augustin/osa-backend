@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel
+
+from app.core.datetime_utils import UtcDatetime
 
 
 class UserAdministrationSearchResultOutput(BaseModel):
@@ -28,10 +28,10 @@ class UserAdministrationDetailOutput(BaseModel):
     surname: str
     givenname: str
     email: str | None
-    email_verified_at: datetime | None
+    email_verified_at: UtcDatetime | None
     auth_locked: bool
-    deleted_at: datetime | None
-    auth_lastsignal: datetime | None
+    deleted_at: UtcDatetime | None
+    auth_lastsignal: UtcDatetime | None
 
 
 class UserAdministrationActionResponse(BaseModel):

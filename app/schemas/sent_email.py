@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, Field
+
+from app.core.datetime_utils import UtcDatetime
 
 
 class SentEmailShortOutput(BaseModel):
@@ -9,7 +9,7 @@ class SentEmailShortOutput(BaseModel):
     matching `SentEmail::ofMonth()`'s own filter/sort column."""
 
     id: int
-    datetime: datetime
+    datetime: UtcDatetime
     to: str | None
     subject: str | None
 
@@ -21,7 +21,7 @@ class SentEmailShowOutput(BaseModel):
 
     id: int
     mailer: str | None
-    datetime: datetime
+    datetime: UtcDatetime
     from_: str | None = Field(alias="from")
     to: str | None
     cc: str | None

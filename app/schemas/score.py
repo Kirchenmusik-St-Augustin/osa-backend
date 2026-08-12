@@ -1,8 +1,8 @@
-from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import StrictInputModel
 from app.services.score_fields import SCORE_FIELDS
 
@@ -188,8 +188,8 @@ class ScoreRequest(StrictInputModel):
 
 class ScoreResponse(BaseModel):
     id: int
-    created_at: datetime | None
-    updated_at: datetime | None
+    created_at: UtcDatetime | None
+    updated_at: UtcDatetime | None
     fields: dict[str, str | int]
 
 

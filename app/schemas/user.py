@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import StrictInputModel
 from app.schemas.performance import PositionRefOutput
 from app.schemas.validators import PHONE_PATTERN
@@ -77,9 +76,9 @@ class UserResponse(BaseModel):
     surname: str
     givenname: str
     email: str | None
-    email_verified_at: datetime | None
+    email_verified_at: UtcDatetime | None
     phone: str | None
-    auth_lastsignal: datetime | None
+    auth_lastsignal: UtcDatetime | None
     auth_locked: bool
     administrator: bool
     deletable: bool

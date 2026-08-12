@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
-from typing import overload
+from typing import Annotated, overload
 from zoneinfo import ZoneInfo
+
+from pydantic import BeforeValidator
 
 from app.core.config import get_settings
 
@@ -27,6 +29,25 @@ def ensure_tz_aware(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt
+
+
+# The ONE place a genuinely-UTC audit/event field is declared in an output
+# schema -- use this instead of a bare `datetime` for every field mirroring
+# the categories above (created_at/updated_at, token/session timestamps,
+# email_verified_at/auth_lastsignal/deleted_at, ...). Runs ensure_tz_aware()
+# as a pydantic BeforeValidator, so the naive value SQLite hands back is
+# stamped UTC before pydantic ever serializes it -- FastAPI's JSON response
+# then carries a real "+00:00" offset instead of an offset-free string.
+# Without this, the frontend's offset-aware formatters (dateFormat.ts's
+# formatUtcDateTime/formatTimeOnly/formatDateOnly) silently misread the
+# naive string as browser-local time via `new Date(iso)`, displaying the
+# value shifted by the viewer's UTC offset (1-2h under Vienna's CET/CEST) --
+# exactly the class of bug local_now() below already fixed for wall-clock
+# fields. A schema field forgetting to wrap a UTC column in this type is a
+# repeat of that same bug, just for audit/event timestamps instead of
+# business timestamps -- do not assign a bare DB datetime to a bare
+# `datetime`-typed output field for any of the categories above.
+UtcDatetime = Annotated[datetime, BeforeValidator(ensure_tz_aware)]
 
 
 def local_now() -> datetime:

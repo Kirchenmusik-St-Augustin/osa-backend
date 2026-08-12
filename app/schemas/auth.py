@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
+from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import StrictInputModel
 from app.schemas.validators import (
     PHONE_PATTERN,
@@ -90,7 +89,7 @@ class UserProfileResponse(BaseModel):
 
     id: int
     email: str
-    email_verified_at: datetime | None
+    email_verified_at: UtcDatetime | None
     surname: str
     givenname: str
     administrator: bool

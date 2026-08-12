@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, Field
 
+from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import StrictInputModel
 
 
@@ -18,7 +17,7 @@ class ShorturlResponse(BaseModel):
     path: str
     target: str
     counter: int
-    latestcall_at: datetime | None
+    latestcall_at: UtcDatetime | None
 
 
 class ShorturlListResponse(BaseModel):
