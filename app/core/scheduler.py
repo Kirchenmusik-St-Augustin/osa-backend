@@ -10,6 +10,7 @@ dev process) that guard is a no-op; it only becomes active once Phase 2
 """
 
 import logging
+from collections.abc import Callable
 from zoneinfo import ZoneInfo
 
 from apscheduler.events import (
@@ -76,6 +77,23 @@ def _acquire_scheduler_lock() -> bool:
     return True
 
 
+def _sync_job_registration(
+    job_id: str, *, should_register: bool, add_job: Callable[[], object]
+) -> None:
+    """Registers a job only when `should_register` is true, otherwise
+    ensures it's absent -- shared by every environment-gated job in
+    start_scheduler() below so it stays idempotent regardless of which
+    environment/settings a previous call ran under (relevant across
+    repeated calls against this module-level scheduler instance, e.g.
+    across tests)."""
+    if should_register:
+        add_job()
+        return
+    if scheduler.get_job(job_id) is not None:
+        scheduler.remove_job(job_id)
+    logger.info("%s job not registered (should_register=%s).", job_id, should_register)
+
+
 def _log_job_outcome(event: JobEvent | JobExecutionEvent) -> None:
     """Port of Legacy's ScheduledTask/Starting+Finished listeners --
     operational log lines only, no DB write, registered once for every job
@@ -95,9 +113,16 @@ def start_scheduler() -> None:
         )
         return
 
+    settings = get_settings()
+    is_production = settings.app_environment == "production"
+
     # Replaces Legacy's Performance::booted() anti-pattern (ran on every
     # single Model boot); hourly is an arbitrary, reasonable cadence --
     # Legacy itself had no grace period at all, just "runs constantly".
+    # Deliberately NOT environment-gated: Legacy's booted() hook ran in
+    # every environment too -- it was never a Schedule::command(...) entry
+    # in routes/console.php in the first place, so that file's
+    # `environments('production')` wrapper never applied to it.
     scheduler.add_job(
         purge_stale_booking_requests,
         "interval",
@@ -105,52 +130,71 @@ def start_scheduler() -> None:
         id="purge_stale_booking_requests",
         replace_existing=True,
     )
+
+    # The four jobs below all mirror a real `Schedule::command(...)` entry
+    # in Legacy's routes/console.php, and Legacy wraps ALL of them in
+    # `if (App::environment('production'))` -- none of them ever ran
+    # outside production there. _sync_job_registration() keeps
+    # start_scheduler() idempotent regardless of which environment/settings
+    # a previous call ran under (relevant across repeated calls against
+    # this module-level scheduler instance, e.g. across tests).
+
     # Port of `osa:schedule:send-status-for-upcoming-performances`
     # (BookingLog::checkNotificationForUpcomingPerformances()), Legacy's
     # exact 05:00 daily cadence.
-    scheduler.add_job(
-        notify_upcoming_booking_status,
-        "cron",
-        hour=5,
-        minute=0,
-        id="notify_upcoming_booking_status",
-        replace_existing=True,
+    _sync_job_registration(
+        "notify_upcoming_booking_status",
+        should_register=is_production,
+        add_job=lambda: scheduler.add_job(
+            notify_upcoming_booking_status,
+            "cron",
+            hour=5,
+            minute=0,
+            id="notify_upcoming_booking_status",
+            replace_existing=True,
+        ),
     )
     # Port of `auth:clear-resets`, Legacy's exact weekly Sunday 02:00 cadence.
-    scheduler.add_job(
-        purge_expired_password_reset_tokens,
-        "cron",
-        day_of_week="sun",
-        hour=2,
-        minute=0,
-        id="purge_expired_password_reset_tokens",
-        replace_existing=True,
+    _sync_job_registration(
+        "purge_expired_password_reset_tokens",
+        should_register=is_production,
+        add_job=lambda: scheduler.add_job(
+            purge_expired_password_reset_tokens,
+            "cron",
+            day_of_week="sun",
+            hour=2,
+            minute=0,
+            id="purge_expired_password_reset_tokens",
+            replace_existing=True,
+        ),
     )
     # Port of `osa:schedule:delete-old-db-log-records`, Legacy's exact
     # daily 23:00 cadence.
-    scheduler.add_job(
-        purge_old_request_logs,
-        "cron",
-        hour=23,
-        minute=0,
-        id="purge_old_request_logs",
-        replace_existing=True,
+    _sync_job_registration(
+        "purge_old_request_logs",
+        should_register=is_production,
+        add_job=lambda: scheduler.add_job(
+            purge_old_request_logs,
+            "cron",
+            hour=23,
+            minute=0,
+            id="purge_old_request_logs",
+            replace_existing=True,
+        ),
     )
-
-    # Port of Legacy's Schedule::command('osa:schedule:backup-prod-database')
-    # ->environments('production') -- the ONLY job in this codebase gated by
-    # environment. Two independent conditions (app_environment AND
-    # backup_enabled): unlike housekeeping/booking jobs (harmless anywhere),
-    # this job writes into a Koofr path SHARED across every stage -- see
-    # Settings.backup_enabled's docstring. Uses settings.app_timezone
-    # explicitly (Legacy's dailyAt('10:50') meant Vienna wall-clock time) --
-    # unlike the four jobs above, which rely on AsyncIOScheduler()'s unset
-    # (effectively container-OS/UTC) default timezone; that's a pre-existing
-    # gap in this scheduler, out of scope here, but not one this new job
-    # should inherit.
-    settings = get_settings()
-    if settings.app_environment == "production" and settings.backup_enabled:
-        scheduler.add_job(
+    # Port of Legacy's Schedule::command('osa:schedule:backup-prod-database').
+    # Two independent conditions (app_environment AND backup_enabled): unlike
+    # the three jobs above, this one writes into a Koofr path SHARED across
+    # every stage -- see Settings.backup_enabled's docstring. Uses
+    # settings.app_timezone explicitly (Legacy's dailyAt('10:50') meant
+    # Vienna wall-clock time) -- unlike the jobs above, which rely on
+    # AsyncIOScheduler()'s unset (effectively container-OS/UTC) default
+    # timezone; that's a pre-existing gap in this scheduler, out of scope
+    # here, but not one this job should inherit.
+    _sync_job_registration(
+        "backup_koofr",
+        should_register=is_production and settings.backup_enabled,
+        add_job=lambda: scheduler.add_job(
             job_backup_koofr,
             "cron",
             hour=settings.backup_hour,
@@ -158,20 +202,8 @@ def start_scheduler() -> None:
             timezone=ZoneInfo(settings.app_timezone),
             id="backup_koofr",
             replace_existing=True,
-        )
-    else:
-        # Explicit removal (not just "don't add") keeps start_scheduler()
-        # idempotent regardless of which environment a previous call ran
-        # under -- relevant across repeated calls against this module-level
-        # scheduler instance (e.g. across tests), and correct in principle
-        # regardless: this branch must always converge to "job absent".
-        if scheduler.get_job("backup_koofr") is not None:
-            scheduler.remove_job("backup_koofr")
-        logger.info(
-            "backup_koofr job not registered (app_environment=%s, backup_enabled=%s).",
-            settings.app_environment,
-            settings.backup_enabled,
-        )
+        ),
+    )
 
     scheduler.add_listener(
         _log_job_outcome, EVENT_JOB_SUBMITTED | EVENT_JOB_EXECUTED | EVENT_JOB_ERROR

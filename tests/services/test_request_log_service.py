@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import select
@@ -187,30 +187,35 @@ class TestRecordRequest:
         assert row.client_user_agent_id is None
 
 
-class TestListUsersForMonth:
-    def test_finds_a_user_with_an_entry_in_the_month(
+class TestListDaysWithUsersForMonth:
+    def test_returns_a_day_group_containing_the_active_user(
         self, db_session: Session, make_user
     ):
         user = make_user()
         _make_entry(
-            db_session, user_id=user.id, created_at=datetime(2026, 6, 10, tzinfo=UTC)
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 6, 10, 9, 0, tzinfo=UTC),
         )
 
-        result = request_log_service.list_users_for_month(db_session, 2026, 6)
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
 
-        assert user.id in [item.id for item in result]
+        day_group = next(g for g in result if g.day == date(2026, 6, 10))
+        assert user.id in [item.id for item in day_group.users]
 
     def test_excludes_a_user_with_only_entries_in_a_different_month(
         self, db_session: Session, make_user
     ):
         user = make_user()
         _make_entry(
-            db_session, user_id=user.id, created_at=datetime(2026, 5, 10, tzinfo=UTC)
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 5, 10, 9, 0, tzinfo=UTC),
         )
 
-        result = request_log_service.list_users_for_month(db_session, 2026, 6)
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
 
-        assert user.id not in [item.id for item in result]
+        assert all(user.id not in [item.id for item in g.users] for g in result)
 
     def test_includes_a_soft_deleted_user(self, db_session: Session, make_user):
         # Legacy's index() branch explicitly uses withTrashed() -- a user
@@ -219,14 +224,66 @@ class TestListUsersForMonth:
         user.deleted_at = datetime.now(UTC)
         db_session.commit()
         _make_entry(
-            db_session, user_id=user.id, created_at=datetime(2026, 6, 10, tzinfo=UTC)
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 6, 10, 9, 0, tzinfo=UTC),
         )
 
-        result = request_log_service.list_users_for_month(db_session, 2026, 6)
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
 
-        assert user.id in [item.id for item in result]
+        day_group = next(g for g in result if g.day == date(2026, 6, 10))
+        assert user.id in [item.id for item in day_group.users]
 
-    def test_sorted_by_surname_then_givenname(self, db_session: Session, make_user):
+    def test_separates_two_users_active_on_different_days_into_two_groups(
+        self, db_session: Session, make_user
+    ):
+        first = make_user()
+        second = make_user()
+        _make_entry(
+            db_session,
+            user_id=first.id,
+            created_at=datetime(2026, 6, 5, 9, 0, tzinfo=UTC),
+        )
+        _make_entry(
+            db_session,
+            user_id=second.id,
+            created_at=datetime(2026, 6, 15, 9, 0, tzinfo=UTC),
+        )
+
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
+
+        day_5 = next(g for g in result if g.day == date(2026, 6, 5))
+        day_15 = next(g for g in result if g.day == date(2026, 6, 15))
+        assert first.id in [u.id for u in day_5.users]
+        assert first.id not in [u.id for u in day_15.users]
+        assert second.id in [u.id for u in day_15.users]
+        assert second.id not in [u.id for u in day_5.users]
+
+    def test_includes_a_user_active_on_multiple_days_in_each_relevant_group(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 6, 3, 9, 0, tzinfo=UTC),
+        )
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 6, 20, 9, 0, tzinfo=UTC),
+        )
+
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
+
+        day_3 = next(g for g in result if g.day == date(2026, 6, 3))
+        day_20 = next(g for g in result if g.day == date(2026, 6, 20))
+        assert user.id in [u.id for u in day_3.users]
+        assert user.id in [u.id for u in day_20.users]
+
+    def test_sorted_by_surname_then_givenname_within_a_day(
+        self, db_session: Session, make_user
+    ):
         # Legacy's `User` model carries a global `OrderBySurnameGivenname`
         # scope applied to EVERY User query, including this whereIn lookup.
         # Surnames prefixed via _unique() -- `users` has a real UNIQUE
@@ -241,18 +298,32 @@ class TestListUsersForMonth:
             _make_entry(
                 db_session,
                 user_id=user.id,
-                created_at=datetime(2026, 6, 10, tzinfo=UTC),
+                created_at=datetime(2026, 6, 10, 9, 0, tzinfo=UTC),
             )
 
-        result = request_log_service.list_users_for_month(db_session, 2026, 6)
-        ids = [item.id for item in result if item.id in (first.id, third.id)]
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
+        day_group = next(g for g in result if g.day == date(2026, 6, 10))
+        ids = [item.id for item in day_group.users if item.id in (first.id, third.id)]
 
         assert ids == [first.id, third.id]
+
+    def test_days_are_sorted_newest_first(self, db_session: Session, make_user):
+        for day in (3, 15, 27):
+            _make_entry(
+                db_session,
+                user_id=make_user().id,
+                created_at=datetime(2026, 6, day, 9, 0, tzinfo=UTC),
+            )
+
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
+        days = [g.day for g in result]
+
+        assert days == sorted(days, reverse=True)
 
     def test_label_is_space_separated_without_a_comma(
         self, db_session: Session, make_user
     ):
-        # Deliberate Legacy inconsistency vs. list_entries_for_user()'s
+        # Deliberate Legacy inconsistency vs. list_entries_for_user_day()'s
         # comma-format `username` below: Index.vue's pug template renders
         # the raw `{{ user.surname }} {{ user.givenname }}` fields directly,
         # not the comma-format `name` accessor.
@@ -260,17 +331,64 @@ class TestListUsersForMonth:
         user.surname, user.givenname = _unique("ZWICKENPFLUG"), "Doris"
         db_session.commit()
         _make_entry(
-            db_session, user_id=user.id, created_at=datetime(2026, 6, 10, tzinfo=UTC)
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 6, 10, 9, 0, tzinfo=UTC),
         )
 
-        result = request_log_service.list_users_for_month(db_session, 2026, 6)
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 6)
+        day_group = next(g for g in result if g.day == date(2026, 6, 10))
 
-        label = next(item.label for item in result if item.id == user.id)
+        label = next(item.label for item in day_group.users if item.id == user.id)
         assert label == f"{user.surname} Doris"
         assert "," not in label
 
+    def test_buckets_the_last_day_of_the_month_by_vienna_calendar_day_not_utc(
+        self, db_session: Session, make_user
+    ):
+        # 22:05 UTC on Aug 31 is 00:05 CEST on Sep 1 in Vienna (UTC+2 in
+        # August) -- must NOT appear in August's result at all; falls into
+        # September's local calendar day, cleanly excluded by
+        # month_end_utc == local_day_bounds_utc(date(2026, 9, 1))[0].
+        user = make_user()
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 8, 31, 22, 5, tzinfo=UTC),
+        )
 
-class TestListEntriesForUser:
+        august_result = request_log_service.list_days_with_users_for_month(
+            db_session, 2026, 8
+        )
+        september_result = request_log_service.list_days_with_users_for_month(
+            db_session, 2026, 9
+        )
+
+        assert all(user.id not in [u.id for u in g.users] for g in august_result)
+        september_day_group = next(
+            g for g in september_result if g.day == date(2026, 9, 1)
+        )
+        assert user.id in [u.id for u in september_day_group.users]
+
+    def test_handles_a_december_to_january_year_rollover(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 12, 31, 12, 0, tzinfo=UTC),
+        )
+
+        result = request_log_service.list_days_with_users_for_month(
+            db_session, 2026, 12
+        )
+
+        day_group = next(g for g in result if g.day == date(2026, 12, 31))
+        assert user.id in [u.id for u in day_group.users]
+
+
+class TestListEntriesForUserDay:
     def test_returns_entries_sorted_ascending_by_created_at(
         self, db_session: Session, make_user
     ):
@@ -286,16 +404,34 @@ class TestListEntriesForUser:
             created_at=datetime(2026, 6, 10, 8, 0, tzinfo=UTC),
         )
 
-        result = request_log_service.list_entries_for_user(db_session, user.id, 2026, 6)
+        result = request_log_service.list_entries_for_user_day(
+            db_session, user.id, date(2026, 6, 10)
+        )
 
         assert [entry.id for entry in result.entries] == [earlier.id, later.id]
+
+    def test_excludes_an_entry_on_a_different_day(self, db_session: Session, make_user):
+        user = make_user()
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 6, 11, 8, 0, tzinfo=UTC),
+        )
+
+        result = request_log_service.list_entries_for_user_day(
+            db_session, user.id, date(2026, 6, 10)
+        )
+
+        assert result.entries == []
 
     def test_username_uses_label_for_name(self, db_session: Session, make_user):
         user = make_user()
         user.surname, user.givenname = "SCHINDLER", "Margot"
         db_session.commit()
 
-        result = request_log_service.list_entries_for_user(db_session, user.id, 2026, 6)
+        result = request_log_service.list_entries_for_user_day(
+            db_session, user.id, date(2026, 6, 10)
+        )
 
         assert result.username == "SCHINDLER, Margot"
 
@@ -304,13 +440,40 @@ class TestListEntriesForUser:
         user.deleted_at = datetime.now(UTC)
         db_session.commit()
 
-        result = request_log_service.list_entries_for_user(db_session, user.id, 2026, 6)
+        result = request_log_service.list_entries_for_user_day(
+            db_session, user.id, date(2026, 6, 10)
+        )
 
         assert result.entries == []
 
     def test_raises_not_found_for_a_nonexistent_user(self, db_session: Session):
         with pytest.raises(RequestLogUserNotFoundError):
-            request_log_service.list_entries_for_user(db_session, 999_999, 2026, 6)
+            request_log_service.list_entries_for_user_day(
+                db_session, 999_999, date(2026, 6, 10)
+            )
+
+    def test_buckets_an_entry_by_vienna_calendar_day_not_utc_calendar_day(
+        self, db_session: Session, make_user
+    ):
+        # 22:05 UTC on Aug 12 is 00:05 CEST on Aug 13 in Vienna (UTC+2 in
+        # August) -- regression guard for local_day_bounds_utc() bucketing
+        # by the LOCAL calendar day, not the raw UTC calendar day.
+        user = make_user()
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 8, 12, 22, 5, tzinfo=UTC),
+        )
+
+        aug_12 = request_log_service.list_entries_for_user_day(
+            db_session, user.id, date(2026, 8, 12)
+        )
+        aug_13 = request_log_service.list_entries_for_user_day(
+            db_session, user.id, date(2026, 8, 13)
+        )
+
+        assert aug_12.entries == []
+        assert len(aug_13.entries) == 1
 
 
 class TestGet:
@@ -335,8 +498,9 @@ class TestGet:
     def test_user_name_is_none_for_a_soft_deleted_user(
         self, db_session: Session, make_user
     ):
-        # Deliberate asymmetry vs. list_users_for_month/list_entries_for_user:
-        # Legacy's Show resource does a PLAIN (non-withTrashed) User::find().
+        # Deliberate asymmetry vs. list_days_with_users_for_month/
+        # list_entries_for_user_day: Legacy's Show resource does a PLAIN
+        # (non-withTrashed) User::find().
         user = make_user()
         user.deleted_at = datetime.now(UTC)
         db_session.commit()

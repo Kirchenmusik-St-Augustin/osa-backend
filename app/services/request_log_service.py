@@ -1,14 +1,19 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from typing import cast
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.datetime_utils import ensure_tz_aware, local_day_bounds_utc
 from app.core.human_names import label_for_name
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import RequestLog
 from app.db.models.user import User
 from app.schemas.request_log import (
+    RequestLogDayGroupOutput,
     RequestLogEntryOutput,
     RequestLogShowOutput,
     RequestLogUserDetailOutput,
@@ -142,62 +147,106 @@ def record_request(
     db.commit()
 
 
-def list_users_for_month(
-    db: Session, year: int, month: int
-) -> list[RequestLogUserSummaryOutput]:
-    """1:1 Legacy's `RequestLogController::index()` (no-user_id branch) --
-    users who have at least one RequestLog row in the month, `withTrashed()`
-    (no `deleted_at` filter). Sorted by (surname, givenname): Legacy's
-    `User` model carries a global `OrderBySurnameGivenname` scope applied
-    to EVERY User query, including this `whereIn` lookup (same lesson
-    already applied in support_service.list_roles_with_contacts())."""
-    month_str = f"{year:04d}-{month:02d}"
-    user_ids = (
-        db.execute(
-            select(RequestLog.user_id)
-            .where(
-                func.strftime("%Y-%m", RequestLog.created_at) == month_str,
-                RequestLog.user_id.is_not(None),
-            )
-            .distinct()
-        )
-        .scalars()
-        .all()
-    )
-    if not user_ids:
-        return []
-    users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
-    ordered = sorted(users, key=lambda user: (user.surname, user.givenname))
-    # Deliberate Legacy inconsistency: unlike list_entries_for_user()'s
-    # `username` below, the Index.vue pug template renders the raw
-    # `{{ user.surname }} {{ user.givenname }}` fields directly (space-
+def _label_without_comma(user: User) -> str:
+    # Deliberate Legacy inconsistency vs. list_entries_for_user_day()'s
+    # comma-format `username` below: the Index.vue pug template renders the
+    # raw `{{ user.surname }} {{ user.givenname }}` fields directly (space-
     # separated, no comma) instead of the comma-format `name` accessor --
     # this page's User\Short resource never exposes a combined `name` field.
-    return [
-        RequestLogUserSummaryOutput(
-            id=user.id,
-            label=f"{user.surname} {user.givenname}"
-            if user.givenname
-            else user.surname,
+    return f"{user.surname} {user.givenname}" if user.givenname else user.surname
+
+
+def list_days_with_users_for_month(
+    db: Session, year: int, month: int
+) -> list[RequestLogDayGroupOutput]:
+    """Real functional change vs. Legacy's flat month-only user list
+    (User decision 2026-08-12) -- groups the month's activity by local
+    (Settings.app_timezone) calendar day, newest day first, for
+    post-cutover monitoring ("which days had activity, who was active").
+    Users per day, `withTrashed()` (no `deleted_at` filter), sorted by
+    (surname, givenname) -- same lesson as
+    support_service.list_roles_with_contacts().
+
+    N+1-safe in exactly 2 queries regardless of day/user count, same
+    batch-load-then-assemble-in-Python shape as
+    performance_service._build_proprium_by_performance()."""
+    first_of_month = date(year, month, 1)
+    first_of_next_month = (
+        date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    )
+    month_start_utc, _ = local_day_bounds_utc(first_of_month)
+    month_end_utc, _ = local_day_bounds_utc(first_of_next_month)
+
+    # Query 1/2: tuples only, no need for full RequestLog ORM objects here.
+    rows = db.execute(
+        select(RequestLog.created_at, RequestLog.user_id).where(
+            RequestLog.created_at >= month_start_utc,
+            RequestLog.created_at < month_end_utc,
+            RequestLog.user_id.is_not(None),
         )
-        for user in ordered
+    ).all()
+    if not rows:
+        return []
+
+    tz = ZoneInfo(get_settings().app_timezone)
+    user_ids_by_day: dict[date, set[int]] = {}
+    for raw_created_at, raw_user_id in rows:
+        # Narrows the ORM columns' nullable static type (both Mapped[T | None]
+        # at the model level) -- not a defensive runtime branch: the WHERE
+        # clause above already guarantees both are non-null in every row that
+        # reaches this loop (a NULL created_at can never satisfy the range
+        # filter; user_id is filtered via is_not(None)), so an `if ... is
+        # None: continue` here would be unreachable dead code.
+        created_at = cast("datetime", raw_created_at)
+        user_id = cast("int", raw_user_id)
+        local_day = ensure_tz_aware(created_at).astimezone(tz).date()
+        user_ids_by_day.setdefault(local_day, set()).add(user_id)
+
+    all_user_ids = {uid for ids in user_ids_by_day.values() for uid in ids}
+    # Query 2/2: withTrashed()-equivalent, same as the old list_users_for_month().
+    users_by_id = {
+        user.id: user
+        for user in db.execute(select(User).where(User.id.in_(all_user_ids)))
+        .scalars()
+        .all()
+    }
+
+    return [
+        RequestLogDayGroupOutput(
+            day=day,
+            users=[
+                RequestLogUserSummaryOutput(
+                    id=user.id, label=_label_without_comma(user)
+                )
+                for user in sorted(
+                    (
+                        users_by_id[uid]
+                        for uid in user_ids_by_day[day]
+                        if uid in users_by_id
+                    ),
+                    key=lambda user: (user.surname, user.givenname),
+                )
+            ],
+        )
+        for day in sorted(user_ids_by_day, reverse=True)
     ]
 
 
-def list_entries_for_user(
-    db: Session, user_id: int, year: int, month: int
+def list_entries_for_user_day(
+    db: Session, user_id: int, day: date
 ) -> RequestLogUserDetailOutput:
     user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
     if user is None:
         raise RequestLogUserNotFoundError
 
-    month_str = f"{year:04d}-{month:02d}"
+    start_utc, end_utc = local_day_bounds_utc(day)
     entries = (
         db.execute(
             select(RequestLog)
             .where(
                 RequestLog.user_id == user_id,
-                func.strftime("%Y-%m", RequestLog.created_at) == month_str,
+                RequestLog.created_at >= start_utc,
+                RequestLog.created_at < end_utc,
             )
             .order_by(RequestLog.created_at)
         )
@@ -222,9 +271,9 @@ def list_entries_for_user(
 def get(db: Session, request_log_id: int) -> RequestLogShowOutput:
     """1:1 Legacy's `RequestLog\\Show` resource. `user_name` is resolved via
     a PLAIN (non-withTrashed) User lookup -- a real, deliberate asymmetry
-    vs. list_users_for_month()/list_entries_for_user() above: Legacy's
-    Show resource calls bare `User::find($this->user_id)`, which returns
-    null for a since-soft-deleted user (unlike the Index/IndexUser
+    vs. list_days_with_users_for_month()/list_entries_for_user_day() above:
+    Legacy's Show resource calls bare `User::find($this->user_id)`, which
+    returns null for a since-soft-deleted user (unlike the Index/IndexUser
     controllers' explicit `withTrashed()`)."""
     row = db.execute(
         select(RequestLog).where(RequestLog.id == request_log_id)
