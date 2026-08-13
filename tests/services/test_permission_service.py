@@ -21,8 +21,9 @@ def test_administrator_gets_all_administrator_gated_permissions(make_user):
         "choirjobMaintain",
         "locationMaintain",
         "requestLogView",
-        "clientUserAgentView",
         "sentEmailView",
+        "sqlInspectorView",
+        "schedulerView",
     ):
         assert permission in permissions
 
@@ -87,7 +88,7 @@ def test_shorturls_role_grants_only_shorturl_maintain(make_user):
 
 
 def test_all_permissions_matches_rule_count():
-    assert len(ALL_PERMISSIONS) == len(PERMISSION_RULES) == 21
+    assert len(ALL_PERMISSIONS) == len(PERMISSION_RULES) == 22
 
 
 def test_permission_rules_display_has_description_per_rule():

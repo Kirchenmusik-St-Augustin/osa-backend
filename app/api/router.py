@@ -13,9 +13,11 @@ from app.api.router_includes.performance import performance_router
 from app.api.router_includes.profile import profile_router
 from app.api.router_includes.propriumwork import propriumwork_router
 from app.api.router_includes.request_log import request_log_router
+from app.api.router_includes.scheduler import scheduler_router
 from app.api.router_includes.score import score_router
 from app.api.router_includes.sent_email import sent_email_router
 from app.api.router_includes.shorturl import shorturl_router
+from app.api.router_includes.sql_inspector import sql_inspector_router
 from app.api.router_includes.statistics import statistics_router
 from app.api.router_includes.support import support_router
 from app.api.router_includes.system import system_router
@@ -56,6 +58,14 @@ api_router.include_router(
 )
 api_router.include_router(
     request_log_router, prefix="/administrator/request-logs", tags=["request-logs"]
+)
+api_router.include_router(
+    sql_inspector_router,
+    prefix="/administrator/sql-inspector",
+    tags=["sql-inspector"],
+)
+api_router.include_router(
+    scheduler_router, prefix="/administrator/scheduler", tags=["scheduler"]
 )
 api_router.include_router(statistics_router, prefix="/statistics", tags=["statistics"])
 api_router.include_router(system_router, prefix="/system", tags=["system"])
