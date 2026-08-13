@@ -127,10 +127,11 @@ class Settings(BaseSettings):
     # stage, so a single settings toggle must not be enough to make a
     # dev/qa process write into it.
     backup_enabled: bool = Field(default=True, validation_alias="BACKUP_ENABLED")
-    # Legacy's exact dailyAt('10:50') cadence (routes/console.php), kept
-    # for continuity.
-    backup_hour: int = Field(default=10, validation_alias="BACKUP_HOUR")
-    backup_minute: int = Field(default=50, validation_alias="BACKUP_MINUTE")
+    # Deliberate deviation from Legacy's dailyAt('10:50') (User decision,
+    # 2026-08-13) -- moved to a nighttime slot, Europe/Vienna wall-clock via
+    # Settings.app_timezone (see app.core.scheduler.start_scheduler()).
+    backup_hour: int = Field(default=3, validation_alias="BACKUP_HOUR")
+    backup_minute: int = Field(default=0, validation_alias="BACKUP_MINUTE")
 
     # Tier 3 -- feature-required, no default, checked at first use via
     # require_setting() below.

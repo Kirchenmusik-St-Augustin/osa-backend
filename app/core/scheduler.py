@@ -39,7 +39,12 @@ from app.services.housekeeping_jobs import (
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+# Central timezone for every job's cron/interval fields below, 1:1 Legacy's
+# single config/app.php 'timezone' => 'Europe/Vienna' setting (which
+# transparently governed Schedule::command(...)->dailyAt(...) there too).
+# A job only needs its own explicit `timezone=` kwarg if it must deviate
+# from this default -- none currently do.
+scheduler = AsyncIOScheduler(timezone=ZoneInfo(get_settings().app_timezone))
 
 # Shown on the admin-only Scheduler overview (GET /administrator/scheduler/jobs)
 # next to each job's id -- keep in sync with every job id start_scheduler()
@@ -149,10 +154,15 @@ def start_scheduler() -> None:
     # every environment too -- it was never a Schedule::command(...) entry
     # in routes/console.php in the first place, so that file's
     # `environments('production')` wrapper never applied to it.
+    # A cron trigger (fixed :00 of every hour) rather than an interval
+    # trigger on purpose: IntervalTrigger anchors its first fire to
+    # whatever moment start_scheduler() happened to run, so the actual
+    # minute-past-the-hour would silently drift with every container
+    # restart -- cron gives a deterministic, restart-independent schedule.
     scheduler.add_job(
         purge_stale_booking_requests,
-        "interval",
-        hours=1,
+        "cron",
+        minute=0,
         id="purge_stale_booking_requests",
         replace_existing=True,
     )
@@ -208,15 +218,15 @@ def start_scheduler() -> None:
             replace_existing=True,
         ),
     )
-    # Port of Legacy's Schedule::command('osa:schedule:backup-prod-database').
+    # Port of Legacy's Schedule::command('osa:schedule:backup-prod-database'),
+    # moved from Legacy's exact dailyAt('10:50') to a nighttime slot
+    # (Settings.backup_hour/backup_minute, default 03:00) -- deliberate
+    # deviation, not a 1:1 cadence port (User decision, 2026-08-13).
     # Two independent conditions (app_environment AND backup_enabled): unlike
     # the three jobs above, this one writes into a Koofr path SHARED across
-    # every stage -- see Settings.backup_enabled's docstring. Uses
-    # settings.app_timezone explicitly (Legacy's dailyAt('10:50') meant
-    # Vienna wall-clock time) -- unlike the jobs above, which rely on
-    # AsyncIOScheduler()'s unset (effectively container-OS/UTC) default
-    # timezone; that's a pre-existing gap in this scheduler, out of scope
-    # here, but not one this job should inherit.
+    # every stage -- see Settings.backup_enabled's docstring. No explicit
+    # `timezone=` kwarg needed -- inherits the scheduler-wide default set
+    # above.
     _sync_job_registration(
         "backup_koofr",
         should_register=is_production and settings.backup_enabled,
@@ -225,7 +235,6 @@ def start_scheduler() -> None:
             "cron",
             hour=settings.backup_hour,
             minute=settings.backup_minute,
-            timezone=ZoneInfo(settings.app_timezone),
             id="backup_koofr",
             replace_existing=True,
         ),
