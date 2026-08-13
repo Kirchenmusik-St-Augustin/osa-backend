@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from zoneinfo import ZoneInfo
 
 import pytest
 from apscheduler.events import (
@@ -9,6 +10,8 @@ from apscheduler.events import (
     EVENT_JOB_SUBMITTED,
     JobEvent,
 )
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core import scheduler as scheduler_module
 from app.core.config import get_settings
@@ -42,6 +45,36 @@ def test_acquire_scheduler_lock_is_noop_under_sqlite():
     # The test DB (see conftest.py) is always SQLite -- the advisory-lock
     # branch only activates once Phase 2 (Postgres) is in place.
     assert _acquire_scheduler_lock() is True
+
+
+def test_scheduler_uses_app_timezone():
+    # Regression guard: the scheduler-wide default must actually be set
+    # (User-reported bug, 2026-08-13 -- jobs without their own explicit
+    # `timezone=` kwarg were silently interpreted in the container's local
+    # tz instead of Settings.app_timezone, causing a 2-hour Vienna-CEST
+    # offset on their displayed/actual run times).
+    assert scheduler.timezone == ZoneInfo(get_settings().app_timezone)
+
+
+def test_purge_stale_booking_requests_uses_a_deterministic_cron_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Regression guard: an IntervalTrigger anchors its first fire to
+    # whatever moment start_scheduler() happened to run, so the exact
+    # minute-past-the-hour would drift with every container restart
+    # (User-reported, 2026-08-13). Must be a fixed-minute CronTrigger.
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+
+    async def _run() -> None:
+        start_scheduler()
+        job = scheduler.get_job("purge_stale_booking_requests")
+        assert job is not None
+        assert isinstance(job.trigger, CronTrigger)
+        assert not isinstance(job.trigger, IntervalTrigger)
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
 
 
 def test_start_and_stop_scheduler_toggle_running_state():
@@ -330,6 +363,27 @@ def test_job_descriptions_covers_every_registrable_job_id():
     # overview would silently show it with description=None otherwise.
     all_registrable_job_ids = {_ALWAYS_ON_JOB_ID, *_PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP}
     assert all_registrable_job_ids <= JOB_DESCRIPTIONS.keys()
+
+
+def test_every_registered_job_inherits_the_scheduler_default_timezone(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Regression guard for the same bug as test_scheduler_uses_app_timezone
+    # above, but at the per-job level: every cron-triggered job must
+    # actually resolve to Settings.app_timezone, not just the scheduler
+    # object itself (a job could in principle still override it locally).
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+    monkeypatch.setenv("BACKUP_ENABLED", "true")
+    expected_tz = ZoneInfo(get_settings().app_timezone)
+
+    async def _run() -> None:
+        start_scheduler()
+        for job in scheduler.get_jobs():
+            assert job.trigger.timezone == expected_tz, job.id
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
 
 
 def test_get_scheduled_jobs_returns_empty_list_when_scheduler_not_started():

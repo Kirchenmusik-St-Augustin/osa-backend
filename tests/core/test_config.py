@@ -123,8 +123,8 @@ def test_koofr_backup_defaults(monkeypatch: pytest.MonkeyPatch):
     assert settings.koofr_backup_path == "Koofr/Backups/osa-db"
     assert settings.koofr_backup_retention_days == 28
     assert settings.backup_enabled is True
-    assert settings.backup_hour == 10
-    assert settings.backup_minute == 50
+    assert settings.backup_hour == 3
+    assert settings.backup_minute == 0
     assert settings.koofr_user is None
     assert settings.koofr_password is None
 
@@ -134,7 +134,7 @@ def test_koofr_backup_settings_can_be_overridden(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("KOOFR_BACKUP_PATH", "Backups/other-path")
     monkeypatch.setenv("KOOFR_BACKUP_RETENTION_DAYS", "14")
     monkeypatch.setenv("BACKUP_ENABLED", "false")
-    monkeypatch.setenv("BACKUP_HOUR", "3")
+    monkeypatch.setenv("BACKUP_HOUR", "7")
     monkeypatch.setenv("BACKUP_MINUTE", "15")
     monkeypatch.setenv("KOOFR_USER", "someone")
     monkeypatch.setenv("KOOFR_PASSWORD", "secret")
@@ -145,7 +145,7 @@ def test_koofr_backup_settings_can_be_overridden(monkeypatch: pytest.MonkeyPatch
     assert settings.koofr_backup_path == "Backups/other-path"
     assert settings.koofr_backup_retention_days == 14
     assert settings.backup_enabled is False
-    assert settings.backup_hour == 3
+    assert settings.backup_hour == 7
     assert settings.backup_minute == 15
     assert settings.koofr_user == "someone"
     assert settings.koofr_password == "secret"
