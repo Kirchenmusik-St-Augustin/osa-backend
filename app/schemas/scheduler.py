@@ -10,3 +10,11 @@ class ScheduledJobOutput(BaseModel):
     trigger: str
     next_run: str | None
     description: str | None
+
+
+class BackupTriggerOutput(BaseModel):
+    """Response of a manually triggered Koofr backup
+    (POST /administrator/scheduler/backup/trigger)."""
+
+    backup_name: str
+    triggered_at: str

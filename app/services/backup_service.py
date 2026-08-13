@@ -1,10 +1,15 @@
 """SQLite -> Koofr WebDAV backup/restore -- Phase 1 (SQLite) equivalent of
 Legacy's OsaScheduleBackupProdDB.php Artisan command.
 
-Produces filenames byte-for-byte compatible with
-osa-einteilung.hochamt.at/tools/restore-koofr-backup.sh (same
-"osa_database_backup_{Y-m-d_H-i-s}.tar.gz" naming, same Koofr path) --
-that script keeps working unmodified against backups this module creates.
+Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].tar.gz`,
+1:1 the vb-fastapi-vue sister project's `run_backup()` naming, User decision
+2026-08-13) -- a DELIBERATE, confirmed break of this module's earlier
+byte-for-byte compatibility with
+osa-einteilung.hochamt.at/tools/restore-koofr-backup.sh: that script only
+recognizes the old unprefixed "osa_database_backup_{Y-m-d_H-i-s}.tar.gz"
+naming, so it keeps working for backups created BEFORE this change but not
+for any created after. Accepted -- Legacy is being retired soon and the
+Koofr account/path itself is unchanged, only the filename shape.
 
 Uses raw WebDAV HTTP verbs via `requests` (already a pinned dependency)
 instead of shelling out to rclone (what the existing restore script does)
@@ -38,9 +43,21 @@ from app.core.config import get_settings, require_setting
 
 logger = logging.getLogger(__name__)
 
+# Sort-key fallback for a name that (per _FILENAME_PATTERN's own guarantee)
+# never actually fails to parse -- keeps list_backups()'s sort key
+# non-Optional without a runtime assert.
+_EPOCH = datetime.min.replace(tzinfo=UTC)
+
 _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
+# Stage-prefixed, optionally "-manual"-suffixed -- 1:1 vb-api's
+# f"{app_environment}-{timestamp}{suffix}" naming (User decision,
+# 2026-08-13, see module docstring). `stage` is intentionally not
+# constrained to Settings' exact _VALID_ENVIRONMENTS set here -- this
+# pattern only needs to recognize OUR OWN generated filenames well enough
+# to extract the timestamp, not to validate the settings enum.
 _FILENAME_PATTERN = re.compile(
-    r"^osa_database_backup_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.tar\.gz$"
+    r"^(?P<stage>[a-z]+)-(?P<timestamp>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})"
+    r"(?:-manual)?\.tar\.gz$"
 )
 _DAV_HREF_TAG = "{DAV:}href"
 
@@ -101,8 +118,13 @@ def _backup_sqlite_file(source_path: Path, dest_path: Path) -> None:
         source_conn.close()
 
 
-def run_backup() -> str:
+def run_backup(*, manual: bool = False) -> str:
     """Create a consistent SQLite snapshot, tar.gz it, upload to Koofr.
+
+    manual=True tags the filename with a "-manual" suffix, distinguishing
+    ad-hoc backups (admin-triggered API call, CLI script) from the ones the
+    scheduled backup_koofr job produces unsuffixed -- 1:1 vb-api's
+    run_backup(manual=...).
 
     Returns the uploaded archive's filename. Raises BackupError on any
     failure -- nothing is left behind on Koofr on failure, the upload is
@@ -110,7 +132,8 @@ def run_backup() -> str:
     """
     source_path = _sqlite_path()
     timestamp = datetime.now(UTC).strftime(_TIMESTAMP_FORMAT)
-    archive_name = f"osa_database_backup_{timestamp}.tar.gz"
+    suffix = "-manual" if manual else ""
+    archive_name = f"{get_settings().app_environment}-{timestamp}{suffix}.tar.gz"
 
     with tempfile.TemporaryDirectory(prefix="osa-backup-") as tmp_dir:
         tmp_db_copy = Path(tmp_dir) / source_path.name
@@ -142,8 +165,17 @@ def _upload_to_koofr(filename: str, data: bytes) -> None:
 
 
 def list_backups() -> list[str]:
-    """Sorted (oldest-first, filenames are timestamp-sortable) backup
-    filenames currently on Koofr, via WebDAV PROPFIND (Depth 1)."""
+    """Sorted (oldest-first, by parsed timestamp) backup filenames
+    currently on Koofr, via WebDAV PROPFIND (Depth 1).
+
+    Sorts by _parse_backup_timestamp(), NOT by plain string order: since
+    filenames are stage-prefixed, a raw sorted() would order by stage name
+    first (e.g. every "test-..." name would sort after every
+    "production-..." one regardless of actual age) -- exactly the latent
+    weakness vb-api's own S3-key sort has, deliberately not replicated
+    here since it would silently break run_restore()'s "latest backup"
+    auto-selection across differently-staged backups sharing this one
+    Koofr path."""
     user, password = _koofr_auth()
     propfind_body = (
         '<?xml version="1.0"?>'
@@ -162,7 +194,8 @@ def list_backups() -> list[str]:
     except requests.RequestException as exc:
         msg = f"Koofr directory listing failed: {exc}"
         raise BackupError(msg) from exc
-    return sorted(_parse_backup_filenames(response.text))
+    names = _parse_backup_filenames(response.text)
+    return sorted(names, key=lambda name: _parse_backup_timestamp(name) or _EPOCH)
 
 
 def _parse_backup_filenames(propfind_xml: str) -> list[str]:
@@ -192,7 +225,9 @@ def _parse_backup_timestamp(name: str) -> datetime | None:
     match = _FILENAME_PATTERN.match(name)
     if match is None:
         return None
-    return datetime.strptime(match.group(1), _TIMESTAMP_FORMAT).replace(tzinfo=UTC)
+    return datetime.strptime(match.group("timestamp"), _TIMESTAMP_FORMAT).replace(
+        tzinfo=UTC
+    )
 
 
 def cleanup_old_backups(*, dry_run: bool = False) -> list[str]:

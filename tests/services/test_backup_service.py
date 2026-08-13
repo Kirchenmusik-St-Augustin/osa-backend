@@ -48,7 +48,7 @@ def _build_archive(*, arcname: str, source: Path) -> bytes:
 
 
 class TestRunBackup:
-    def test_uploads_a_valid_archive_matching_legacys_naming(
+    def test_uploads_a_valid_archive_with_stage_prefixed_name(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
         db_path = tmp_path / "test.sqlite"
@@ -71,7 +71,11 @@ class TestRunBackup:
 
         archive_name = backup_service.run_backup()
 
-        assert backup_service._FILENAME_PATTERN.match(archive_name)
+        match = backup_service._FILENAME_PATTERN.match(archive_name)
+        assert match is not None
+        # APP_ENVIRONMENT is "test" in the test suite (see conftest.py).
+        assert match.group("stage") == "test"
+        assert not archive_name.endswith("-manual.tar.gz")
         assert str(uploaded["url"]).endswith(archive_name)
         assert uploaded["auth"] == ("user", "pw")
 
@@ -81,6 +85,25 @@ class TestRunBackup:
             extract_dir.mkdir()
             tar.extractall(extract_dir, filter="data")
         assert _read_marker(extract_dir / "test.sqlite") == "backup-me"
+
+    def test_manual_true_tags_the_filename_with_a_manual_suffix(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        db_path = tmp_path / "test.sqlite"
+        _make_sqlite_file(db_path, marker="x")
+        monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(
+            backup_service.requests,
+            "put",
+            lambda *_a, **_kw: _FakeResponse(status_code=200),
+        )
+
+        archive_name = backup_service.run_backup(manual=True)
+
+        assert archive_name.endswith("-manual.tar.gz")
+        assert backup_service._FILENAME_PATTERN.match(archive_name)
 
     def test_raises_for_a_non_sqlite_database_url(
         self, monkeypatch: pytest.MonkeyPatch
@@ -132,13 +155,13 @@ _PROPFIND_XML = """<?xml version="1.0"?>
     </d:prop></d:propstat>
   </d:response>
   <d:response>
-    <d:href>/dav/Koofr/Backups/osa-db/osa_database_backup_2024-01-02_10-00-00.tar.gz</d:href>
+    <d:href>/dav/Koofr/Backups/osa-db/production-2024-01-02_10-00-00.tar.gz</d:href>
     <d:propstat><d:prop>
       <d:getlastmodified>Tue, 02 Jan 2024 10:00:00 GMT</d:getlastmodified>
     </d:prop></d:propstat>
   </d:response>
   <d:response>
-    <d:href>/dav/Koofr/Backups/osa-db/osa_database_backup_2024-01-01_09-00-00.tar.gz</d:href>
+    <d:href>/dav/Koofr/Backups/osa-db/production-2024-01-01_09-00-00.tar.gz</d:href>
     <d:propstat><d:prop>
       <d:getlastmodified>Mon, 01 Jan 2024 09:00:00 GMT</d:getlastmodified>
     </d:prop></d:propstat>
@@ -177,8 +200,51 @@ class TestListBackups:
         names = backup_service.list_backups()
 
         assert names == [
-            "osa_database_backup_2024-01-01_09-00-00.tar.gz",
-            "osa_database_backup_2024-01-02_10-00-00.tar.gz",
+            "production-2024-01-01_09-00-00.tar.gz",
+            "production-2024-01-02_10-00-00.tar.gz",
+        ]
+
+    def test_sorts_chronologically_across_differently_staged_backups(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Regression test for the stage-prefix naming change (2026-08-13):
+        a plain string sort would order by stage name first, putting every
+        "development-..." name before every "production-..." one
+        regardless of actual age (since "d" < "p"). list_backups() must
+        sort by the parsed timestamp instead, so the true chronological
+        order survives even when it disagrees with alphabetical order."""
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        propfind_xml = """<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/dav/Koofr/Backups/osa-db/development-2024-06-01_00-00-00.tar.gz</d:href>
+    <d:propstat><d:prop>
+      <d:getlastmodified>Sat, 01 Jun 2024 00:00:00 GMT</d:getlastmodified>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/Koofr/Backups/osa-db/production-2024-01-01_00-00-00.tar.gz</d:href>
+    <d:propstat><d:prop>
+      <d:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</d:getlastmodified>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>
+"""
+
+        def fake_request(*_args: object, **_kwargs: object) -> _FakeResponse:
+            return _FakeResponse(status_code=200, text=propfind_xml)
+
+        monkeypatch.setattr(backup_service.requests, "request", fake_request)
+
+        names = backup_service.list_backups()
+
+        # Oldest-first: the January "production" backup precedes the June
+        # "development" one, even though "development" < "production"
+        # alphabetically.
+        assert names == [
+            "production-2024-01-01_00-00-00.tar.gz",
+            "development-2024-06-01_00-00-00.tar.gz",
         ]
 
     def test_skips_a_self_closing_href_with_no_text(
@@ -226,8 +292,8 @@ class TestCleanupOldBackups:
         now = datetime.now(UTC)
         old_stamp = f"{(now - timedelta(days=30)):%Y-%m-%d_%H-%M-%S}"
         fresh_stamp = f"{(now - timedelta(days=1)):%Y-%m-%d_%H-%M-%S}"
-        old_name = f"osa_database_backup_{old_stamp}.tar.gz"
-        fresh_name = f"osa_database_backup_{fresh_stamp}.tar.gz"
+        old_name = f"production-{old_stamp}.tar.gz"
+        fresh_name = f"production-{fresh_stamp}.tar.gz"
         monkeypatch.setattr(
             backup_service, "list_backups", lambda: [old_name, fresh_name]
         )
@@ -250,7 +316,7 @@ class TestCleanupOldBackups:
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
 
-        old_name = "osa_database_backup_2000-01-01_00-00-00.tar.gz"
+        old_name = "production-2000-01-01_00-00-00.tar.gz"
         monkeypatch.setattr(backup_service, "list_backups", lambda: [old_name])
 
         def fake_delete(*_args: object, **_kwargs: object) -> _FakeResponse:
@@ -266,7 +332,7 @@ class TestCleanupOldBackups:
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
 
-        old_name = "osa_database_backup_2000-01-01_00-00-00.tar.gz"
+        old_name = "production-2000-01-01_00-00-00.tar.gz"
         monkeypatch.setattr(backup_service, "list_backups", lambda: [old_name])
 
         def fail_delete(*_args: object, **_kwargs: object) -> _FakeResponse:
@@ -318,7 +384,7 @@ class TestRunRestore:
 
         with pytest.raises(BackupError, match="download failed"):
             backup_service.run_restore(
-                backup_name="osa_database_backup_2024-01-01_00-00-00.tar.gz",
+                backup_name="production-2024-01-01_00-00-00.tar.gz",
                 force=True,
             )
 
@@ -342,7 +408,7 @@ class TestRunRestore:
 
         monkeypatch.setattr(backup_service.requests, "get", fake_get)
 
-        backup_name = "osa_database_backup_2024-01-01_00-00-00.tar.gz"
+        backup_name = "production-2024-01-01_00-00-00.tar.gz"
         result = backup_service.run_restore(backup_name=backup_name, force=True)
 
         assert result == backup_name
@@ -369,7 +435,7 @@ class TestRunRestore:
 
         with pytest.raises(BackupError, match="did not contain"):
             backup_service.run_restore(
-                backup_name="osa_database_backup_2024-01-01_00-00-00.tar.gz",
+                backup_name="production-2024-01-01_00-00-00.tar.gz",
                 force=True,
             )
 
@@ -384,8 +450,8 @@ class TestRunRestore:
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
 
-        older = "osa_database_backup_2024-01-01_00-00-00.tar.gz"
-        newest = "osa_database_backup_2024-06-01_00-00-00.tar.gz"
+        older = "production-2024-01-01_00-00-00.tar.gz"
+        newest = "production-2024-06-01_00-00-00.tar.gz"
         monkeypatch.setattr(backup_service, "list_backups", lambda: [older, newest])
 
         replacement_db = tmp_path / "replacement.sqlite"
