@@ -18,6 +18,11 @@ class PermissionRule:
 # shorturls); `is_administrator` is the separate `users.administrator`
 # boolean flag, never a role row.
 #
+# `clientUserAgentView` (Legacy's ClientUserAgentPolicy::view) was NOT
+# ported: Legacy itself never gates any route on it (no controller ever
+# calls Gate::authorize('view', ClientUserAgent::class)), so it was dead
+# code there too -- porting it would just carry that dead code forward.
+#
 # The Performance-domain rules (performanceMaintain/-Cast/-ChangeUserStatus)
 # only encode Legacy's ROLE gate here -- Legacy additionally requires the
 # specific Performance's schedule to not be in the past (an object-level
@@ -101,12 +106,17 @@ PERMISSION_RULES: list[PermissionRule] = [
         condition=lambda _roles, is_admin: is_admin,
     ),
     PermissionRule(
-        permission="clientUserAgentView",
+        permission="sentEmailView",
         description="administrator-Flag",
         condition=lambda _roles, is_admin: is_admin,
     ),
     PermissionRule(
-        permission="sentEmailView",
+        permission="sqlInspectorView",
+        description="administrator-Flag",
+        condition=lambda _roles, is_admin: is_admin,
+    ),
+    PermissionRule(
+        permission="schedulerView",
         description="administrator-Flag",
         condition=lambda _roles, is_admin: is_admin,
     ),

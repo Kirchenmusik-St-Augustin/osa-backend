@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 import pytest
 from apscheduler.events import (
@@ -12,12 +13,23 @@ from apscheduler.events import (
 from app.core import scheduler as scheduler_module
 from app.core.config import get_settings
 from app.core.scheduler import (
+    JOB_DESCRIPTIONS,
     _acquire_scheduler_lock,
     _log_job_outcome,
+    get_scheduled_jobs,
     scheduler,
     start_scheduler,
     stop_scheduler,
 )
+
+_NEXT_RUN_PATTERN = re.compile(r"^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$")
+_ALWAYS_ON_JOB_ID = "purge_stale_booking_requests"
+_PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP = {
+    "notify_upcoming_booking_status",
+    "purge_expired_password_reset_tokens",
+    "purge_old_request_logs",
+    "backup_koofr",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -310,3 +322,84 @@ def test_acquire_scheduler_lock_returns_false_when_already_held(
 
     assert _acquire_scheduler_lock() is False
     assert fake_connection.closed is True
+
+
+def test_job_descriptions_covers_every_registrable_job_id():
+    # Guards against a future new job being added to start_scheduler()
+    # without a matching JOB_DESCRIPTIONS entry -- the admin Scheduler
+    # overview would silently show it with description=None otherwise.
+    all_registrable_job_ids = {_ALWAYS_ON_JOB_ID, *_PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP}
+    assert all_registrable_job_ids <= JOB_DESCRIPTIONS.keys()
+
+
+def test_get_scheduled_jobs_returns_empty_list_when_scheduler_not_started():
+    assert get_scheduled_jobs() == []
+
+
+def test_get_scheduled_jobs_includes_always_on_job_with_description(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+
+    async def _run() -> None:
+        start_scheduler()
+        jobs_by_id = {job["id"]: job for job in get_scheduled_jobs()}
+        assert (
+            jobs_by_id[_ALWAYS_ON_JOB_ID]["description"]
+            == (JOB_DESCRIPTIONS[_ALWAYS_ON_JOB_ID])
+        )
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_get_scheduled_jobs_includes_production_only_jobs_with_descriptions(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+    monkeypatch.setenv("BACKUP_ENABLED", "true")
+
+    async def _run() -> None:
+        start_scheduler()
+        jobs_by_id = {job["id"]: job for job in get_scheduled_jobs()}
+        assert jobs_by_id.keys() >= _PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP
+        assert all(
+            jobs_by_id[job_id]["description"]
+            for job_id in _PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP
+        )
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_get_scheduled_jobs_next_run_is_formatted(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+
+    async def _run() -> None:
+        start_scheduler()
+        job = next(
+            job for job in get_scheduled_jobs() if job["id"] == _ALWAYS_ON_JOB_ID
+        )
+        assert job["next_run"] is not None
+        assert _NEXT_RUN_PATTERN.match(job["next_run"])
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_get_scheduled_jobs_returns_empty_list_after_stop(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert get_scheduled_jobs() != []
+        stop_scheduler()
+        await asyncio.sleep(0)
+        assert get_scheduled_jobs() == []
+
+    asyncio.run(_run())

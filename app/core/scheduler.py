@@ -20,6 +20,7 @@ from apscheduler.events import (
     JobEvent,
     JobExecutionEvent,
 )
+from apscheduler.job import Job
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -39,6 +40,31 @@ from app.services.housekeeping_jobs import (
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
+
+# Shown on the admin-only Scheduler overview (GET /administrator/scheduler/jobs)
+# next to each job's id -- keep in sync with every job id start_scheduler()
+# can ever register (see test_job_descriptions_covers_every_registrable_job_id).
+JOB_DESCRIPTIONS: dict[str, str] = {
+    "purge_stale_booking_requests": (
+        "Löscht stündlich offene Buchungsanfragen zu bereits vergangenen Terminen."
+    ),
+    "notify_upcoming_booking_status": (
+        "Versendet täglich um 05:00 Uhr eine Buchungsstatus-Mail für "
+        "bevorstehende Termine. Nur in Production registriert."
+    ),
+    "purge_expired_password_reset_tokens": (
+        "Löscht wöchentlich (So 02:00 Uhr) abgelaufene Passwort-Reset-"
+        "Tokens. Nur in Production registriert."
+    ),
+    "purge_old_request_logs": (
+        "Löscht täglich um 23:00 Uhr Logbuch-Einträge, die älter als 40 "
+        "Tage sind. Nur in Production registriert."
+    ),
+    "backup_koofr": (
+        "Sichert die Datenbank täglich nach Koofr. Nur in Production und "
+        "wenn BACKUP_ENABLED aktiv ist registriert."
+    ),
+}
 
 # Arbitrary fixed int64 key identifying "the osa-backend scheduler" for
 # pg_try_advisory_lock. Any int64 works as long as it stays constant.
@@ -228,3 +254,33 @@ def stop_scheduler() -> None:
         _scheduler_lock_conn = None
 
     logger.info("Scheduler stopped.")
+
+
+def _format_next_run(job: Job) -> str | None:
+    """Normalizes display to Settings.app_timezone. Trusts
+    `job.next_run_time` directly rather than recomputing it from the
+    trigger -- unlike the vb-api sister project's multi-worker deployment,
+    osa-backend's production Dockerfile runs a single Gunicorn worker
+    (--workers 1, see Dockerfile comment), so the process that registers a
+    job is always the same one answering this read."""
+    if job.next_run_time is None:
+        return None
+    tz = ZoneInfo(get_settings().app_timezone)
+    return job.next_run_time.astimezone(tz).strftime("%d.%m.%Y, %H:%M")
+
+
+def get_scheduled_jobs() -> list[dict[str, str | None]]:
+    """Live introspection of the scheduler's current job registry -- no
+    persisted run history, no DB access. Reflects start_scheduler()'s
+    environment gating automatically, since it only ever reads whatever is
+    actually registered right now."""
+    return [
+        {
+            "id": job.id,
+            "name": job.name,
+            "trigger": str(job.trigger),
+            "next_run": _format_next_run(job),
+            "description": JOB_DESCRIPTIONS.get(job.id),
+        }
+        for job in scheduler.get_jobs()
+    ]
