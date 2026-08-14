@@ -666,9 +666,10 @@ def _popular_for_position(
     recent: list[PopularRecentUserOutput] = []
     # Naive datetime.min, deliberately without tzinfo: SQLite round-trips
     # every datetime column here as naive regardless of how it was written
-    # (see app.api.deps._ensure_tz_aware for the same round-trip caveat
-    # elsewhere) -- a tz-aware fallback would raise on comparison against
-    # the real (naive) `updated_at` values instead of just sorting last.
+    # (see app.core.datetime_utils.ensure_tz_aware for the same round-trip
+    # caveat elsewhere) -- a tz-aware fallback would raise on comparison
+    # against the real (naive) `updated_at` values instead of just sorting
+    # last.
     epoch = datetime.min  # noqa: DTZ901
     for row in sorted(rows, key=lambda r: r.updated_at or epoch, reverse=True):
         if row.user_id in seen or row.user_id not in users_by_id:

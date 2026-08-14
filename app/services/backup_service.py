@@ -32,7 +32,7 @@ import re
 import sqlite3
 import tarfile
 import tempfile
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -40,13 +40,15 @@ import requests
 from sqlalchemy.engine import make_url
 
 from app.core.config import get_settings, require_setting
+from app.core.datetime_utils import local_now
 
 logger = logging.getLogger(__name__)
 
 # Sort-key fallback for a name that (per _FILENAME_PATTERN's own guarantee)
 # never actually fails to parse -- keeps list_backups()'s sort key
-# non-Optional without a runtime assert.
-_EPOCH = datetime.min.replace(tzinfo=UTC)
+# non-Optional without a runtime assert. Naive, matching local_now()'s own
+# naive Vienna wall-clock convention -- see _parse_backup_timestamp() below.
+_EPOCH = datetime.min  # noqa: DTZ901
 
 _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 # Stage-prefixed, optionally "-manual"-suffixed -- 1:1 vb-api's
@@ -131,7 +133,7 @@ def run_backup(*, manual: bool = False) -> str:
     the last step.
     """
     source_path = _sqlite_path()
-    timestamp = datetime.now(UTC).strftime(_TIMESTAMP_FORMAT)
+    timestamp = local_now().strftime(_TIMESTAMP_FORMAT)
     suffix = "-manual" if manual else ""
     archive_name = f"{get_settings().app_environment}-{timestamp}{suffix}.tar.gz"
 
@@ -221,13 +223,22 @@ def _parse_backup_filenames(propfind_xml: str) -> list[str]:
     return names
 
 
+# NOTE (2026-08-14): both the filename timestamp (run_backup()) and the
+# retention cutoff (cleanup_old_backups()) switched from datetime.now(UTC)
+# to local_now() -- Settings.app_timezone wall-clock, matching the
+# backup_koofr scheduler trigger's own timezone. Pre-2026-08-14 filenames
+# are genuinely UTC-stamped from before this fix; the resulting <=2h skew
+# for those older names is negligible against both the >=daily backup
+# cadence (their order relative to newer entries is unaffected across
+# calendar days) and the 28-day default retention window (~0.3% skew) --
+# no backfill/rename of already-uploaded names is needed.
 def _parse_backup_timestamp(name: str) -> datetime | None:
     match = _FILENAME_PATTERN.match(name)
     if match is None:
         return None
-    return datetime.strptime(match.group("timestamp"), _TIMESTAMP_FORMAT).replace(
-        tzinfo=UTC
-    )
+    # Deliberately naive -- see the module-level NOTE above for why this
+    # stays unattached to any tzinfo.
+    return datetime.strptime(match.group("timestamp"), _TIMESTAMP_FORMAT)  # noqa: DTZ007
 
 
 def cleanup_old_backups(*, dry_run: bool = False) -> list[str]:
@@ -239,7 +250,7 @@ def cleanup_old_backups(*, dry_run: bool = False) -> list[str]:
     that don't match the expected pattern are never touched.
     """
     retention_days = get_settings().koofr_backup_retention_days
-    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    cutoff = local_now() - timedelta(days=retention_days)
     affected: list[str] = []
     for name in list_backups():
         backup_date = _parse_backup_timestamp(name)

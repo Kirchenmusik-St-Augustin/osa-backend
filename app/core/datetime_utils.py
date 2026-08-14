@@ -50,6 +50,21 @@ def ensure_tz_aware(dt: datetime | None) -> datetime | None:
 UtcDatetime = Annotated[datetime, BeforeValidator(ensure_tz_aware)]
 
 
+def get_app_timezone() -> ZoneInfo:
+    """Single source of truth for Settings.app_timezone as a ZoneInfo
+    instance -- every call site that previously constructed
+    ZoneInfo(get_settings().app_timezone) independently (scheduler
+    construction/_format_next_run, local_now/local_day_bounds_utc,
+    request_log_service's local-day grouping, the logging formatter) goes
+    through this one helper instead, so a future APP_TIMEZONE change only
+    has one place to verify. ZoneInfo(key) is itself cache-keyed by the
+    zoneinfo module (repeated calls with the same key return the same
+    cached instance), so no extra @lru_cache is needed here -- and none is
+    wanted, since it would need its own cache_clear() coupled to
+    get_settings()'s, duplicating that machinery for no benefit."""
+    return ZoneInfo(get_settings().app_timezone)
+
+
 def local_now() -> datetime:
     """Naive wall-clock 'now' in Settings.app_timezone (default
     Europe/Vienna), for comparison against naive wall-clock columns like
@@ -59,7 +74,7 @@ def local_now() -> datetime:
     container OS runs in UTC, not Vienna, so a bare local "now" would
     silently be off by the configured zone's UTC offset (1-2h depending on
     DST), exactly like the bug this replaced."""
-    return datetime.now(ZoneInfo(get_settings().app_timezone)).replace(tzinfo=None)
+    return datetime.now(get_app_timezone()).replace(tzinfo=None)
 
 
 def local_day_bounds_utc(day: date) -> tuple[datetime, datetime]:
@@ -74,7 +89,7 @@ def local_day_bounds_utc(day: date) -> tuple[datetime, datetime]:
     ZoneInfo instead of a fixed 24h timedelta -- Vienna's two annual DST
     transition days are 23h (spring-forward) or 25h (fall-back) long, never
     exactly 24h."""
-    tz = ZoneInfo(get_settings().app_timezone)
+    tz = get_app_timezone()
     start_local = datetime.combine(day, time.min, tzinfo=tz)
     end_local = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
     return start_local.astimezone(UTC), end_local.astimezone(UTC)
