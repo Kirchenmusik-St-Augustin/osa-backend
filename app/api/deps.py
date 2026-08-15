@@ -6,6 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.datetime_utils import ensure_tz_aware
 from app.core.security import ALGORITHM, SECRET_KEY, SESSION_IDLE_TIMEOUT_MINUTES
 from app.db.database import get_db
 from app.db.models.personal_access_token import PersonalAccessToken
@@ -63,12 +64,6 @@ def _get_session_record(db: Session, token_id: str) -> PersonalAccessToken:
     return session_record
 
 
-def _ensure_tz_aware(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt
-
-
 def _bump_lastsignal(db: Session, user_id: int, now: datetime) -> None:
     db.execute(update(User).where(User.id == user_id).values(auth_lastsignal=now))
 
@@ -83,7 +78,7 @@ def _enforce_idle_timeout(db: Session, session_record: PersonalAccessToken) -> N
         db.commit()
         return
 
-    last_used = _ensure_tz_aware(last_used)
+    last_used = ensure_tz_aware(last_used)
     idle_duration = now - last_used
 
     if idle_duration > timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES):

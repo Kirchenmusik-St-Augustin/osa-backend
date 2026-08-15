@@ -46,6 +46,4 @@ def trigger_backup(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
         ) from exc
-    return BackupTriggerOutput(
-        backup_name=backup_name, triggered_at=datetime.now(UTC).isoformat()
-    )
+    return BackupTriggerOutput(backup_name=backup_name, triggered_at=datetime.now(UTC))

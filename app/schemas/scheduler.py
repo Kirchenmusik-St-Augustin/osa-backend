@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 
+from app.core.datetime_utils import UtcDatetime
+
 
 class ScheduledJobOutput(BaseModel):
     """One currently-registered APScheduler job, as reported live by
@@ -17,4 +19,4 @@ class BackupTriggerOutput(BaseModel):
     (POST /administrator/scheduler/backup/trigger)."""
 
     backup_name: str
-    triggered_at: str
+    triggered_at: UtcDatetime

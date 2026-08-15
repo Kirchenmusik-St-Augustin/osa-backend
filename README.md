@@ -112,15 +112,13 @@ Phase 2 (Postgres) runs a real multi-worker production deployment.
 | `notify_upcoming_booking_status` | daily 05:00 | all | Sends combined booking-status change mails. |
 | `purge_expired_password_reset_tokens` | weekly, Sun 02:00 | all | Sweeps abandoned password-reset tokens. |
 | `purge_old_request_logs` | daily 23:00 | all | Deletes request-log rows older than 40 days. |
-| `backup_koofr` | daily, `BACKUP_HOUR`:`BACKUP_MINUTE` (default 10:50, `APP_TIMEZONE`) | `production` only (+ `BACKUP_ENABLED`) | Consistent SQLite snapshot → Koofr WebDAV upload, then deletes backups older than `KOOFR_BACKUP_RETENTION_DAYS`. |
+| `backup_koofr` | daily, `BACKUP_HOUR`:`BACKUP_MINUTE` (default 03:00, `APP_TIMEZONE`) | `production` only (+ `BACKUP_ENABLED`) | Consistent SQLite snapshot → Koofr WebDAV upload, then deletes backups older than `KOOFR_BACKUP_RETENTION_DAYS`. |
 
-> **Known gap, not fixed:** the four jobs above `backup_koofr` run in
-> whatever timezone the container's OS reports (effectively UTC in the
-> plain `python:3.12-slim` image) rather than `APP_TIMEZONE`, since
-> `AsyncIOScheduler()` is constructed without an explicit `timezone=`.
-> `backup_koofr` is the one job made explicitly timezone-correct
-> (`ZoneInfo(settings.app_timezone)`); the other four are a pre-existing,
-> out-of-scope gap.
+All five jobs run in `APP_TIMEZONE`
+(`AsyncIOScheduler(timezone=get_app_timezone())`, see `app/core/scheduler.py`)
+-- fixed 2026-08-13/14, see `app/core/datetime_utils.py::get_app_timezone()`
+for the single shared source every timezone-aware call site (scheduler,
+backup filenames/retention, mail subjects, logging) now resolves through.
 
 `backup_koofr` is the only job gated by environment — it writes into a
 Koofr path shared across every stage (dev/test/qa/production), so a single
@@ -291,15 +289,14 @@ Multi-Worker-Produktivbetrieb fährt.
 | `notify_upcoming_booking_status` | täglich 05:00 | alle | Versendet gebündelte Buchungsstatus-Änderungsmails. |
 | `purge_expired_password_reset_tokens` | wöchentlich, So 02:00 | alle | Räumt verwaiste Passwort-Reset-Tokens auf. |
 | `purge_old_request_logs` | täglich 23:00 | alle | Löscht Request-Log-Zeilen älter als 40 Tage. |
-| `backup_koofr` | täglich, `BACKUP_HOUR`:`BACKUP_MINUTE` (Default 10:50, `APP_TIMEZONE`) | nur `production` (+ `BACKUP_ENABLED`) | Konsistenter SQLite-Snapshot → Koofr-WebDAV-Upload, löscht danach Backups älter als `KOOFR_BACKUP_RETENTION_DAYS`. |
+| `backup_koofr` | täglich, `BACKUP_HOUR`:`BACKUP_MINUTE` (Default 03:00, `APP_TIMEZONE`) | nur `production` (+ `BACKUP_ENABLED`) | Konsistenter SQLite-Snapshot → Koofr-WebDAV-Upload, löscht danach Backups älter als `KOOFR_BACKUP_RETENTION_DAYS`. |
 
-> **Bekannte, nicht behobene Lücke:** die vier Jobs oberhalb von
-> `backup_koofr` laufen in der Zeitzone, die der Container-OS meldet
-> (effektiv UTC im nackten `python:3.12-slim`-Image), nicht in
-> `APP_TIMEZONE` — `AsyncIOScheduler()` wird ohne explizites `timezone=`
-> konstruiert. `backup_koofr` ist der einzige Job, der explizit
-> zeitzonenkorrekt ist (`ZoneInfo(settings.app_timezone)`); die anderen
-> vier sind eine vorbestehende, hier nicht behobene Lücke.
+Alle fünf Jobs laufen in `APP_TIMEZONE`
+(`AsyncIOScheduler(timezone=get_app_timezone())`, siehe `app/core/scheduler.py`)
+— gefixt am 13./14.08.2026, siehe `app/core/datetime_utils.py::get_app_timezone()`
+für die eine zentrale Quelle, über die jede zeitzonenbewusste Stelle
+(Scheduler, Backup-Dateinamen/-Retention, Mail-Betreffzeilen, Logging)
+jetzt läuft.
 
 `backup_koofr` ist der einzige Job, der nach Umgebung gated wird — er
 schreibt in einen Koofr-Pfad, der über alle Stages hinweg (Dev/Test/QA/

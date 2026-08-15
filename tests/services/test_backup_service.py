@@ -143,6 +143,31 @@ class TestRunBackup:
         with pytest.raises(BackupError, match="KOOFR_USER"):
             backup_service.run_backup()
 
+    def test_uses_the_configured_app_timezone_not_utc_for_the_filename_timestamp(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """Regression for the reported bug: run_backup()'s filename stamp
+        must match the Vienna wall-clock the backup_koofr scheduler trigger
+        fires in (Settings.backup_hour/minute, app_timezone), not UTC --
+        previously a UTC-stamped filename disagreed with the scheduler's
+        own timezone by the current UTC offset."""
+        db_path = tmp_path / "test.sqlite"
+        _make_sqlite_file(db_path, marker="x")
+        monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(
+            backup_service.requests,
+            "put",
+            lambda *_a, **_kw: _FakeResponse(status_code=200),
+        )
+        fixed_local = datetime(2026, 8, 14, 3, 0, 0)  # noqa: DTZ001 -- naive Vienna wall-clock, matches local_now()'s own convention
+        monkeypatch.setattr(backup_service, "local_now", lambda: fixed_local)
+
+        archive_name = backup_service.run_backup()
+
+        assert "2026-08-14_03-00-00" in archive_name
+
 
 # Deliberately absolute WebDAV hrefs (not bare filenames) -- see
 # TestListBackups' regression test below.
@@ -282,6 +307,46 @@ class TestListBackups:
         with pytest.raises(BackupError, match="listing failed"):
             backup_service.list_backups()
 
+    def test_sorts_correctly_across_pre_and_post_fix_names_despite_the_bounded_skew(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """An old UTC-tagged name (pre-2026-08-14 timestamp-source fix) and
+        a new Vienna-tagged name from a different day must still sort
+        correctly -- the <=2h semantic skew the fix introduces between old
+        and new filenames never approaches a full day apart, so cross-day
+        ordering is unaffected and no backfill/rename of already-uploaded
+        names is needed."""
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        propfind_xml = """<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/dav/Koofr/Backups/osa-db/production-2026-08-13_20-50-14-manual.tar.gz</d:href>
+    <d:propstat><d:prop>
+      <d:getlastmodified>Thu, 13 Aug 2026 20:50:14 GMT</d:getlastmodified>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/Koofr/Backups/osa-db/production-2026-08-14_03-00-00.tar.gz</d:href>
+    <d:propstat><d:prop>
+      <d:getlastmodified>Fri, 14 Aug 2026 03:00:00 GMT</d:getlastmodified>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>
+"""
+
+        def fake_request(*_args: object, **_kwargs: object) -> _FakeResponse:
+            return _FakeResponse(status_code=200, text=propfind_xml)
+
+        monkeypatch.setattr(backup_service.requests, "request", fake_request)
+
+        names = backup_service.list_backups()
+
+        assert names == [
+            "production-2026-08-13_20-50-14-manual.tar.gz",
+            "production-2026-08-14_03-00-00.tar.gz",
+        ]
+
 
 class TestCleanupOldBackups:
     def test_deletes_only_entries_past_retention(self, monkeypatch: pytest.MonkeyPatch):
@@ -344,6 +409,43 @@ class TestCleanupOldBackups:
         affected = backup_service.cleanup_old_backups(dry_run=True)
 
         assert affected == [old_name]
+
+    def test_uses_local_now_not_utc_for_the_retention_cutoff(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Regression: the deletion boundary must be computed from the same
+        Vienna wall-clock (local_now()) the filenames themselves are now
+        stamped in, not datetime.now(UTC) -- otherwise the cutoff would
+        silently drift from what the filenames actually encode by the
+        current UTC offset."""
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setenv("KOOFR_BACKUP_RETENTION_DAYS", "28")
+        fixed_local = datetime(2026, 8, 14, 3, 0, 0)  # noqa: DTZ001 -- naive Vienna wall-clock
+        monkeypatch.setattr(backup_service, "local_now", lambda: fixed_local)
+
+        # Exactly straddling the 28-day cutoff computed from the mocked
+        # local_now() above (2026-08-14 03:00:00 - 28d = 2026-07-17
+        # 03:00:00) -- proves cleanup_old_backups() actually anchors on
+        # local_now(), not some other clock.
+        kept_name = "production-2026-07-17_03-00-01.tar.gz"
+        deleted_name = "production-2026-07-17_02-59-59.tar.gz"
+        monkeypatch.setattr(
+            backup_service, "list_backups", lambda: [deleted_name, kept_name]
+        )
+
+        deleted_urls: list[str] = []
+
+        def fake_delete(url: str, **_kwargs: object) -> _FakeResponse:
+            deleted_urls.append(url)
+            return _FakeResponse(status_code=200)
+
+        monkeypatch.setattr(backup_service.requests, "delete", fake_delete)
+
+        affected = backup_service.cleanup_old_backups()
+
+        assert affected == [deleted_name]
+        assert deleted_urls[0].endswith(deleted_name)
 
     def test_never_touches_a_non_matching_name(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("KOOFR_USER", "user")

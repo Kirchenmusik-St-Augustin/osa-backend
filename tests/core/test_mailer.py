@@ -116,6 +116,41 @@ def test_send_verification_email_sends_and_logs(
     assert "verify" in row.body.lower() or "bestätig" in row.body.lower()
 
 
+def test_send_verification_email_subject_uses_app_timezone_not_utc(
+    db_session, monkeypatch: pytest.MonkeyPatch
+):
+    """Regression: email subjects must show Settings.app_timezone
+    wall-clock, not UTC (previously datetime.now(UTC) leaked straight into
+    the subject). fixed_local is chosen so that UTC and Vienna (CEST,
+    UTC+2) render both a different hour AND a different calendar day -- a
+    coincidental hour match wouldn't catch the bug."""
+    _make_smtp_settings(monkeypatch)
+    fixed_local = datetime(2026, 8, 15, 0, 30)  # noqa: DTZ001 -- naive Vienna wall-clock
+    monkeypatch.setattr(mailer, "local_now", lambda: fixed_local)
+
+    with patch("app.core.mailer._send_message"):
+        mailer.send_verification_email("user@example.test", "https://x.test/verify")
+
+    row = db_session.query(SentEmail).filter(SentEmail.headers == "verify-email").one()
+    assert "15. 8. 2026, 00:30" in row.subject
+
+
+def test_send_user_message_email_subject_uses_app_timezone_not_utc(
+    db_session, monkeypatch: pytest.MonkeyPatch
+):
+    """Same regression as above, covering the _format_ymd_timestamp code
+    path (distinct from _format_notification_timestamp)."""
+    _make_smtp_settings(monkeypatch)
+    fixed_local = datetime(2026, 8, 15, 0, 30)  # noqa: DTZ001 -- naive Vienna wall-clock
+    monkeypatch.setattr(mailer, "local_now", lambda: fixed_local)
+
+    with patch("app.core.mailer._send_message"):
+        mailer.send_user_message_email(["a@example.test"], "Muster, Max", "Hallo!")
+
+    row = db_session.query(SentEmail).filter(SentEmail.headers == "user-message").one()
+    assert "2026-08-15 00:30" in row.subject
+
+
 def test_send_password_reset_email_body_contains_ttl_minutes(
     db_session, monkeypatch: pytest.MonkeyPatch
 ):

@@ -17,6 +17,7 @@ from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_position import UserPosition
 from app.db.models.user_role import UserRole
+from app.db.models.voice import Voice
 from app.schemas.booking import (
     BillingExtracostOutput,
     BillingItemOutput,
@@ -157,6 +158,59 @@ def _active_users_by_id(db: Session, user_ids: set[int]) -> dict[int, User]:
         .all()
     )
     return {user.id: user for user in rows}
+
+
+def _primary_voice_by_user(db: Session, user_ids: set[int]) -> dict[int, Voice]:
+    """Each user's lowest-`Voice.order` assigned Voice (their "primary"
+    voice for choirjob auto-sort) via UserPosition -- N+1-safe: exactly one
+    UserPosition query + one Voice query, regardless of how many user_ids
+    come in. A user CAN hold multiple `voices`-type UserPosition rows (no
+    DB constraint prevents it -- UserPosition's only unique constraint is
+    the full (user_id, position_type, position_id) triple); the
+    lowest-`order` one wins, matching performance_service.get_setup()'s own
+    `.order_by(Voice.order, Voice.id)` canonical-ordering idiom."""
+    if not user_ids:
+        return {}
+    voice_ids_by_user: dict[int, set[int]] = {}
+    rows = db.execute(
+        select(UserPosition.user_id, UserPosition.position_id).where(
+            UserPosition.user_id.in_(user_ids),
+            UserPosition.position_type == "voices",
+        )
+    ).all()
+    for user_id, position_id in rows:
+        voice_ids_by_user.setdefault(user_id, set()).add(position_id)
+    if not voice_ids_by_user:
+        return {}
+
+    all_voice_ids = {vid for ids in voice_ids_by_user.values() for vid in ids}
+    voices_in_order = (
+        db.execute(
+            select(Voice)
+            .where(Voice.id.in_(all_voice_ids))
+            .order_by(Voice.order, Voice.id)
+        )
+        .scalars()
+        .all()
+    )
+    rank_by_voice_id = {voice.id: rank for rank, voice in enumerate(voices_in_order)}
+    voice_by_id = {voice.id: voice for voice in voices_in_order}
+
+    return {
+        user_id: voice_by_id[min(voice_ids, key=lambda vid: rank_by_voice_id[vid])]
+        for user_id, voice_ids in voice_ids_by_user.items()
+    }
+
+
+def _choirjob_voice_fields(
+    position_type: PositionType, user_id: int, primary_voice_by_user: dict[int, Voice]
+) -> tuple[str | None, int | None]:
+    """Voice fields only ever populated for choirjobs -- instruments/voices
+    cast members and candidates keep both fields None."""
+    if position_type != "choirjobs":
+        return None, None
+    voice = primary_voice_by_user.get(user_id)
+    return (voice.name, voice.order) if voice is not None else (None, None)
 
 
 def _display_name(user: User | None) -> str:
@@ -510,6 +564,9 @@ def _get_cast_form_data(
             (booking.position_type, booking.position_id), []
         ).append(booking)
     users_by_id = _users_by_id(db, {booking.user_id for booking in bookings})
+    primary_voice_by_user = _primary_voice_by_user(
+        db, {b.user_id for b in bookings if b.position_type == "choirjobs"}
+    )
 
     sections: dict[PositionType, list[CastSetupItemOutput]] = {
         position_type: [] for position_type in POSITION_TYPES
@@ -522,14 +579,20 @@ def _get_cast_form_data(
     for position_type, items in setup_groups:
         for item in items:
             entries = bookings_by_position.get((position_type, item.id), [])
-            cast_members = [
-                CastMemberOutput(
-                    id=booking.user_id,
-                    name=_display_name(users_by_id.get(booking.user_id)),
-                    fee=booking.fee,
+            cast_members = []
+            for booking in entries:
+                voice_name, voice_order = _choirjob_voice_fields(
+                    position_type, booking.user_id, primary_voice_by_user
                 )
-                for booking in entries
-            ]
+                cast_members.append(
+                    CastMemberOutput(
+                        id=booking.user_id,
+                        name=_display_name(users_by_id.get(booking.user_id)),
+                        fee=booking.fee,
+                        voice_name=voice_name,
+                        voice_order=voice_order,
+                    )
+                )
             sections[position_type].append(
                 CastSetupItemOutput(id=item.id, name=item.name, cast=cast_members)
             )
@@ -578,6 +641,11 @@ def _get_staff(
         all_user_ids |= ids
     users_by_id = _active_users_by_id(db, all_user_ids)
 
+    choirjob_user_ids: set[int] = set()
+    for item in setup.choirjobs:
+        choirjob_user_ids |= qualified.get(("choirjobs", item.id), set())
+    primary_voice_by_user = _primary_voice_by_user(db, choirjob_user_ids)
+
     requesting_user_ids = set(
         db.execute(
             select(BookingRequest.user_id).where(
@@ -614,7 +682,17 @@ def _get_staff(
             )
             for user in candidates:
                 bucket = requesting if user.id in requesting_user_ids else other
-                bucket.append(BookableUserOutput(id=user.id, name=_display_name(user)))
+                voice_name, voice_order = _choirjob_voice_fields(
+                    position_type, user.id, primary_voice_by_user
+                )
+                bucket.append(
+                    BookableUserOutput(
+                        id=user.id,
+                        name=_display_name(user),
+                        voice_name=voice_name,
+                        voice_order=voice_order,
+                    )
+                )
             sections[position_type].append(
                 StaffItemOutput(
                     id=item.id,
@@ -666,9 +744,10 @@ def _popular_for_position(
     recent: list[PopularRecentUserOutput] = []
     # Naive datetime.min, deliberately without tzinfo: SQLite round-trips
     # every datetime column here as naive regardless of how it was written
-    # (see app.api.deps._ensure_tz_aware for the same round-trip caveat
-    # elsewhere) -- a tz-aware fallback would raise on comparison against
-    # the real (naive) `updated_at` values instead of just sorting last.
+    # (see app.core.datetime_utils.ensure_tz_aware for the same round-trip
+    # caveat elsewhere) -- a tz-aware fallback would raise on comparison
+    # against the real (naive) `updated_at` values instead of just sorting
+    # last.
     epoch = datetime.min  # noqa: DTZ901
     for row in sorted(rows, key=lambda r: r.updated_at or epoch, reverse=True):
         if row.user_id in seen or row.user_id not in users_by_id:
@@ -1492,6 +1571,31 @@ def get_message_to_cast_page(
     )
 
 
+def _ordered_recipient_ids(
+    booked_cast: CastSectionOutput,
+    position_type: PositionType | None,
+    position_id: int | None,
+) -> list[int]:
+    """Legacy order: instruments, then voices, then choirjobs -- each
+    item's cast is already sorted by position order + booking order (see
+    Performance::cast()/bookedCast())."""
+    if position_type is not None:
+        section = getattr(booked_cast, position_type)
+        item = next((entry for entry in section if entry.id == position_id), None)
+        return [member.id for member in item.cast] if item is not None else []
+
+    ordered_ids: list[int] = []
+    seen: set[int] = set()
+    for section in (booked_cast.instruments, booked_cast.voices, booked_cast.choirjobs):
+        for item in section:
+            for member in item.cast:
+                if member.id in seen:
+                    continue
+                seen.add(member.id)
+                ordered_ids.append(member.id)
+    return ordered_ids
+
+
 def get_message_recipients(
     db: Session,
     performance_id: int,
@@ -1502,22 +1606,8 @@ def get_message_recipients(
     setup = performance_service.get_setup(db, performance_id)
     booked_cast = _booked_cast(db, performance, setup)
 
-    user_ids: set[int] = set()
-    if position_type is None:
-        for section in (
-            booked_cast.instruments,
-            booked_cast.voices,
-            booked_cast.choirjobs,
-        ):
-            for item in section:
-                user_ids |= {member.id for member in item.cast}
-    else:
-        section = getattr(booked_cast, position_type)
-        item = next((entry for entry in section if entry.id == position_id), None)
-        if item is not None:
-            user_ids = {member.id for member in item.cast}
-
-    users_by_id = _users_by_id(db, user_ids)
+    ordered_ids = _ordered_recipient_ids(booked_cast, position_type, position_id)
+    users_by_id = _users_by_id(db, set(ordered_ids))
     return [
         MessageRecipientOutput(
             id=user.id,
@@ -1527,7 +1617,8 @@ def get_message_recipients(
             email=user.email if user.email_verified_at is not None else None,
             phone=user.phone,
         )
-        for user in users_by_id.values()
+        for user_id in ordered_ids
+        if (user := users_by_id.get(user_id)) is not None
     ]
 
 

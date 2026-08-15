@@ -22,6 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings, require_setting
+from app.core.datetime_utils import local_now
 from app.db.database import SessionLocal
 from app.db.models.sent_email import SentEmail
 
@@ -241,7 +242,7 @@ def _send_templated_email(
 
 
 def send_verification_email(to_email: str, verify_url: str) -> None:
-    now = datetime.now(UTC)
+    now = local_now()
     subject = f"E-Mail-Adresse bestätigen ({_format_notification_timestamp(now)})"
     _send_templated_email(
         [to_email], subject, "verify_email.html", "verify-email", url=verify_url
@@ -249,7 +250,7 @@ def send_verification_email(to_email: str, verify_url: str) -> None:
 
 
 def send_password_reset_email(to_email: str, reset_url: str) -> None:
-    now = datetime.now(UTC)
+    now = local_now()
     timestamp = _format_notification_timestamp(now)
     subject = f"Benachrichtigung zur Passwort-Rücksetzung ({timestamp})"
     settings = get_settings()
@@ -270,7 +271,7 @@ def send_new_registration_notice(
     BackgroundTasks callback, well after the request's DB session (and
     thus the User instance's attribute access) has already been closed."""
     settings = get_settings()
-    now = datetime.now(UTC)
+    now = local_now()
     timestamp = _format_ymd_timestamp(now)
     subject = f"Benachrichtigung über eine neue Registrierung ({timestamp})"
     _send_templated_email(
@@ -310,7 +311,7 @@ def send_booking_status_email(
     `notify_upcoming_booking_status` scheduled job (see
     app.services.booking_jobs) -- one mail per user, bundling every
     booking-log transition they haven't been notified about yet."""
-    now = datetime.now(UTC)
+    now = local_now()
     subject = f"Benachrichtigung Buchungs-Status ({_format_ymd_timestamp(now)})"
     _send_templated_email(
         [to_email],
@@ -341,7 +342,7 @@ def send_booked_or_standby_canceled_email(
     """Port of Legacy's `BookedOrStandbyCanceled` mail -- sent synchronously
     to every `disponent` user when someone self-cancels a booking/standby
     (booking_service.change_user_request_status)."""
-    now = datetime.now(UTC)
+    now = local_now()
     subject = f"Eine Buchung wurde storniert! ({_format_ymd_timestamp(now)})"
     _send_templated_email(
         to_emails,
@@ -366,7 +367,7 @@ def send_user_message_email(
     musicians/singers who don't necessarily know each other and have no
     reason to see one another's address, unlike e.g. the small, fixed
     disponent group send_booked_or_standby_canceled_email addresses."""
-    now = datetime.now(UTC)
+    now = local_now()
     subject = f"Kirchenmusik-Benachrichtigung ({_format_ymd_timestamp(now)})"
     _send_templated_email(
         to_emails,

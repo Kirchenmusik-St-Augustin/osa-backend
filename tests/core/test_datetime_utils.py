@@ -4,7 +4,25 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.core.config import get_settings
-from app.core.datetime_utils import ensure_tz_aware, local_day_bounds_utc, local_now
+from app.core.datetime_utils import (
+    ensure_tz_aware,
+    get_app_timezone,
+    local_day_bounds_utc,
+    local_now,
+)
+
+
+def test_get_app_timezone_returns_the_configured_zone():
+    assert get_app_timezone() == ZoneInfo("Europe/Vienna")
+
+
+def test_get_app_timezone_honors_a_configured_app_timezone(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_TIMEZONE", "America/New_York")
+    get_settings.cache_clear()
+
+    assert get_app_timezone() == ZoneInfo("America/New_York")
 
 
 def test_returns_none_for_none():

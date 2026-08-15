@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import patch
 
 from app.core.scheduler import stop_scheduler
@@ -82,7 +83,11 @@ class TestTriggerBackup:
         assert response.status_code == 201
         body = response.json()
         assert body["backup_name"] == "test-2026-08-13_12-00-00-manual.tar.gz"
-        assert body["triggered_at"]
+        # Locks in the UtcDatetime contract (Zeitzonen-Konsolidierung,
+        # 2026-08-14): must carry a real UTC offset, not an offset-free
+        # string, consistent with every other UTC-instant response field.
+        triggered_at = datetime.fromisoformat(body["triggered_at"])
+        assert triggered_at.tzinfo is not None
         mock_run_backup.assert_called_once_with(manual=True)
 
     def test_returns_500_with_detail_when_backup_fails(self, client, make_user):

@@ -1,13 +1,15 @@
 import json
 from datetime import UTC, date, datetime
 from typing import cast
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.core.datetime_utils import ensure_tz_aware, local_day_bounds_utc
+from app.core.datetime_utils import (
+    ensure_tz_aware,
+    get_app_timezone,
+    local_day_bounds_utc,
+)
 from app.core.human_names import label_for_name
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import RequestLog
@@ -188,7 +190,7 @@ def list_days_with_users_for_month(
     if not rows:
         return []
 
-    tz = ZoneInfo(get_settings().app_timezone)
+    tz = get_app_timezone()
     user_ids_by_day: dict[date, set[int]] = {}
     for raw_created_at, raw_user_id in rows:
         # Narrows the ORM columns' nullable static type (both Mapped[T | None]

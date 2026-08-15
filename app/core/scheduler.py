@@ -11,7 +11,6 @@ dev process) that guard is a no-op; it only becomes active once Phase 2
 
 import logging
 from collections.abc import Callable
-from zoneinfo import ZoneInfo
 
 from apscheduler.events import (
     EVENT_JOB_ERROR,
@@ -26,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from app.core.config import get_settings
+from app.core.datetime_utils import get_app_timezone
 from app.db.database import engine
 from app.services.backup_jobs import job_backup_koofr
 from app.services.booking_jobs import (
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # transparently governed Schedule::command(...)->dailyAt(...) there too).
 # A job only needs its own explicit `timezone=` kwarg if it must deviate
 # from this default -- none currently do.
-scheduler = AsyncIOScheduler(timezone=ZoneInfo(get_settings().app_timezone))
+scheduler = AsyncIOScheduler(timezone=get_app_timezone())
 
 # Shown on the admin-only Scheduler overview (GET /administrator/scheduler/jobs)
 # next to each job's id -- keep in sync with every job id start_scheduler()
@@ -274,8 +274,7 @@ def _format_next_run(job: Job) -> str | None:
     job is always the same one answering this read."""
     if job.next_run_time is None:
         return None
-    tz = ZoneInfo(get_settings().app_timezone)
-    return job.next_run_time.astimezone(tz).strftime("%d.%m.%Y, %H:%M")
+    return job.next_run_time.astimezone(get_app_timezone()).strftime("%d.%m.%Y, %H:%M")
 
 
 def get_scheduled_jobs() -> list[dict[str, str | None]]:
