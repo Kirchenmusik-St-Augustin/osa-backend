@@ -1493,6 +1493,31 @@ def get_message_to_cast_page(
     )
 
 
+def _ordered_recipient_ids(
+    booked_cast: CastSectionOutput,
+    position_type: PositionType | None,
+    position_id: int | None,
+) -> list[int]:
+    """Legacy order: instruments, then voices, then choirjobs -- each
+    item's cast is already sorted by position order + booking order (see
+    Performance::cast()/bookedCast())."""
+    if position_type is not None:
+        section = getattr(booked_cast, position_type)
+        item = next((entry for entry in section if entry.id == position_id), None)
+        return [member.id for member in item.cast] if item is not None else []
+
+    ordered_ids: list[int] = []
+    seen: set[int] = set()
+    for section in (booked_cast.instruments, booked_cast.voices, booked_cast.choirjobs):
+        for item in section:
+            for member in item.cast:
+                if member.id in seen:
+                    continue
+                seen.add(member.id)
+                ordered_ids.append(member.id)
+    return ordered_ids
+
+
 def get_message_recipients(
     db: Session,
     performance_id: int,
@@ -1503,22 +1528,8 @@ def get_message_recipients(
     setup = performance_service.get_setup(db, performance_id)
     booked_cast = _booked_cast(db, performance, setup)
 
-    user_ids: set[int] = set()
-    if position_type is None:
-        for section in (
-            booked_cast.instruments,
-            booked_cast.voices,
-            booked_cast.choirjobs,
-        ):
-            for item in section:
-                user_ids |= {member.id for member in item.cast}
-    else:
-        section = getattr(booked_cast, position_type)
-        item = next((entry for entry in section if entry.id == position_id), None)
-        if item is not None:
-            user_ids = {member.id for member in item.cast}
-
-    users_by_id = _users_by_id(db, user_ids)
+    ordered_ids = _ordered_recipient_ids(booked_cast, position_type, position_id)
+    users_by_id = _users_by_id(db, set(ordered_ids))
     return [
         MessageRecipientOutput(
             id=user.id,
@@ -1528,7 +1539,8 @@ def get_message_recipients(
             email=user.email if user.email_verified_at is not None else None,
             phone=user.phone,
         )
-        for user in users_by_id.values()
+        for user_id in ordered_ids
+        if (user := users_by_id.get(user_id)) is not None
     ]
 
 

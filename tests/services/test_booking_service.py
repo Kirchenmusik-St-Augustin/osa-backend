@@ -1371,6 +1371,70 @@ class TestMessageToCast:
 
         assert [r.id for r in recipients] == [user.id]
 
+    def test_get_message_recipients_type_all_preserves_legacy_category_order(
+        self, db_session: Session, make_user
+    ):
+        """Legacy orders 'alle' recipients by instruments -> voices ->
+        choirjobs, each item's cast in booking order (see Performance::
+        cast()/bookedCast()) -- not by an unordered DB round-trip."""
+        instrument = _make_instrument(db_session)
+        voice = _make_voice(db_session)
+        choirjob = _make_choirjob(db_session)
+        performance_id = _make_performance(
+            db_session,
+            instruments={instrument.id: 2},
+            voices={voice.id: 1},
+            choirjobs={choirjob.id: 1},
+        )
+        # Created/booked deliberately out of expected order, so a naive
+        # unordered fetch would very likely surface the mismatch instead of
+        # accidentally matching by luck.
+        choirjob_user = make_user()
+        voice_user = make_user()
+        instrument_user_second = make_user()
+        instrument_user_first = make_user()
+
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            "choirjobs",
+            choirjob.id,
+            new_cast=[(choirjob_user.id, 35)],
+            old_quantity=None,
+        )
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            "voices",
+            voice.id,
+            new_cast=[(voice_user.id, 110)],
+            old_quantity=None,
+        )
+        # order within the instrument item comes from Booking.order, which
+        # is the new_cast list index.
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            "instruments",
+            instrument.id,
+            new_cast=[
+                (instrument_user_first.id, 60),
+                (instrument_user_second.id, 60),
+            ],
+            old_quantity=None,
+        )
+
+        recipients = booking_service.get_message_recipients(
+            db_session, performance_id, None, None
+        )
+
+        assert [r.id for r in recipients] == [
+            instrument_user_first.id,
+            instrument_user_second.id,
+            voice_user.id,
+            choirjob_user.id,
+        ]
+
     def test_get_message_recipients_for_specific_position(
         self, db_session: Session, make_user
     ):
@@ -1402,6 +1466,27 @@ class TestMessageToCast:
         )
 
         assert [r.id for r in recipients] == [voice_user.id]
+
+    def test_get_message_recipients_for_specific_position_preserves_booking_order(
+        self, db_session: Session, make_user
+    ):
+        voice = _make_voice(db_session)
+        performance_id = _make_performance(db_session, voices={voice.id: 2})
+        first_user, second_user = make_user(), make_user()
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            "voices",
+            voice.id,
+            new_cast=[(first_user.id, 100), (second_user.id, 100)],
+            old_quantity=None,
+        )
+
+        recipients = booking_service.get_message_recipients(
+            db_session, performance_id, "voices", voice.id
+        )
+
+        assert [r.id for r in recipients] == [first_user.id, second_user.id]
 
     def test_get_message_recipients_has_email_reflects_verification_status(
         self, db_session: Session, make_user
