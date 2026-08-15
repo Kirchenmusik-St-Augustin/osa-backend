@@ -83,6 +83,10 @@ max-complexity = 8
 "app/services/booking_jobs.py" = ["TID251"]
 "app/services/housekeeping_jobs.py" = ["TID251"]
 "app/api/middleware/request_logging.py" = ["TID251"]
+# Temporary one-time backfill CLI script (Feature 4, see plan) -- deleted
+# after its single Prod run, same "no request context" exception as the
+# background-job files above.
+"scripts/backfill_choir_voice_tags.py" = ["TID251"]
 
 [tool.ruff.format]
 quote-style = "double"
