@@ -49,6 +49,10 @@ class CastMemberOutput(BaseModel):
     id: int
     name: str
     fee: int
+    # Only ever populated for choirjobs cast members (auto-sort-by-voice
+    # feature) -- instruments/voices members keep both None.
+    voice_name: str | None = None
+    voice_order: int | None = None
 
 
 class CastSetupItemOutput(BaseModel):
@@ -76,6 +80,9 @@ class CastFormData(BaseModel):
 class BookableUserOutput(BaseModel):
     id: int
     name: str
+    # Only ever populated for choirjobs candidates -- see CastMemberOutput.
+    voice_name: str | None = None
+    voice_order: int | None = None
 
 
 class BookableGroupOutput(BaseModel):

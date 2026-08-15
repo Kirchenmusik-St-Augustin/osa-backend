@@ -105,9 +105,9 @@ def _make_instrument(db_session: Session) -> Instrument:
     return instrument
 
 
-def _make_voice(db_session: Session) -> Voice:
+def _make_voice(db_session: Session, *, order: int = 0) -> Voice:
     now = datetime.now(UTC)
-    voice = Voice(name=_unique("Voice"), order=0, created_at=now, updated_at=now)
+    voice = Voice(name=_unique("Voice"), order=order, created_at=now, updated_at=now)
     db_session.add(voice)
     db_session.commit()
     return voice
@@ -851,6 +851,135 @@ class TestGetCastPageAndSaveCast:
             )
         ).scalar_one()
         assert rejected_request.notbooked_at is not None
+
+
+class TestPrimaryVoiceByUser:
+    def test_picks_lowest_order_voice_when_user_has_multiple(
+        self, db_session: Session, make_user
+    ):
+        alt = _make_voice(db_session, order=2)
+        sopran = _make_voice(db_session, order=1)
+        user = make_user()
+        # Qualified for both, deliberately in an order that does NOT match
+        # canonical Voice.order, so the result can't be a coincidence of
+        # insertion order.
+        _qualify(db_session, user.id, "voices", alt.id)
+        _qualify(db_session, user.id, "voices", sopran.id)
+
+        result = booking_service._primary_voice_by_user(db_session, {user.id})
+
+        assert result[user.id].id == sopran.id
+        assert result[user.id].name == sopran.name
+
+    def test_user_with_no_voice_assignment_is_absent_from_result(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+
+        result = booking_service._primary_voice_by_user(db_session, {user.id})
+
+        assert user.id not in result
+
+    def test_empty_input_short_circuits_without_querying(
+        self, db_session: Session, count_queries
+    ):
+        with count_queries() as counter:
+            result = booking_service._primary_voice_by_user(db_session, set())
+
+        assert result == {}
+        assert counter.count == 0
+
+    def test_query_count_does_not_scale_with_user_count(
+        self, db_session: Session, make_user, count_queries
+    ):
+        voice = _make_voice(db_session)
+        one_user = make_user()
+        _qualify(db_session, one_user.id, "voices", voice.id)
+        small_ids = {one_user.id}
+        with count_queries() as small:
+            booking_service._primary_voice_by_user(db_session, small_ids)
+
+        many_users = [make_user() for _ in range(5)]
+        for user in many_users:
+            _qualify(db_session, user.id, "voices", voice.id)
+        # Collect ids BEFORE entering the counted block -- `user.id` access
+        # on an expired ORM instance (every object gets expired by each
+        # `_qualify()` call's internal commit, default expire_on_commit)
+        # triggers its own refresh SELECT, which would otherwise inflate
+        # the count with something that has nothing to do with the
+        # function under test.
+        large_ids = {user.id for user in many_users}
+        with count_queries() as large:
+            booking_service._primary_voice_by_user(db_session, large_ids)
+
+        assert small.count == large.count == 2
+
+
+class TestChoirjobVoiceEnrichment:
+    def test_booked_choirjob_member_carries_their_primary_voice(
+        self, db_session: Session, make_user
+    ):
+        choirjob = _make_choirjob(db_session)
+        voice = _make_voice(db_session, order=3)
+        performance_id = _make_performance(db_session, choirjobs={choirjob.id: 1})
+        user = make_user()
+        _qualify(db_session, user.id, "voices", voice.id)
+        _make_booking(db_session, performance_id, user.id, "choirjobs", choirjob.id)
+
+        page = booking_service.get_cast_page(db_session, performance_id)
+
+        member = page.form_data.cast.choirjobs[0].cast[0]
+        assert member.voice_name == voice.name
+        assert member.voice_order == voice.order
+
+    def test_instrument_cast_member_never_carries_voice_fields(
+        self, db_session: Session, make_user
+    ):
+        # User IS qualified for a Voice, but is booked as an INSTRUMENT --
+        # regression guard against accidentally enriching all three
+        # sections instead of only choirjobs.
+        instrument = _make_instrument(db_session)
+        voice = _make_voice(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        user = make_user()
+        _qualify(db_session, user.id, "voices", voice.id)
+        _make_booking(db_session, performance_id, user.id, "instruments", instrument.id)
+
+        page = booking_service.get_cast_page(db_session, performance_id)
+
+        member = page.form_data.cast.instruments[0].cast[0]
+        assert member.voice_name is None
+        assert member.voice_order is None
+
+    def test_choirjob_staff_candidate_carries_their_primary_voice(
+        self, db_session: Session, make_user
+    ):
+        choirjob = _make_choirjob(db_session)
+        voice = _make_voice(db_session, order=4)
+        performance_id = _make_performance(db_session, choirjobs={choirjob.id: 1})
+        candidate = make_user()
+        _qualify(db_session, candidate.id, "voices", voice.id)
+        _qualify(db_session, candidate.id, "choirjobs", choirjob.id)
+
+        page = booking_service.get_cast_page(db_session, performance_id)
+
+        bookable = page.staff.choirjobs[0].bookable
+        assert bookable.other[0].voice_name == voice.name
+        assert bookable.other[0].voice_order == voice.order
+
+    def test_choirjob_member_with_no_voice_assignment_has_none_fields(
+        self, db_session: Session, make_user
+    ):
+        choirjob = _make_choirjob(db_session)
+        performance_id = _make_performance(db_session, choirjobs={choirjob.id: 1})
+        user = make_user()
+        _make_booking(db_session, performance_id, user.id, "choirjobs", choirjob.id)
+
+        page = booking_service.get_cast_page(db_session, performance_id)
+
+        member = page.form_data.cast.choirjobs[0].cast[0]
+        assert member.voice_name is None
+        assert member.voice_order is None
 
 
 class TestChangeUserRequestStatus:
