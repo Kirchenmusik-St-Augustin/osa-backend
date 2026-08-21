@@ -40,6 +40,17 @@ class TestPermissionGuard:
         )
         assert response.status_code == 403
 
+    def test_trigger_downsync_requires_authentication(self, client):
+        response = client.post("/administrator/scheduler/downsync/trigger")
+        assert response.status_code == 401
+
+    def test_trigger_downsync_rejects_non_administrator(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        response = client.post(
+            "/administrator/scheduler/downsync/trigger", headers=headers
+        )
+        assert response.status_code == 403
+
 
 def test_returns_registered_jobs_with_expected_shape(client, make_user):
     # The client fixture's lifespan startup already ran start_scheduler()
@@ -103,3 +114,89 @@ class TestTriggerBackup:
 
         assert response.status_code == 500
         assert response.json()["detail"] == "Koofr upload failed"
+
+
+class TestTriggerDownsync:
+    def test_returns_201_with_restored_backup_and_triggered_at(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        with (
+            patch(
+                "app.api.router_includes.scheduler.list_backups",
+                return_value=[
+                    "production-2024-01-01_00-00-00.tar.gz",
+                    "production-2024-06-01_00-00-00.tar.gz",
+                ],
+            ) as mock_list_backups,
+            patch(
+                "app.api.router_includes.scheduler.run_restore",
+                return_value="production-2024-06-01_00-00-00.tar.gz",
+            ) as mock_run_restore,
+        ):
+            response = client.post(
+                "/administrator/scheduler/downsync/trigger", headers=headers
+            )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["restored_backup"] == "production-2024-06-01_00-00-00.tar.gz"
+        triggered_at = datetime.fromisoformat(body["triggered_at"])
+        assert triggered_at.tzinfo is not None
+        mock_list_backups.assert_called_once_with(stage="production")
+        mock_run_restore.assert_called_once_with(
+            backup_name="production-2024-06-01_00-00-00.tar.gz"
+        )
+
+    def test_returns_409_in_production_without_listing_backups(
+        self, client, make_user, monkeypatch
+    ):
+        # Set the env BEFORE _auth_headers() triggers the first
+        # get_settings() call in this test (login itself doesn't depend on
+        # app_environment, but get_settings() is lru_cache'd -- see
+        # conftest.py's client fixture docstring).
+        monkeypatch.setenv("APP_ENVIRONMENT", "production")
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        def unexpected_list_backups(**_kwargs: object) -> list[str]:
+            msg = "must never list backups once blocked by the production gate"
+            raise AssertionError(msg)
+
+        with patch(
+            "app.api.router_includes.scheduler.list_backups",
+            side_effect=unexpected_list_backups,
+        ):
+            response = client.post(
+                "/administrator/scheduler/downsync/trigger", headers=headers
+            )
+
+        assert response.status_code == 409
+
+    def test_returns_404_when_no_production_backup_exists(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        with patch("app.api.router_includes.scheduler.list_backups", return_value=[]):
+            response = client.post(
+                "/administrator/scheduler/downsync/trigger", headers=headers
+            )
+
+        assert response.status_code == 404
+
+    def test_returns_500_with_detail_when_restore_fails(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        with (
+            patch(
+                "app.api.router_includes.scheduler.list_backups",
+                return_value=["production-2024-01-01_00-00-00.tar.gz"],
+            ),
+            patch(
+                "app.api.router_includes.scheduler.run_restore",
+                side_effect=BackupError("Koofr download failed"),
+            ),
+        ):
+            response = client.post(
+                "/administrator/scheduler/downsync/trigger", headers=headers
+            )
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Koofr download failed"

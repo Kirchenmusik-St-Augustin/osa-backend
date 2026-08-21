@@ -424,7 +424,10 @@ def get_setup(db: Session, performance_id: int) -> PerformanceSetupOutput:
         for item in items:
             bucket.append(
                 PerformancePositionOutput(
-                    id=item.id, name=item.name, quantity=quantity_by_id[item.id]
+                    id=item.id,
+                    name=item.name,
+                    quantity=quantity_by_id[item.id],
+                    active=item.active,
                 )
             )
 
@@ -794,9 +797,13 @@ def get_available_data(db: Session) -> PerformanceAvailableData:
         .scalars()
         .all()
     )
-    instruments = list_coreelements(db, CoreelementType.instrument)
-    voices = list_coreelements(db, CoreelementType.voice)
-    choirjobs = list_coreelements(db, CoreelementType.choirjob)
+    # active_only=True: an archived Instrument/Voice/Choirjob must not be
+    # offered for a NEW performance's setup. Propriumelement has no
+    # `active` field (list_coreelements() ignores the flag for types that
+    # don't support it), so it stays unfiltered on purpose.
+    instruments = list_coreelements(db, CoreelementType.instrument, active_only=True)
+    voices = list_coreelements(db, CoreelementType.voice, active_only=True)
+    choirjobs = list_coreelements(db, CoreelementType.choirjob, active_only=True)
     propriumelements = list_coreelements(db, CoreelementType.propriumelement)
     locations = (
         db.execute(select(Location).order_by(Location.order, Location.id))

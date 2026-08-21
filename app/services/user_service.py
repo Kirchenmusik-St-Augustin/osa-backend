@@ -200,9 +200,16 @@ def get_form_options(db: Session) -> UserFormOptionsOutput:
     voiceMaintain/... instead of userMaintain for a Disponent."""
 
     def _refs(type_: CoreelementType) -> list[PositionRefOutput]:
+        # active_only=True: an archived Instrument/Voice/Choirjob must not
+        # be offered for a NEW assignment here. A user who already has one
+        # assigned still sees it correctly -- get_user()/the User's own
+        # `instruments`/`voices`/`choirjobs` are resolved separately, by
+        # id, not through this picker list.
         return [
             PositionRefOutput(id=item.id, name=item.name)
-            for item in coreelement_service.list_coreelements(db, type_)
+            for item in coreelement_service.list_coreelements(
+                db, type_, active_only=True
+            )
         ]
 
     # CoreelementType.role always yields Role instances -- list_coreelements()'s

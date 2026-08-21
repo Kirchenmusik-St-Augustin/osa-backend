@@ -41,6 +41,7 @@ from sqlalchemy.engine import make_url
 
 from app.core.config import get_settings, require_setting
 from app.core.datetime_utils import local_now
+from app.db.database import engine
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,7 @@ def _upload_to_koofr(filename: str, data: bytes) -> None:
         raise BackupError(msg) from exc
 
 
-def list_backups() -> list[str]:
+def list_backups(*, stage: str | None = None) -> list[str]:
     """Sorted (oldest-first, by parsed timestamp) backup filenames
     currently on Koofr, via WebDAV PROPFIND (Depth 1).
 
@@ -177,7 +178,14 @@ def list_backups() -> list[str]:
     weakness vb-api's own S3-key sort has, deliberately not replicated
     here since it would silently break run_restore()'s "latest backup"
     auto-selection across differently-staged backups sharing this one
-    Koofr path."""
+    Koofr path.
+
+    `stage`, when given, restricts the result to backups created by that
+    exact stage (e.g. "production") -- used by the downsync job/trigger to
+    find "the latest PRODUCTION backup" rather than the latest backup
+    overall, since a manually-triggered backup is callable from any stage
+    and lands in this same shared Koofr path too (see
+    app.api.router_includes.scheduler.trigger_backup's docstring)."""
     user, password = _koofr_auth()
     propfind_body = (
         '<?xml version="1.0"?>'
@@ -197,6 +205,8 @@ def list_backups() -> list[str]:
         msg = f"Koofr directory listing failed: {exc}"
         raise BackupError(msg) from exc
     names = _parse_backup_filenames(response.text)
+    if stage is not None:
+        names = [name for name in names if _parse_backup_stage(name) == stage]
     return sorted(names, key=lambda name: _parse_backup_timestamp(name) or _EPOCH)
 
 
@@ -239,6 +249,15 @@ def _parse_backup_timestamp(name: str) -> datetime | None:
     # Deliberately naive -- see the module-level NOTE above for why this
     # stays unattached to any tzinfo.
     return datetime.strptime(match.group("timestamp"), _TIMESTAMP_FORMAT)  # noqa: DTZ007
+
+
+def _parse_backup_stage(name: str) -> str | None:
+    """Extract the stage prefix (e.g. "production") from a backup filename,
+    reusing the same named group _FILENAME_PATTERN already defines --
+    list_backups(stage=...)'s filter, kept DRY with the timestamp parser
+    above instead of re-deriving the naming convention a second time."""
+    match = _FILENAME_PATTERN.match(name)
+    return match.group("stage") if match else None
 
 
 def cleanup_old_backups(*, dry_run: bool = False) -> list[str]:
@@ -290,6 +309,16 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
 
     Requires force=True when APP_ENVIRONMENT=production -- a restore
     overwrites the live database.
+
+    Calls engine.dispose() after the swap: app.db.database's engine has no
+    poolclass=NullPool override, so SQLAlchemy's default QueuePool for a
+    file-based SQLite URL keeps connections open across requests. A pooled
+    connection opened before the swap stays bound to the OLD (now unlinked)
+    inode until it's actually closed -- dispose() drops every pooled
+    connection so the next request opens a fresh one against the new file.
+    Cheap and idempotent for the CLI script call site (scripts/restore_db.py
+    never touches this engine), essential for the in-app trigger/job call
+    sites added for the downsync feature.
     """
     if get_settings().app_environment == "production" and not force:
         msg = (
@@ -333,5 +362,6 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
             raise BackupError(msg)
         extracted.replace(target_path)
 
+    engine.dispose()
     logger.info("Restore complete from: %s", backup_name)
     return backup_name

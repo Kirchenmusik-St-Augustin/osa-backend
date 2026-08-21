@@ -1154,3 +1154,48 @@ class TestGetAvailableData:
         conductor_ids = [item.id for item in result.conductors]
         assert conductor_id in conductor_ids
         assert composer_only_id not in conductor_ids
+
+    def test_excludes_archived_instruments_voices_and_choirjobs(
+        self, db_session: Session
+    ):
+        archived_instrument = _make_instrument(db_session)
+        archived_instrument.active = False
+        archived_voice = _make_voice(db_session)
+        archived_voice.active = False
+        archived_choirjob = _make_choirjob(db_session)
+        archived_choirjob.active = False
+        db_session.commit()
+
+        result = performance_service.get_available_data(db_session)
+
+        assert archived_instrument.id not in [item.id for item in result.instruments]
+        assert archived_voice.id not in [item.id for item in result.voices]
+        assert archived_choirjob.id not in [item.id for item in result.choirjobs]
+
+
+class TestGetSetupActiveFlag:
+    def test_archived_instrument_still_resolves_with_active_false(
+        self, db_session: Session
+    ):
+        """An already-configured setup position must keep resolving
+        correctly even after its Instrument gets archived -- get_setup()
+        looks up by id regardless of active status (unlike
+        get_available_data() above), only the `active` flag on the output
+        itself reflects the archived state."""
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        instrument = _make_instrument(db_session)
+        setup = PerformanceSetupInput(
+            instruments=[PerformancePositionInput(id=instrument.id, quantity=1)]
+        )
+        response = performance_service.create_performance(
+            db_session, _request(location.id, work.id, setup=setup)
+        )
+        instrument.active = False
+        db_session.commit()
+
+        result = performance_service.get_setup(db_session, response.id)
+
+        position = next(item for item in result.instruments if item.id == instrument.id)
+        assert position.active is False

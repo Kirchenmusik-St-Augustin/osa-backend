@@ -54,6 +54,7 @@ def _to_response(item: CoreelementModel) -> CoreelementResponse:
         description=getattr(item, "description", None),
         address=getattr(item, "address", None),
         color=getattr(item, "color", None),
+        active=getattr(item, "active", None),
     )
 
 

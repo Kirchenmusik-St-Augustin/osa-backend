@@ -25,6 +25,18 @@ class _FakeResponse:
             raise requests.HTTPError(msg)
 
 
+class _FakeEngine:
+    """Stand-in for app.db.database's SQLAlchemy engine, used to verify
+    run_restore()'s post-swap dispose() call without touching the real
+    connection pool other tests/fixtures rely on."""
+
+    def __init__(self) -> None:
+        self.disposed = False
+
+    def dispose(self) -> None:
+        self.disposed = True
+
+
 def _make_sqlite_file(path: Path, *, marker: str) -> None:
     conn = sqlite3.connect(path)
     conn.execute("CREATE TABLE marker (value TEXT)")
@@ -293,6 +305,55 @@ class TestListBackups:
         monkeypatch.setattr(backup_service.requests, "request", fake_request)
 
         assert backup_service.list_backups() == []
+
+    def test_stage_filter_keeps_only_matching_backups(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Regression guard for the downsync feature (2026-08-21): a
+        manually-triggered backup is callable from any stage and lands in
+        this same shared Koofr path, so list_backups(stage="production")
+        must exclude non-production entries rather than silently picking
+        one up as "the latest production backup"."""
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        propfind_xml = """<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/dav/Koofr/Backups/osa-db/test-2024-06-01_00-00-00-manual.tar.gz</d:href>
+    <d:propstat><d:prop>
+      <d:getlastmodified>Sat, 01 Jun 2024 00:00:00 GMT</d:getlastmodified>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/Koofr/Backups/osa-db/production-2024-01-01_00-00-00.tar.gz</d:href>
+    <d:propstat><d:prop>
+      <d:getlastmodified>Mon, 01 Jan 2024 00:00:00 GMT</d:getlastmodified>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>
+"""
+
+        def fake_request(*_args: object, **_kwargs: object) -> _FakeResponse:
+            return _FakeResponse(status_code=200, text=propfind_xml)
+
+        monkeypatch.setattr(backup_service.requests, "request", fake_request)
+
+        names = backup_service.list_backups(stage="production")
+
+        assert names == ["production-2024-01-01_00-00-00.tar.gz"]
+
+    def test_stage_filter_returns_empty_list_when_no_match(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+
+        def fake_request(*_args: object, **_kwargs: object) -> _FakeResponse:
+            return _FakeResponse(status_code=200, text=_PROPFIND_XML)
+
+        monkeypatch.setattr(backup_service.requests, "request", fake_request)
+
+        assert backup_service.list_backups(stage="qa") == []
 
     def test_raises_when_propfind_fails(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("KOOFR_USER", "user")
@@ -593,3 +654,60 @@ class TestRunRestore:
 
         with pytest.raises(BackupError, match="No backups found"):
             backup_service.run_restore(force=True)
+
+    def test_disposes_the_engine_after_a_successful_swap(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """Regression guard (2026-08-21): app.db.database's engine has no
+        poolclass=NullPool override, so SQLAlchemy's default QueuePool for a
+        file-based SQLite URL keeps connections open across requests -- a
+        pooled connection opened before the swap would otherwise stay bound
+        to the old (now unlinked) inode until the pool is disposed."""
+        target_path = tmp_path / "test.sqlite"
+        _make_sqlite_file(target_path, marker="old-value")
+        monkeypatch.setenv("DATABASE_URL", f"sqlite:///{target_path}")
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+
+        replacement_db = tmp_path / "replacement.sqlite"
+        _make_sqlite_file(replacement_db, marker="new-value")
+        archive_content = _build_archive(arcname="test.sqlite", source=replacement_db)
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(status_code=200, content=archive_content),
+        )
+
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(backup_service, "engine", fake_engine)
+
+        backup_service.run_restore(
+            backup_name="production-2024-01-01_00-00-00.tar.gz", force=True
+        )
+
+        assert fake_engine.disposed is True
+
+    def test_does_not_dispose_the_engine_when_the_download_fails(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        target_path = tmp_path / "test.sqlite"
+        _make_sqlite_file(target_path, marker="unchanged")
+        monkeypatch.setenv("DATABASE_URL", f"sqlite:///{target_path}")
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+
+        def fake_get(*_args: object, **_kwargs: object) -> _FakeResponse:
+            msg = "connection reset"
+            raise requests.ConnectionError(msg)
+
+        monkeypatch.setattr(backup_service.requests, "get", fake_get)
+
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(backup_service, "engine", fake_engine)
+
+        with pytest.raises(BackupError):
+            backup_service.run_restore(
+                backup_name="production-2024-01-01_00-00-00.tar.gz", force=True
+            )
+
+        assert fake_engine.disposed is False

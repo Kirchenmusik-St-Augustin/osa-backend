@@ -22,6 +22,7 @@ def _request(
     description: str | None = None,
     address: str | None = None,
     color: str | None = None,
+    active: bool | None = None,
 ) -> CoreelementRequest:
     return CoreelementRequest(
         name=name or _unique(),
@@ -29,6 +30,7 @@ def _request(
         description=description,
         address=address,
         color=color,
+        active=active,
     )
 
 
@@ -54,6 +56,40 @@ class TestListCoreelements:
         )
         names = [item.name for item in items]
         assert names.index(first_name) + 1 == names.index(second_name)
+
+    def test_active_only_excludes_archived_instruments(self, db_session: Session):
+        active_item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.instrument, _request()
+        )
+        archived_item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.instrument, _request(active=False)
+        )
+
+        ids = [
+            item.id
+            for item in coreelement_service.list_coreelements(
+                db_session, CoreelementType.instrument, active_only=True
+            )
+        ]
+
+        assert active_item.id in ids
+        assert archived_item.id not in ids
+
+    def test_active_only_is_a_noop_for_types_without_the_field(
+        self, db_session: Session
+    ):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.propriumelement, _request()
+        )
+
+        ids = [
+            i.id
+            for i in coreelement_service.list_coreelements(
+                db_session, CoreelementType.propriumelement, active_only=True
+            )
+        ]
+
+        assert item.id in ids
 
 
 class TestCreateCoreelement:
@@ -348,3 +384,51 @@ class TestMoveCoreelement:
         )
 
         assert second.order == original_order
+
+
+class TestActiveField:
+    def test_create_defaults_to_active_true(self, db_session: Session):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.instrument, _request()
+        )
+        assert item.active is True
+
+    def test_create_respects_explicit_false(self, db_session: Session):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.voice, _request(active=False)
+        )
+        assert item.active is False
+
+    def test_update_preserves_active_when_omitted(self, db_session: Session):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.choirjob, _request(active=False)
+        )
+
+        updated = coreelement_service.update_coreelement(
+            db_session, CoreelementType.choirjob, item.id, _request(item.name)
+        )
+
+        assert updated.active is False
+
+    def test_update_can_reactivate(self, db_session: Session):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.instrument, _request(active=False)
+        )
+
+        updated = coreelement_service.update_coreelement(
+            db_session,
+            CoreelementType.instrument,
+            item.id,
+            _request(item.name, active=True),
+        )
+
+        assert updated.active is True
+
+    def test_forbidden_for_types_without_the_field(self, db_session: Session):
+        with pytest.raises(coreelement_service.CoreelementValidationError) as exc_info:
+            coreelement_service.create_coreelement(
+                db_session, CoreelementType.propriumelement, _request(active=True)
+            )
+        assert exc_info.value.errors == [
+            ("active", "Dieses Feld ist für diesen Typ nicht zulässig.")
+        ]

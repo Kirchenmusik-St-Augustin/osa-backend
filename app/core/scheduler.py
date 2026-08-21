@@ -32,6 +32,7 @@ from app.services.booking_jobs import (
     notify_upcoming_booking_status,
     purge_stale_booking_requests,
 )
+from app.services.downsync_jobs import job_downsync
 from app.services.housekeeping_jobs import (
     purge_expired_password_reset_tokens,
     purge_old_request_logs,
@@ -68,6 +69,11 @@ JOB_DESCRIPTIONS: dict[str, str] = {
     "backup_koofr": (
         "Sichert die Datenbank täglich nach Koofr. Nur in Production und "
         "wenn BACKUP_ENABLED aktiv ist registriert."
+    ),
+    "downsync": (
+        "Ersetzt nächtlich (eine Stunde nach backup_koofr) die lokale "
+        "Datenbank dieser Stage durch das letzte Production-Backup. Nur "
+        "außerhalb Production registriert."
     ),
 }
 
@@ -236,6 +242,27 @@ def start_scheduler() -> None:
             hour=settings.backup_hour,
             minute=settings.backup_minute,
             id="backup_koofr",
+            replace_existing=True,
+        ),
+    )
+
+    # Downsync's non-production mirror image of backup_koofr above: only
+    # `not is_production`, no second "enabled" flag. backup_koofr needs one
+    # because it WRITES into the one Koofr path shared across every stage
+    # (see Settings.backup_enabled's docstring) -- downsync only ever READS
+    # from Koofr and writes exclusively to this stage's own local SQLite
+    # file, so that shared-destination collision risk doesn't apply here.
+    # Runs one hour after the production backup (same minute), giving that
+    # day's backup time to actually land on Koofr first.
+    _sync_job_registration(
+        "downsync",
+        should_register=not is_production,
+        add_job=lambda: scheduler.add_job(
+            job_downsync,
+            "cron",
+            hour=(settings.backup_hour + 1) % 24,
+            minute=settings.backup_minute,
+            id="downsync",
             replace_existing=True,
         ),
     )

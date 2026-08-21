@@ -126,6 +126,18 @@ class TestGetAvailablePositions:
         assert instrument_ids.index(second.id) < instrument_ids.index(first.id)
         assert voice.id in [item.id for item in result.voices]
 
+    def test_excludes_archived_instruments_and_voices(self, db_session: Session):
+        archived_instrument = _make_instrument(db_session)
+        archived_instrument.active = False
+        archived_voice = _make_voice(db_session)
+        archived_voice.active = False
+        db_session.commit()
+
+        result = ordinariumwork_service.get_available_positions(db_session)
+
+        assert archived_instrument.id not in [item.id for item in result.instruments]
+        assert archived_voice.id not in [item.id for item in result.voices]
+
 
 class TestSearchOrdinariumworks:
     def test_empty_query_returns_empty(self, db_session: Session):
@@ -350,6 +362,35 @@ class TestGetSetup:
             second_added.id,
             first_added.id,
         ]
+
+    def test_archived_instrument_still_resolves_with_active_false(
+        self, db_session: Session
+    ):
+        """An already-configured setup position must keep resolving
+        correctly even after its Instrument gets archived -- get_setup()
+        looks up by id regardless of active status (unlike
+        get_available_positions() above), only the `active` flag on the
+        output itself reflects the archived state."""
+        artist_id = _make_artist(db_session)
+        instrument = _make_instrument(db_session)
+        created = ordinariumwork_service.create_ordinariumwork(
+            db_session,
+            _request(
+                artist_id,
+                setup=OrdinariumworkSetupInput(
+                    instruments=[
+                        OrdinariumworkPositionInput(id=instrument.id, quantity=1)
+                    ]
+                ),
+            ),
+        )
+        instrument.active = False
+        db_session.commit()
+
+        setup = ordinariumwork_service.get_setup(db_session, created.id)
+
+        position = next(item for item in setup.instruments if item.id == instrument.id)
+        assert position.active is False
 
 
 class TestDeleteOrdinariumwork:

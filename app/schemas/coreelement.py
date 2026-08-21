@@ -35,6 +35,12 @@ class CoreelementRequest(StrictInputModel):
     description: str | None = None
     address: str | None = None
     color: str | None = None
+    # Osa-only addition (not part of Legacy's schema, see CLAUDE.md section
+    # 3's Phase 1 boundary) -- only instrument/voice/choirjob accept this,
+    # everyone else forbids it, same "extra field, forbidden per type"
+    # treatment as label/description/address/color, see
+    # coreelement_service.CoreelementTypeConfig.has_active_field.
+    active: bool | None = None
 
 
 class CoreelementResponse(BaseModel):
@@ -45,3 +51,4 @@ class CoreelementResponse(BaseModel):
     description: str | None = None
     address: str | None = None
     color: str | None = None
+    active: bool | None = None

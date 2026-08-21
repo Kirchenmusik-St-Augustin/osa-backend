@@ -20,3 +20,11 @@ class BackupTriggerOutput(BaseModel):
 
     backup_name: str
     triggered_at: UtcDatetime
+
+
+class DownsyncTriggerOutput(BaseModel):
+    """Response of a manually triggered downsync
+    (POST /administrator/scheduler/downsync/trigger)."""
+
+    restored_backup: str
+    triggered_at: UtcDatetime
