@@ -33,6 +33,7 @@ _PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP = {
     "purge_old_request_logs",
     "backup_koofr",
 }
+_NON_PRODUCTION_ONLY_JOB_IDS = {"downsync"}
 
 
 @pytest.fixture(autouse=True)
@@ -87,12 +88,14 @@ def test_start_and_stop_scheduler_toggle_running_state():
 
         start_scheduler()
         assert scheduler.running is True
-        # Only the always-on job registers under the test env (APP_ENVIRONMENT
-        # is "test" here, see conftest.py) -- the other three, like
-        # backup_koofr below, are production-only (see
-        # test_production_only_jobs_register_in_production).
+        # Under the test env (APP_ENVIRONMENT is "test" here, see
+        # conftest.py): the always-on job plus downsync (registered whenever
+        # NOT production, see test_downsync_job_registers_outside_production)
+        # -- the other three, like backup_koofr below, are production-only
+        # (see test_production_only_jobs_register_in_production).
         assert {job.id for job in scheduler.get_jobs()} == {
             "purge_stale_booking_requests",
+            "downsync",
         }
 
         stop_scheduler()
@@ -361,7 +364,11 @@ def test_job_descriptions_covers_every_registrable_job_id():
     # Guards against a future new job being added to start_scheduler()
     # without a matching JOB_DESCRIPTIONS entry -- the admin Scheduler
     # overview would silently show it with description=None otherwise.
-    all_registrable_job_ids = {_ALWAYS_ON_JOB_ID, *_PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP}
+    all_registrable_job_ids = {
+        _ALWAYS_ON_JOB_ID,
+        *_PRODUCTION_ONLY_JOB_IDS_WITH_BACKUP,
+        *_NON_PRODUCTION_ONLY_JOB_IDS,
+    }
     assert all_registrable_job_ids <= JOB_DESCRIPTIONS.keys()
 
 
@@ -455,5 +462,92 @@ def test_get_scheduled_jobs_returns_empty_list_after_stop(
         stop_scheduler()
         await asyncio.sleep(0)
         assert get_scheduled_jobs() == []
+
+    asyncio.run(_run())
+
+
+def test_downsync_job_registers_outside_production(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert "downsync" in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_downsync_job_does_not_register_in_production(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert "downsync" not in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_downsync_job_deregisters_when_a_later_call_becomes_production(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Mirrors test_backup_koofr_job_deregisters_if_a_previous_call_was_production
+    # in reverse direction -- downsync is the mirror-image job (registered
+    # outside production instead of inside it), same idempotency contract.
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+
+    async def _run() -> None:
+        start_scheduler()
+        assert "downsync" in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+        monkeypatch.setenv("APP_ENVIRONMENT", "production")
+        get_settings.cache_clear()
+        start_scheduler()
+        assert "downsync" not in {job.id for job in scheduler.get_jobs()}
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_downsync_job_runs_one_hour_after_the_backup_hour(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("BACKUP_HOUR", "3")
+    monkeypatch.setenv("BACKUP_MINUTE", "15")
+
+    async def _run() -> None:
+        start_scheduler()
+        job = scheduler.get_job("downsync")
+        assert job is not None
+        assert isinstance(job.trigger, CronTrigger)
+        fields = {field.name: str(field) for field in job.trigger.fields}
+        assert fields["hour"] == "4"
+        assert fields["minute"] == "15"
+        stop_scheduler()
+        await asyncio.sleep(0)
+
+    asyncio.run(_run())
+
+
+def test_downsync_job_wraps_the_hour_at_the_day_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("BACKUP_HOUR", "23")
+
+    async def _run() -> None:
+        start_scheduler()
+        job = scheduler.get_job("downsync")
+        assert job is not None
+        fields = {field.name: str(field) for field in job.trigger.fields}
+        assert fields["hour"] == "0"
+        stop_scheduler()
+        await asyncio.sleep(0)
 
     asyncio.run(_run())
