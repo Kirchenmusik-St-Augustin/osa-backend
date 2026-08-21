@@ -8,13 +8,13 @@ CREATE TABLE "booking_requests" ("id" integer primary key autoincrement not null
 
 CREATE TABLE "bookings" ("id" integer primary key autoincrement not null, "performance_id" integer not null, "user_id" integer not null, "position_type" varchar check ("position_type" in ('instruments', 'voices', 'choirjobs')) not null, "position_id" integer not null, "order" integer not null default '0', "fee" integer not null, "created_at" datetime, "updated_at" datetime);
 
-CREATE TABLE "choirjobs" ("id" integer primary key autoincrement not null, "name" varchar not null, "order" integer not null default '0', "created_at" datetime, "updated_at" datetime);
+CREATE TABLE "choirjobs" ("id" integer primary key autoincrement not null, "name" varchar not null, "order" integer not null default '0', "created_at" datetime, "updated_at" datetime, active tinyint(1) not null default 1);
 
 CREATE TABLE "client_user_agents" ("id" integer primary key autoincrement not null, "string" varchar not null);
 
 CREATE TABLE "fees" ("id" integer primary key autoincrement not null, "name" varchar not null, "amount" integer not null default '0', "created_at" datetime, "updated_at" datetime);
 
-CREATE TABLE "instruments" ("id" integer primary key autoincrement not null, "name" varchar not null, "order" integer not null default '0', "created_at" datetime, "updated_at" datetime);
+CREATE TABLE "instruments" ("id" integer primary key autoincrement not null, "name" varchar not null, "order" integer not null default '0', "created_at" datetime, "updated_at" datetime, active tinyint(1) not null default 1);
 
 CREATE TABLE "locations" ("id" integer primary key autoincrement not null, "name" varchar not null, "address" text, "color" varchar not null default '000000', "order" integer not null default '0', "created_at" datetime, "updated_at" datetime);
 
@@ -62,7 +62,7 @@ CREATE TABLE "user_roles" ("id" integer primary key autoincrement not null, "use
 
 CREATE TABLE "users" ("id" integer primary key autoincrement not null, "surname" varchar not null, "givenname" varchar not null, "email" varchar, "email_verified_at" datetime, "phone" varchar, "auth_password" varchar, "auth_remember_token" varchar, "auth_lastlogin_provider" varchar, "auth_lastlogin" datetime, "auth_lastsignal" datetime, "auth_lastlogout" datetime, "auth_locked" integer not null default '0', "administrator" tinyint(1) not null default '0', "created_at" datetime, "updated_at" datetime, "deleted_at" datetime);
 
-CREATE TABLE "voices" ("id" integer primary key autoincrement not null, "name" varchar not null, "order" integer not null default '0', "created_at" datetime, "updated_at" datetime);
+CREATE TABLE "voices" ("id" integer primary key autoincrement not null, "name" varchar not null, "order" integer not null default '0', "created_at" datetime, "updated_at" datetime, active tinyint(1) not null default 1);
 
 CREATE UNIQUE INDEX "artists_surname_givenname_unique" on "artists" ("surname", "givenname");
 
@@ -100,11 +100,9 @@ CREATE UNIQUE INDEX "performances_schedule_artist_id_unique" on "performances" (
 
 CREATE UNIQUE INDEX "performances_schedule_location_id_unique" on "performances" ("schedule", "location_id");
 
-CREATE UNIQUE INDEX "personal_access_tokens_token_unique" on "personal_access_tokens" ("token")
-;
+CREATE UNIQUE INDEX "personal_access_tokens_token_unique" on "personal_access_tokens" ("token");
 
-CREATE INDEX "personal_access_tokens_tokenable_type_tokenable_id_index" on "personal_access_tokens" ("tokenable_type", "tokenable_id")
-;
+CREATE INDEX "personal_access_tokens_tokenable_type_tokenable_id_index" on "personal_access_tokens" ("tokenable_type", "tokenable_id");
 
 CREATE UNIQUE INDEX "propriumelements_name_unique" on "propriumelements" ("name");
 

@@ -74,6 +74,35 @@ class TestCrudRoundtrip:
         final_list = client.get("/coreelements/instrument", headers=headers)
         assert new_name not in [item["name"] for item in final_list.json()]
 
+    def test_create_and_archive_instrument(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        name = _unique("Serpent")
+
+        create_response = client.post(
+            "/coreelements/instrument", json={"name": name}, headers=headers
+        )
+        assert create_response.status_code == 201
+        created = create_response.json()
+        # Defaults to active when omitted.
+        assert created["active"] is True
+
+        archive_response = client.put(
+            f"/coreelements/instrument/{created['id']}",
+            json={"name": name, "active": False},
+            headers=headers,
+        )
+        assert archive_response.status_code == 200
+        assert archive_response.json()["active"] is False
+
+        # Omitting `active` on a later update preserves the archived state.
+        rename_response = client.put(
+            f"/coreelements/instrument/{created['id']}",
+            json={"name": _unique("Serpent-renamed")},
+            headers=headers,
+        )
+        assert rename_response.status_code == 200
+        assert rename_response.json()["active"] is False
+
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
         response = client.put(
@@ -129,6 +158,52 @@ class TestValidation:
         )
         assert response.status_code == 201
         assert response.json()["address"] == "Hauptstraße 1"
+
+    def test_active_field_is_rejected_for_types_without_it(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        response = client.post(
+            "/coreelements/location",
+            json={
+                "name": _unique("Ort"),
+                "address": "Hauptstraße 1",
+                "color": "ff0000",
+                "active": True,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 422
+        fields = {error["loc"][-1] for error in response.json()["detail"]}
+        assert "active" in fields
+
+    def test_active_field_is_rejected_for_types_without_it_on_update(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        create_response = client.post(
+            "/coreelements/location",
+            json={
+                "name": _unique("Ort"),
+                "address": "Hauptstraße 1",
+                "color": "ff0000",
+            },
+            headers=headers,
+        )
+        location_id = create_response.json()["id"]
+
+        update_response = client.put(
+            f"/coreelements/location/{location_id}",
+            json={
+                "name": _unique("Ort"),
+                "address": "Hauptstraße 1",
+                "color": "ff0000",
+                "active": True,
+            },
+            headers=headers,
+        )
+
+        assert update_response.status_code == 422
+        fields = {error["loc"][-1] for error in update_response.json()["detail"]}
+        assert "active" in fields
 
     def test_extra_body_field_is_rejected(self, client, make_user):
         headers = _auth_headers(client, make_user)

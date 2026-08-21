@@ -201,6 +201,28 @@ class TestGetUser:
         response = user_service.get_user(db_session, user.id)
         assert [i.id for i in response.instruments] == [second.id, first.id]
 
+    def test_already_assigned_archived_instrument_still_resolves(
+        self, db_session: Session, make_user
+    ):
+        """A user's own positions are resolved by id (see
+        _position_refs_for_user), independent of get_form_options()'s
+        active_only filter -- archiving an instrument must never make an
+        already-assigned user's position vanish or break."""
+        instrument = _make_instrument(db_session)
+        user = make_user()
+        user_position_service.create_user_position(
+            db_session,
+            user_id=user.id,
+            position_type="instruments",
+            position_id=instrument.id,
+        )
+        instrument.active = False
+        db_session.commit()
+
+        response = user_service.get_user(db_session, user.id)
+
+        assert instrument.id in [i.id for i in response.instruments]
+
     def test_includes_oauth2_bindings(self, db_session: Session, make_user):
         user = make_user()
         now = datetime.now(UTC)
@@ -290,6 +312,23 @@ class TestGetFormOptions:
         options = user_service.get_form_options(db_session)
         assert instrument.id in [i.id for i in options.instruments]
         assert isinstance(options.roles, list)
+
+    def test_excludes_archived_instruments_voices_and_choirjobs(
+        self, db_session: Session
+    ):
+        archived_instrument = _make_instrument(db_session)
+        archived_instrument.active = False
+        archived_voice = _make_voice(db_session)
+        archived_voice.active = False
+        archived_choirjob = _make_choirjob(db_session)
+        archived_choirjob.active = False
+        db_session.commit()
+
+        options = user_service.get_form_options(db_session)
+
+        assert archived_instrument.id not in [i.id for i in options.instruments]
+        assert archived_voice.id not in [i.id for i in options.voices]
+        assert archived_choirjob.id not in [i.id for i in options.choirjobs]
 
 
 class TestCreateUser:

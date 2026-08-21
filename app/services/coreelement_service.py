@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -20,6 +20,11 @@ from app.db.models.voice import Voice
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
 
 CoreelementModel = Instrument | Voice | Choirjob | Location | Propriumelement | Role
+# The subset of CoreelementModel that actually has an `active` column --
+# narrows config.model back down wherever has_active_field guards the
+# access at runtime (Location/Propriumelement/Role don't have this
+# attribute, so a plain access would fail pyright strict).
+_ActiveCoreelementModel = Instrument | Voice | Choirjob
 
 
 class CoreelementNotFoundError(Exception):
@@ -55,6 +60,12 @@ class CoreelementTypeConfig:
     name_max_length: int = 60
     extra_fields: tuple[FieldSpec, ...] = ()
     has_dependencies: Callable[[Session, CoreelementModel], bool] | None = None
+    # `active` isn't a validated string field like the FieldSpec-driven
+    # ones above (no length bounds, no uniqueness) -- it's a plain bool
+    # toggle with its own default-on-create/preserve-on-omit semantics
+    # (see create_coreelement/update_coreelement below), so it gets its
+    # own config flag instead of a FieldSpec entry.
+    has_active_field: bool = False
 
 
 def _role_has_dependent_users(db: Session, role: CoreelementModel) -> bool:
@@ -127,14 +138,17 @@ COREELEMENT_CONFIG: dict[CoreelementType, CoreelementTypeConfig] = {
     CoreelementType.instrument: CoreelementTypeConfig(
         model=Instrument,
         has_dependencies=_make_position_dependency_check("instruments"),
+        has_active_field=True,
     ),
     CoreelementType.voice: CoreelementTypeConfig(
         model=Voice,
         has_dependencies=_make_position_dependency_check("voices"),
+        has_active_field=True,
     ),
     CoreelementType.choirjob: CoreelementTypeConfig(
         model=Choirjob,
         has_dependencies=_make_position_dependency_check("choirjobs"),
+        has_active_field=True,
     ),
     CoreelementType.propriumelement: CoreelementTypeConfig(
         model=Propriumelement,
@@ -211,11 +225,14 @@ def _validate_forbidden_fields(
 ) -> list[tuple[str, str]]:
     allowed = {spec.name for spec in config.extra_fields}
     forbidden_msg = "Dieses Feld ist für diesen Typ nicht zulässig."
-    return [
+    errors = [
         (field_name, forbidden_msg)
         for field_name in ("label", "description", "address", "color")
         if field_name not in allowed and getattr(data, field_name) is not None
     ]
+    if not config.has_active_field and data.active is not None:
+        errors.append(("active", forbidden_msg))
+    return errors
 
 
 def _validate(
@@ -254,10 +271,22 @@ def _get_or_404(
 
 
 def list_coreelements(
-    db: Session, type_: CoreelementType
+    db: Session, type_: CoreelementType, *, active_only: bool = False
 ) -> Sequence[CoreelementModel]:
-    model = COREELEMENT_CONFIG[type_].model
-    result = db.execute(select(model).order_by(model.order, model.id))
+    """`active_only=True` restricts the result to currently-active rows --
+    used by the "add a new position" pickers (Ordinariumwork/Performance
+    setup editors, User form) so an archived Instrument/Voice/Choirjob is
+    no longer offered there. A no-op for types without `active`
+    (location/role/propriumelement): there's no active state to filter by,
+    so every row is effectively "active". The admin Coreelement listing
+    itself (GET /coreelements/{type}) deliberately never sets this --
+    archived elements must stay visible/editable/reactivatable there."""
+    config = COREELEMENT_CONFIG[type_]
+    stmt = select(config.model).order_by(config.model.order, config.model.id)
+    if active_only and config.has_active_field:
+        active_model = cast("type[_ActiveCoreelementModel]", config.model)
+        stmt = stmt.where(active_model.active == True)  # noqa: E712
+    result = db.execute(stmt)
     return result.scalars().all()
 
 
@@ -282,6 +311,13 @@ def create_coreelement(
     )
     for spec in config.extra_fields:
         setattr(obj, spec.name, getattr(data, spec.name).strip())
+    if config.has_active_field:
+        # New elements start active unless the caller explicitly says
+        # otherwise -- omitting the field is the common case (the admin
+        # form always defaults its checkbox to checked).
+        cast("_ActiveCoreelementModel", obj).active = (
+            True if data.active is None else data.active
+        )
 
     db.add(obj)
     db.commit()
@@ -302,6 +338,11 @@ def update_coreelement(
     obj.name = data.name.strip()
     for spec in config.extra_fields:
         setattr(obj, spec.name, getattr(data, spec.name).strip())
+    if config.has_active_field and data.active is not None:
+        # Omitting the field preserves the current value -- unlike create,
+        # an update must never silently reset an archived element back to
+        # active just because the caller didn't send the field.
+        cast("_ActiveCoreelementModel", obj).active = data.active
     obj.updated_at = datetime.now(UTC)
     db.commit()
     return obj

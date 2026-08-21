@@ -234,8 +234,8 @@ def get_available_positions(db: Session) -> OrdinariumworkAvailablePositionsOutp
     cross-model authorization here). Reuses coreelement_service's
     `order`-column ordering for consistency with the Coreelement admin
     pages (Schritt 3)."""
-    instruments = list_coreelements(db, CoreelementType.instrument)
-    voices = list_coreelements(db, CoreelementType.voice)
+    instruments = list_coreelements(db, CoreelementType.instrument, active_only=True)
+    voices = list_coreelements(db, CoreelementType.voice, active_only=True)
     return OrdinariumworkAvailablePositionsOutput(
         instruments=[
             AvailablePositionOutput(id=item.id, name=item.name) for item in instruments
@@ -338,7 +338,10 @@ def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
         for item in items:
             bucket.append(
                 OrdinariumworkPositionOutput(
-                    id=item.id, name=item.name, quantity=quantity_by_id[item.id]
+                    id=item.id,
+                    name=item.name,
+                    quantity=quantity_by_id[item.id],
+                    active=item.active,
                 )
             )
 

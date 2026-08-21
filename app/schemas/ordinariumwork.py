@@ -36,6 +36,12 @@ class OrdinariumworkPositionOutput(BaseModel):
     id: int
     name: str
     quantity: int
+    # Lets the frontend flag a setup row whose Instrument/Voice has since
+    # been archived (osa-only `active` addition, see CLAUDE.md section 3's
+    # Phase 1 boundary) -- get_setup() resolves existing rows by id
+    # regardless of active status, so a since-archived position still
+    # shows up here correctly, just visibly marked.
+    active: bool
 
 
 class OrdinariumworkSetupOutput(BaseModel):
