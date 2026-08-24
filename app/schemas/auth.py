@@ -82,7 +82,7 @@ class EmailKillSwitchStatusOutput(BaseModel):
 
 
 class UserProfileResponse(BaseModel):
-    """Output-only model (no extra="forbid"/strict=True -- that CLAUDE.md
+    """Output-only model (no extra="forbid"/strict=True -- that
     requirement targets input validation, not response serialization).
     Frontend-facing shape of "who am I": drives navbar display and
     permission-gated UI, since /auth/login itself returns only a JWT."""

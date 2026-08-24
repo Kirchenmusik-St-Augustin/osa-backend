@@ -2,16 +2,14 @@
 
 FastAPI backend for **OSA** ("Orchester-Einteilung") — the scheduling/casting
 system for the church musicians of Kirchenmusik St. Augustin. Migrates a
-legacy Laravel/Inertia/Vue application; see [`CLAUDE.md`](../CLAUDE.md) for
-the full migration phasing and coding standards.
+legacy Laravel/Inertia/Vue application.
 
 ## Tech Stack
 
 - **Runtime:** Python 3.12, FastAPI, SQLAlchemy (sync — deliberately not
   async, see `app/db/database.py`), Pydantic v2, APScheduler
 - **Database:** PostgreSQL (structurally identical to the legacy schema —
-  a 1:1 transfer, not yet the full redesign described in
-  [`CLAUDE.md`](../CLAUDE.md) section 3)
+  a 1:1 transfer, not yet the full schema redesign)
 - **Backup:** Koofr (WebDAV), see [Scheduler](#scheduler) and
   [Scripts](#scripts) below
 - **Container:** Podman Quadlets (rootless systemd) — production quadlets
@@ -63,7 +61,7 @@ podman exec osa-backend ruff format .           # auto-format
 podman exec osa-backend python -m pyright
 
 # Guards against business logic creeping back into routers (Router ->
-# Service -> Model layering, see CLAUDE.md):
+# Service -> Model layering):
 podman exec osa-backend python scripts/check_router_soc.py
 ```
 
@@ -83,8 +81,7 @@ can miss things Alembic doesn't detect on its own (renamed columns,
 some constraint changes). The current schema is still a structural 1:1
 transfer of the legacy schema (same tables/columns/types) — a real
 Postgres schema redesign (UUID PKs, native enums, CHECK constraints,
-audit triggers, ...) is a separate, not-yet-started step, see
-[`CLAUDE.md`](../CLAUDE.md) section 3 for the full boundary.
+audit triggers, ...) is a separate, not-yet-started step.
 
 ## Environment Variables
 
@@ -176,17 +173,14 @@ on manual dispatch:
 
 FastAPI-Backend für **OSA** ("Orchester-Einteilung") — das Dienstplan-/
 Besetzungssystem für die Kirchenmusiker von Kirchenmusik St. Augustin.
-Migriert eine bestehende Laravel/Inertia/Vue-Anwendung; die vollständige
-Phasenplanung und die Coding-Standards stehen in
-[`CLAUDE.md`](../CLAUDE.md).
+Migriert eine bestehende Laravel/Inertia/Vue-Anwendung.
 
 ## Tech-Stack
 
 - **Runtime:** Python 3.12, FastAPI, SQLAlchemy (synchron — bewusst nicht
   async, siehe `app/db/database.py`), Pydantic v2, APScheduler
 - **Datenbank:** PostgreSQL (strukturgleich zum Legacy-Schema — ein
-  1:1-Übertrag, noch nicht das volle Redesign aus
-  [`CLAUDE.md`](../CLAUDE.md) Abschnitt 3)
+  1:1-Übertrag, noch nicht das volle Schema-Redesign)
 - **Backup:** Koofr (WebDAV), siehe [Scheduler](#scheduler-1) und
   [Skripte](#skripte) unten
 - **Container:** Podman Quadlets (rootless systemd) — die
@@ -240,7 +234,7 @@ podman exec osa-backend ruff format .           # automatisch formatieren
 podman exec osa-backend python -m pyright
 
 # Verhindert, dass Business-Logik zurück in die Router rutscht (Router ->
-# Service -> Model-Schichtentrennung, siehe CLAUDE.md):
+# Service -> Model-Schichtentrennung):
 podman exec osa-backend python scripts/check_router_soc.py
 ```
 
@@ -260,8 +254,7 @@ erkennt nicht alles zuverlässig selbst (umbenannte Spalten, manche
 Constraint-Änderungen). Das aktuelle Schema ist weiterhin ein struktureller
 1:1-Übertrag des Legacy-Schemas (gleiche Tabellen/Spalten/Typen) — ein
 echtes Postgres-Schema-Redesign (UUID-PKs, native Enums, CHECK-Constraints,
-Audit-Trigger, ...) ist ein separater, noch nicht begonnener Schritt, siehe
-[`CLAUDE.md`](../CLAUDE.md) Abschnitt 3 für die genaue Grenze.
+Audit-Trigger, ...) ist ein separater, noch nicht begonnener Schritt.
 
 ## Umgebungsvariablen
 

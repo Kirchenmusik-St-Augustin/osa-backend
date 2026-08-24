@@ -101,6 +101,26 @@ def test_login_missing_fields_returns_german_validation_messages(client):
     assert any(err["msg"] == "Dieses Feld ist erforderlich." for err in detail)
 
 
+def test_refresh_with_empty_origin_returns_403(client):
+    # CSRF defense for the refresh-token cookie (samesite="none", see
+    # _ensure_trusted_origin's docstring) -- checked before the cookie
+    # itself, so this is 403, not the cookie-missing 401 below. Empty
+    # rather than absent (httpx2's Headers.update() rejects None as a
+    # header value) -- request.headers.get("origin") treats a missing
+    # header the same way, both land outside cors_origins_list.
+    response = client.post("/auth/refresh", headers={"Origin": ""})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Anfrage-Herkunft nicht vertrauenswürdig."
+
+
+def test_refresh_with_untrusted_origin_returns_403(client):
+    response = client.post("/auth/refresh", headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Anfrage-Herkunft nicht vertrauenswürdig."
+
+
 def test_refresh_without_cookie_returns_401(client):
     response = client.post("/auth/refresh")
 

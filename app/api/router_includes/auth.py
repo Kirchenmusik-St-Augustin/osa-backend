@@ -64,11 +64,29 @@ def _build_login_response(
         value=build_refresh_cookie_value(session_id, refresh_secret),
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         path=COOKIE_PATH,
         max_age=COOKIE_MAX_AGE,
     )
     return response
+
+
+def _ensure_trusted_origin(request: Request) -> None:
+    """CSRF defense for /refresh: samesite="none" on the refresh-token
+    cookie above (required so a future frontend/backend domain split keeps
+    working) means the browser now attaches that cookie to a cross-site
+    request too, not just requests from our own frontend. /refresh is the
+    one endpoint that acts purely on that cookie, no Authorization header
+    required (unlike /logout, see get_current_user), so it's the one
+    actually exposed to that. A browser always sends an Origin header on a
+    POST, so a missing/untrusted one means this request didn't originate
+    from a page we serve."""
+    origin = request.headers.get("origin")
+    if origin not in get_settings().cors_origins_list:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anfrage-Herkunft nicht vertrauenswürdig.",
+        )
 
 
 @auth_router.post("/login")
@@ -163,6 +181,7 @@ def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONRe
     """Exchange the refresh-token cookie for a new access token, rotating
     the refresh secret on every use. No Legacy equivalent (Legacy has no
     JWT refresh concept at all) -- per-IP rate limit only, 1:1 vb-api."""
+    _ensure_trusted_origin(request)
     cookie_value = request.cookies.get("refresh_token")
     if not cookie_value:
         raise HTTPException(

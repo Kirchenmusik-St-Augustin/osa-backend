@@ -404,9 +404,9 @@ def user_booking_status_for_performances(
     ONE user across MANY performances -- what the calendar list needs for
     its self-service badge/trigger on every row. Legacy's own equivalent
     (Short resource's `auth_user_booking` accessor) runs userBookingStatus()
-    once per row, a real N+1 there; CLAUDE.md's N+1-protection requirement
-    means the business RESULT is ported here, not that query pattern (see
-    project_osa_migration_plan memory, Schritt 6 plan A.8).
+    once per row, a real N+1 there; the project's N+1-protection
+    requirement means the business RESULT is ported here, not that query
+    pattern (see project_osa_migration_plan memory, Schritt 6 plan A.8).
 
     `keep_past_status` mirrors Legacy's `userBookingStatus($user,
     $keepPastStatus)` second argument: every caller so far passes nothing

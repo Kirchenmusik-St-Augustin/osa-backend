@@ -158,7 +158,7 @@ def calculate_permissions(user: User) -> list[str]:
     """Derives a user's active permissions from their roles + administrator
     flag. `user.roles` must already be loaded (see api.deps.get_current_user)
     -- accessing an unloaded relationship here would be a lazy-load, i.e.
-    exactly the N+1 pattern CLAUDE.md's testing constraints guard against."""
+    exactly the N+1 pattern the test suite's query-count guards catch."""
     role_names = {role.name for role in user.roles}
     return [
         rule.permission

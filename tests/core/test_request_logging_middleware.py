@@ -66,9 +66,9 @@ def test_redacts_password_and_access_token_end_to_end(
 
 
 def test_uses_run_in_threadpool_so_the_event_loop_is_never_blocked(client):
-    # CLAUDE.md: async code must never block the event loop. A Starlette
-    # middleware doesn't get FastAPI's automatic sync-handler threadpool
-    # offload, so this must be explicit -- regression guard for that.
+    # Async code must never block the event loop. A Starlette middleware
+    # doesn't get FastAPI's automatic sync-handler threadpool offload, so
+    # this must be explicit -- regression guard for that.
     with patch(
         "app.api.middleware.request_logging.run_in_threadpool",
         new_callable=AsyncMock,

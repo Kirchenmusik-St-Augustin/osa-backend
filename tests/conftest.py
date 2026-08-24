@@ -210,7 +210,16 @@ request_logging.SessionLocal = _job_session_factory
 
 @pytest.fixture
 def client():
-    with TestClient(app, base_url="http://testserver") as c:
+    # Origin header default matches CORS_ORIGINS above -- a real browser
+    # always sends one on POST requests, and /auth/refresh's origin check
+    # (see app/api/router_includes/auth.py) now depends on it since the
+    # refresh cookie moved to samesite="none". Tests that specifically
+    # exercise a missing/untrusted origin override this per-request.
+    with TestClient(
+        app,
+        base_url="http://testserver",
+        headers={"Origin": os.environ["CORS_ORIGINS"]},
+    ) as c:
         # The lifespan startup above already ran start_scheduler(), which
         # reads get_settings() to decide whether to register backup_koofr --
         # caching a Settings snapshot from BEFORE the test body's own
@@ -290,7 +299,7 @@ def count_queries() -> Callable[[], Iterator["QueryCounter"]]:
     """Yield a factory for a context manager that counts executed SQL
     statements, e.g. `with count_queries() as counter: ...; assert
     counter.count <= N` -- used to assert N+1 query patterns don't
-    regress (1:1 vb-api pattern, CLAUDE.md testing_constraints)."""
+    regress (1:1 vb-api pattern)."""
 
     @contextmanager
     def _count_queries() -> Iterator[QueryCounter]:

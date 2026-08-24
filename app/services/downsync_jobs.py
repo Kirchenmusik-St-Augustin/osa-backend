@@ -4,8 +4,8 @@ Non-production counterpart to backup_jobs.job_backup_koofr: nightly restores
 the latest PRODUCTION backup into this stage's own local database, so
 dev/test/qa stages regularly get refreshed with real production data.
 
-Like job_backup_koofr, this catches its own errors (only BackupError, per
-CLAUDE.md's ban on generic exception handling) rather than letting them
+Like job_backup_koofr, this catches its own errors (only BackupError,
+generic exception handling is banned) rather than letting them
 propagate to APScheduler's executor -- an unattended, once-daily job must
 never itself prevent the scheduler from continuing to fire other jobs.
 """
