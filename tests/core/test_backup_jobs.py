@@ -12,7 +12,7 @@ class TestJobBackupKoofr:
 
         def fake_run_backup() -> str:
             calls.append("backup")
-            return "archive.tar.gz"
+            return "archive.dump"
 
         def fake_cleanup() -> list[str]:
             calls.append("cleanup")
@@ -28,9 +28,9 @@ class TestJobBackupKoofr:
     def test_success_logs_when_cleanup_actually_deleted_something(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
-        monkeypatch.setattr(backup_jobs, "run_backup", lambda: "archive.tar.gz")
+        monkeypatch.setattr(backup_jobs, "run_backup", lambda: "archive.dump")
         monkeypatch.setattr(
-            backup_jobs, "cleanup_old_backups", lambda: ["old-1.tar.gz", "old-2.tar.gz"]
+            backup_jobs, "cleanup_old_backups", lambda: ["old-1.dump", "old-2.dump"]
         )
 
         with caplog.at_level(logging.INFO):
@@ -60,7 +60,7 @@ class TestJobBackupKoofr:
     def test_cleanup_failure_still_counts_backup_as_successful(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
-        monkeypatch.setattr(backup_jobs, "run_backup", lambda: "archive.tar.gz")
+        monkeypatch.setattr(backup_jobs, "run_backup", lambda: "archive.dump")
 
         def failing_cleanup() -> list[str]:
             msg = "delete failed"
@@ -72,4 +72,4 @@ class TestJobBackupKoofr:
             backup_jobs.job_backup_koofr()
 
         assert "cleanup failed" in caplog.text.lower()
-        assert "archive.tar.gz" in caplog.text
+        assert "archive.dump" in caplog.text

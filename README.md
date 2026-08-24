@@ -112,7 +112,7 @@ Phase 2 (Postgres) runs a real multi-worker production deployment.
 | `notify_upcoming_booking_status` | daily 05:00 | all | Sends combined booking-status change mails. |
 | `purge_expired_password_reset_tokens` | weekly, Sun 02:00 | all | Sweeps abandoned password-reset tokens. |
 | `purge_old_request_logs` | daily 23:00 | all | Deletes request-log rows older than 40 days. |
-| `backup_koofr` | daily, `BACKUP_HOUR`:`BACKUP_MINUTE` (default 03:00, `APP_TIMEZONE`) | `production` only (+ `BACKUP_ENABLED`) | Consistent SQLite snapshot → Koofr WebDAV upload, then deletes backups older than `KOOFR_BACKUP_RETENTION_DAYS`. |
+| `backup_koofr` | daily, `BACKUP_HOUR`:`BACKUP_MINUTE` (default 03:00, `APP_TIMEZONE`) | `production` only (+ `BACKUP_ENABLED`) | `pg_dump` snapshot → Koofr WebDAV upload, then deletes backups older than `KOOFR_BACKUP_RETENTION_DAYS`. |
 
 All five jobs run in `APP_TIMEZONE`
 (`AsyncIOScheduler(timezone=get_app_timezone())`, see `app/core/scheduler.py`)
@@ -133,7 +133,7 @@ container:
 | Script | Purpose |
 |---|---|
 | `scripts/backup_db.py` | Manually trigger a Koofr backup (`--list`, `--cleanup`, `--cleanup --dry-run`) |
-| `scripts/restore_db.py` | Restore SQLite from a Koofr backup (`--list`, `--backup-name NAME`, `--force`) |
+| `scripts/restore_db.py` | Restore the DB from a Koofr backup (`--list`, `--backup-name NAME`, `--force`) |
 | `scripts/check_router_soc.py` | Router/service separation-of-concerns pre-commit check |
 | `scripts/dump_test_schema.py` | Regenerate `tests/fixtures/legacy_schema.sql` from the real DB |
 
@@ -289,7 +289,7 @@ Multi-Worker-Produktivbetrieb fährt.
 | `notify_upcoming_booking_status` | täglich 05:00 | alle | Versendet gebündelte Buchungsstatus-Änderungsmails. |
 | `purge_expired_password_reset_tokens` | wöchentlich, So 02:00 | alle | Räumt verwaiste Passwort-Reset-Tokens auf. |
 | `purge_old_request_logs` | täglich 23:00 | alle | Löscht Request-Log-Zeilen älter als 40 Tage. |
-| `backup_koofr` | täglich, `BACKUP_HOUR`:`BACKUP_MINUTE` (Default 03:00, `APP_TIMEZONE`) | nur `production` (+ `BACKUP_ENABLED`) | Konsistenter SQLite-Snapshot → Koofr-WebDAV-Upload, löscht danach Backups älter als `KOOFR_BACKUP_RETENTION_DAYS`. |
+| `backup_koofr` | täglich, `BACKUP_HOUR`:`BACKUP_MINUTE` (Default 03:00, `APP_TIMEZONE`) | nur `production` (+ `BACKUP_ENABLED`) | `pg_dump`-Snapshot → Koofr-WebDAV-Upload, löscht danach Backups älter als `KOOFR_BACKUP_RETENTION_DAYS`. |
 
 Alle fünf Jobs laufen in `APP_TIMEZONE`
 (`AsyncIOScheduler(timezone=get_app_timezone())`, siehe `app/core/scheduler.py`)
@@ -312,7 +312,7 @@ Container:
 | Skript | Zweck |
 |---|---|
 | `scripts/backup_db.py` | Löst manuell ein Koofr-Backup aus (`--list`, `--cleanup`, `--cleanup --dry-run`) |
-| `scripts/restore_db.py` | Stellt SQLite aus einem Koofr-Backup wieder her (`--list`, `--backup-name NAME`, `--force`) |
+| `scripts/restore_db.py` | Stellt die DB aus einem Koofr-Backup wieder her (`--list`, `--backup-name NAME`, `--force`) |
 | `scripts/check_router_soc.py` | Pre-Commit-Check für die Router-/Service-Schichtentrennung |
 | `scripts/dump_test_schema.py` | Erzeugt `tests/fixtures/legacy_schema.sql` neu aus der echten DB |
 

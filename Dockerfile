@@ -1,5 +1,10 @@
 FROM python:3.12-slim AS base
 WORKDIR /app
+# postgresql-client: pg_dump/pg_restore/psql, used by
+# app/services/backup_service.py and scripts/backup_db.py/restore_db.py.
+# Shared by dev and prod (both need to run backups/restores).
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM python:3.12-slim AS builder
 WORKDIR /build
@@ -19,13 +24,16 @@ FROM base AS prod
 RUN groupadd --gid 1000 app && useradd --uid 1000 --gid app --no-create-home app
 COPY --from=builder /install /usr/local
 COPY --chown=app:app . .
+RUN chmod +x docker-entrypoint.sh
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
-# 1 worker for Phase 1 (SQLite): the scheduler's pg_try_advisory_lock guard
-# (see app/core/scheduler.py) is a no-op under SQLite, so >1 worker would
-# double-fire every cron job, including the daily Koofr backup. Revisit
-# once Phase 2 (Postgres) makes the advisory lock meaningful again.
+ENTRYPOINT ["./docker-entrypoint.sh"]
+# 1 worker: matched Phase 1 (SQLite, where the scheduler's
+# pg_try_advisory_lock guard -- see app/core/scheduler.py -- is a no-op, so
+# >1 worker would double-fire every cron job). Postgres (Phase 2) makes
+# that guard meaningful, but the worker count itself is an intentionally
+# separate follow-up decision, not part of the 1:1 structural DB transfer.
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-"]

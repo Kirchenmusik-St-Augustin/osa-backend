@@ -108,6 +108,13 @@ class TestShouldSkip:
 
 class TestRecordRequest:
     def test_writes_a_row_with_redacted_request_and_response(self, db_session: Session):
+        # A unique path, not the literal "/auth/login" -- this call is the
+        # only thing writing to request_logs within this test's own
+        # per-test transaction (see conftest.py's SessionLocal patch for
+        # request_logging.py's middleware too), so a fixed literal would
+        # work today, but scalar_one() below stays honestly unambiguous
+        # without relying on that.
+        request_path = _unique("/auth/login")
         request_log_service.record_request(
             db_session,
             client_ip="127.0.0.1",
@@ -115,7 +122,7 @@ class TestRecordRequest:
             user_id=None,
             user_agent_string="pytest-agent/1.0",
             request_method="POST",
-            request_path="/auth/login",
+            request_path=request_path,
             request_input={"username": "max@example.test", "password": "hunter2"},
             response_status=200,
             response_content={"access_token": "secret-token", "token_type": "bearer"},
@@ -123,7 +130,7 @@ class TestRecordRequest:
         )
 
         row = db_session.execute(
-            select(RequestLog).where(RequestLog.request_path == "/auth/login")
+            select(RequestLog).where(RequestLog.request_path == request_path)
         ).scalar_one()
         assert row.client_ip == "127.0.0.1"
         assert json.loads(row.client_ips) == ["127.0.0.1"]

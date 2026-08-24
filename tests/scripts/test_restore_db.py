@@ -10,7 +10,7 @@ class TestMainList:
     def test_prints_each_backup_on_its_own_line(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ):
-        backups = ["a.tar.gz", "b.tar.gz"]
+        backups = ["a.dump", "b.dump"]
         monkeypatch.setattr(restore_db, "list_backups", lambda: backups)
         monkeypatch.setattr(sys, "argv", ["restore_db.py", "--list"])
 
@@ -19,8 +19,8 @@ class TestMainList:
 
         assert exc_info.value.code == 0
         out = capsys.readouterr().out
-        assert "a.tar.gz" in out
-        assert "b.tar.gz" in out
+        assert "a.dump" in out
+        assert "b.dump" in out
 
     def test_reports_when_no_backups_exist(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -44,19 +44,19 @@ class TestMainRestore:
         def fake_run_restore(*, backup_name: str | None, force: bool) -> str:
             received["backup_name"] = backup_name
             received["force"] = force
-            return "restored.tar.gz"
+            return "restored.dump"
 
         monkeypatch.setattr(restore_db, "run_restore", fake_run_restore)
         monkeypatch.setattr(
             sys,
             "argv",
-            ["restore_db.py", "--backup-name", "restored.tar.gz", "--force"],
+            ["restore_db.py", "--backup-name", "restored.dump", "--force"],
         )
 
         restore_db.main()
 
-        assert received == {"backup_name": "restored.tar.gz", "force": True}
-        assert "restored.tar.gz" in capsys.readouterr().out
+        assert received == {"backup_name": "restored.dump", "force": True}
+        assert "restored.dump" in capsys.readouterr().out
 
     def test_backup_error_exits_with_code_1(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

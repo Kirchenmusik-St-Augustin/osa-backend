@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, extract, func, select
 from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
@@ -655,17 +655,22 @@ def load_performance_batch_data(
 def list_performances_for_month(
     db: Session, year: int, month: int, user_id: int
 ) -> Sequence[PerformanceCalendarItem]:
-    """Real indexed DB query (SQLite `strftime`), mirroring Legacy's own
-    `Performance::ofMonth()` (already a real query there, not an
-    anti-pattern to fix) -- relies on `schedule` always being written as a
-    naive local wall-clock string (Settings.app_timezone, see
+    """Real indexed DB query (dialect-portable year/month extract() match),
+    mirroring Legacy's own `Performance::ofMonth()` (already a real query
+    there, not an anti-pattern to fix) -- relies on `schedule` always being
+    written as a naive local wall-clock value (Settings.app_timezone, see
     app.core.datetime_utils.local_now()), never UTC-converted, so a plain
-    '%Y-%m' prefix match is reliable."""
-    month_str = f"{year:04d}-{month:02d}"
+    year+month match is reliable. Was SQLite's `strftime('%Y-%m', ...)`
+    before the Phase 2 Postgres cutover -- extract() compiles to each
+    dialect's native EXTRACT/date-part function instead of a single
+    SQLite-only one."""
     performances = (
         db.execute(
             select(Performance)
-            .where(func.strftime("%Y-%m", Performance.schedule) == month_str)
+            .where(
+                extract("year", Performance.schedule) == year,
+                extract("month", Performance.schedule) == month,
+            )
             .order_by(Performance.schedule)
         )
         .scalars()

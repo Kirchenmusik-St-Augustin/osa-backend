@@ -44,7 +44,10 @@ def _make_request_log(db_session: Session, *, created_at: datetime) -> RequestLo
 
 
 class TestPurgeExpiredPasswordResetTokens:
-    def test_deletes_a_token_older_than_the_ttl(self, db_session: Session):
+    def test_deletes_a_token_older_than_the_ttl(
+        self,
+        db_session: Session,
+    ):
         settings = get_settings()
         expired_at = datetime.now(UTC) - timedelta(
             minutes=settings.password_reset_ttl_minutes + 5
@@ -59,7 +62,10 @@ class TestPurgeExpiredPasswordResetTokens:
         ).scalar_one_or_none()
         assert remaining is None
 
-    def test_keeps_a_token_still_within_the_ttl(self, db_session: Session):
+    def test_keeps_a_token_still_within_the_ttl(
+        self,
+        db_session: Session,
+    ):
         email = f"{_unique('fresh')}@example.test"
         _make_reset_token(db_session, email=email, created_at=datetime.now(UTC))
 
@@ -73,7 +79,8 @@ class TestPurgeExpiredPasswordResetTokens:
 
 class TestPurgeOldRequestLogs:
     def test_deletes_an_entry_older_than_the_retention_period(
-        self, db_session: Session
+        self,
+        db_session: Session,
     ):
         old_entry = _make_request_log(
             db_session, created_at=datetime.now(UTC) - timedelta(days=41)

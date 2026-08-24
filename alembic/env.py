@@ -10,7 +10,13 @@ from app.db.database import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: alembic.ini's [loggers] section only
+    # configures root/sqlalchemy/alembic -- the default True would silently
+    # disable every other already-created logger (e.g. app.core.mailer's),
+    # which conftest.py's session-scoped schema fixture would otherwise do
+    # to the whole app for the rest of the test session (discovered via
+    # caplog-based tests going silently empty after this call ran once).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # DATABASE_URL is read at runtime, not from alembic.ini -- keeps a single
 # source of truth with app.core.config.Settings across every environment

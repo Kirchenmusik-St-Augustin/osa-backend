@@ -3,9 +3,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import Session
 
-from app.db.database import engine
 from app.db.models.performance import Performance
 from app.services.user_position_service import create_user_position
 
@@ -113,23 +112,27 @@ def _make_performance(
     return response.json()["id"]
 
 
-def _move_to_past(performance_id: int) -> None:
-    with OrmSession(engine) as session:
-        performance = session.execute(
-            select(Performance).where(Performance.id == performance_id)
-        ).scalar_one()
-        performance.schedule = datetime.now(UTC) - timedelta(days=1)
-        session.commit()
+def _move_to_past(db_session: Session, performance_id: int) -> None:
+    # Uses the test's own db_session (not an independent Session(engine))
+    # so the mutation is visible to the SAME session client's requests are
+    # routed through via conftest.py's override_get_db() -- a separate
+    # session bound to its own connection would be isolated behind the
+    # test's still-open outer transaction and never see this row at all
+    # (or worse, deadlock against it, see the migration plan's M5 section).
+    performance = db_session.execute(
+        select(Performance).where(Performance.id == performance_id)
+    ).scalar_one()
+    performance.schedule = datetime.now(UTC) - timedelta(days=1)
+    db_session.commit()
 
 
-def _qualify(user_id: int, instrument_id: int) -> None:
-    with OrmSession(engine) as session:
-        create_user_position(
-            session,
-            user_id=user_id,
-            position_type="instruments",
-            position_id=instrument_id,
-        )
+def _qualify(db_session: Session, user_id: int, instrument_id: int) -> None:
+    create_user_position(
+        db_session,
+        user_id=user_id,
+        position_type="instruments",
+        position_id=instrument_id,
+    )
 
 
 class TestPermissionGuards:
@@ -172,7 +175,7 @@ class TestPermissionGuards:
 
 
 class TestCastRoundtrip:
-    def test_get_cast_then_save_cast_books_a_user(self, client, make_user):
+    def test_get_cast_then_save_cast_books_a_user(self, client, make_user, db_session):
         headers, _disponent = _auth_headers(client, make_user, roles=["disponent"])
         instrument_id = _make_instrument(client, make_user)
         performance_id = _make_performance(
@@ -187,7 +190,7 @@ class TestCastRoundtrip:
         assert setup["instruments"][0]["id"] == instrument_id
 
         _, musician = _auth_headers(client, make_user, roles=[])
-        _qualify(musician.id, instrument_id)
+        _qualify(db_session, musician.id, instrument_id)
 
         save_response = client.post(
             f"/performances/{performance_id}/cast",
@@ -209,13 +212,13 @@ class TestCastRoundtrip:
             == musician.id
         )
 
-    def test_cast_raises_403_for_past_performance(self, client, make_user):
+    def test_cast_raises_403_for_past_performance(self, client, make_user, db_session):
         headers, _ = _auth_headers(client, make_user, roles=["disponent"])
         instrument_id = _make_instrument(client, make_user)
         performance_id = _make_performance(
             client, make_user, headers, instrument_id=instrument_id
         )
-        _move_to_past(performance_id)
+        _move_to_past(db_session, performance_id)
 
         response = client.get(f"/performances/{performance_id}/cast", headers=headers)
         assert response.status_code == 403
@@ -244,14 +247,14 @@ class TestCastRoundtrip:
 
 
 class TestBookingStatusSelfService:
-    def test_request_then_cancel_roundtrip(self, client, make_user):
+    def test_request_then_cancel_roundtrip(self, client, make_user, db_session):
         disponent_headers, _ = _auth_headers(client, make_user, roles=["disponent"])
         instrument_id = _make_instrument(client, make_user)
         performance_id = _make_performance(
             client, make_user, disponent_headers, instrument_id=instrument_id
         )
         musician_headers, musician = _auth_headers(client, make_user, roles=[])
-        _qualify(musician.id, instrument_id)
+        _qualify(db_session, musician.id, instrument_id)
 
         request_response = client.post(
             f"/performances/{performance_id}/booking-status", headers=musician_headers
@@ -267,13 +270,15 @@ class TestBookingStatusSelfService:
 
 
 class TestBillingNoPastLock:
-    def test_billing_available_for_past_performance(self, client, make_user):
+    def test_billing_available_for_past_performance(
+        self, client, make_user, db_session
+    ):
         headers, _ = _auth_headers(client, make_user, roles=["disponent"])
         instrument_id = _make_instrument(client, make_user)
         performance_id = _make_performance(
             client, make_user, headers, instrument_id=instrument_id
         )
-        _move_to_past(performance_id)
+        _move_to_past(db_session, performance_id)
         billing_headers, _ = _auth_headers(client, make_user, roles=["billing"])
 
         response = client.get(
@@ -285,7 +290,9 @@ class TestBillingNoPastLock:
 
 
 class TestMessageToCast:
-    def test_send_message_returns_ok_for_verified_recipient(self, client, make_user):
+    def test_send_message_returns_ok_for_verified_recipient(
+        self, client, make_user, db_session
+    ):
         headers, _ = _auth_headers(client, make_user, roles=["disponent"])
         instrument_id = _make_instrument(client, make_user)
         performance_id = _make_performance(
@@ -293,9 +300,7 @@ class TestMessageToCast:
         )
         recipient = make_user()
         recipient.email_verified_at = datetime.now(UTC)
-        with OrmSession(engine) as session:
-            session.merge(recipient)
-            session.commit()
+        db_session.commit()
 
         # The send endpoint fires the actual email via a BackgroundTask,
         # which BaseHTTPMiddleware/TestClient runs synchronously as part of

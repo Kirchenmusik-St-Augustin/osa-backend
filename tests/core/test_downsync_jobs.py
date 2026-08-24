@@ -16,8 +16,8 @@ class TestJobDownsync:
         def fake_list_backups(**kwargs: object) -> list[str]:
             calls.append(("list_backups", kwargs["stage"]))
             return [
-                "production-2024-01-01_00-00-00.tar.gz",
-                "production-2024-06-01_00-00-00.tar.gz",
+                "production-2024-01-01_00-00-00.dump",
+                "production-2024-06-01_00-00-00.dump",
             ]
 
         def fake_run_restore(**kwargs: object) -> str:
@@ -32,7 +32,7 @@ class TestJobDownsync:
 
         assert calls == [
             ("list_backups", "production"),
-            ("run_restore", "production-2024-06-01_00-00-00.tar.gz"),
+            ("run_restore", "production-2024-06-01_00-00-00.dump"),
         ]
 
     def test_never_runs_in_production_even_if_registration_guard_is_bypassed(
@@ -91,7 +91,7 @@ class TestJobDownsync:
         monkeypatch.setattr(
             downsync_jobs,
             "list_backups",
-            lambda **_kwargs: ["production-2024-01-01_00-00-00.tar.gz"],
+            lambda **_kwargs: ["production-2024-01-01_00-00-00.dump"],
         )
 
         def failing_run_restore(**_kwargs: object) -> str:
