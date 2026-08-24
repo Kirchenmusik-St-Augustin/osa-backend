@@ -4,9 +4,9 @@ FastAPI lifespan.
 Deliberately in-process (not a separate scheduler container), analogous to
 the vb-fastapi-vue sister project's app/core/scheduler.py -- including its
 pg_try_advisory_lock guard against duplicate job registration across
-multiple Gunicorn worker processes. Under SQLite (Phase 1, always a single
-dev process) that guard is a no-op; it only becomes active once Phase 2
-(Postgres) runs multiple prod workers, exactly as in vb-api today.
+multiple Gunicorn worker processes. Currently a de facto no-op (`--workers`
+is still `1`, see the Dockerfile), but active by construction the moment
+that ever changes.
 """
 
 import logging
@@ -90,9 +90,9 @@ _scheduler_lock_conn: Connection | None = None
 def _acquire_scheduler_lock() -> bool:
     """Ensure only one process runs the scheduler.
 
-    SQLite (dev-only in Phase 1) never runs with multiple workers, so it
-    skips the lock and always starts. Relevant once Phase 2 (Postgres) runs
-    production with multiple Gunicorn workers.
+    Guarded by dialect rather than assumed unconditionally -- defensive
+    against ever running against a non-Postgres engine again (e.g. a
+    stray local test config), not a currently-exercised code path.
     """
     global _scheduler_lock_conn  # noqa: PLW0603 -- lazy singleton, holds the advisory-lock connection open for process lifetime
 
@@ -250,8 +250,9 @@ def start_scheduler() -> None:
     # `not is_production`, no second "enabled" flag. backup_koofr needs one
     # because it WRITES into the one Koofr path shared across every stage
     # (see Settings.backup_enabled's docstring) -- downsync only ever READS
-    # from Koofr and writes exclusively to this stage's own local SQLite
-    # file, so that shared-destination collision risk doesn't apply here.
+    # from Koofr and restores exclusively into this stage's own local
+    # Postgres database, so that shared-destination collision risk doesn't
+    # apply here.
     # Runs one hour after the production backup (same minute), giving that
     # day's backup time to actually land on Koofr first.
     _sync_job_registration(

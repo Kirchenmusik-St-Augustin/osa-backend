@@ -360,7 +360,7 @@ def test_log_auth_event_persists_row(db_session):
 
 def _register_request(**overrides: object) -> RegisterRequest:
     """Every field defaults to a fresh unique value per call -- the test
-    DB is a single shared SQLite file for the whole test run (no per-test
+    DB is a single shared database for the whole test run (no per-test
     transaction rollback), so fixed literals would collide with rows a
     different test already committed (unique constraints on email and on
     the surname+givenname combo)."""

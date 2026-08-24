@@ -55,9 +55,10 @@ def _latest_unnotified_entries(
     notify-worthy transitions on SEVERAL upcoming performances at once, all
     of which must survive into one combined mail (see
     notify_upcoming_booking_status)."""
-    # Naive datetime.min, deliberately without tzinfo -- SQLite round-trips
-    # every datetime column here as naive regardless of how it was written
-    # (see booking_service._popular_for_position for the same reasoning).
+    # Naive datetime.min, deliberately without tzinfo -- our DateTime
+    # columns round-trip every value as naive regardless of how it was
+    # written (see booking_service._popular_for_position for the same
+    # reasoning).
     epoch = datetime.min  # noqa: DTZ901
 
     by_performance_user: dict[tuple[int, int], list[BookingLog]] = {}

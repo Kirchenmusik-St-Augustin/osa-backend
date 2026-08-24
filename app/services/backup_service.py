@@ -1,13 +1,13 @@
-"""PostgreSQL -> Koofr WebDAV backup/restore -- Phase 2 (Postgres) equivalent
-of Legacy's OsaScheduleBackupProdDB.php Artisan command, and this module's
-own Phase 1 (SQLite) predecessor.
+"""PostgreSQL -> Koofr WebDAV backup/restore -- functional equivalent of
+Legacy's OsaScheduleBackupProdDB.php Artisan command, and this module's
+own file-copy-based predecessor.
 
 Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`,
 1:1 the vb-fastapi-vue sister project's `run_backup()` naming, User decision
 2026-08-13) -- unchanged convention, only the extension moved from `.tar.gz`
-(a tarred SQLite file copy) to `.dump` (pg_dump's own `--format=custom`
+(a tarred file copy) to `.dump` (pg_dump's own `--format=custom`
 output, already a single binary file, nothing to tar). Backups created
-before the Phase 2 cutover keep their old `.tar.gz` names on Koofr and no
+before the Postgres cutover keep their old `.tar.gz` names on Koofr and no
 longer match _FILENAME_PATTERN -- same accepted, documented naming break as
 the 2026-08-13 stage-prefix change before it (see git history), not a
 special case this module needs to handle.

@@ -10,10 +10,11 @@ class RepertoireWorkColumns:
     demanding/artist_id/duration/timestamps). Ordinariumwork additionally
     has a Positions sub-resource (ordinariumwork_positions, see
     ordinariumwork_position.py) that Propriumwork doesn't have.
-    `artist_id` is a plain int, not a ForeignKey: the real SQLite schema
+    `artist_id` is a plain int, not a ForeignKey: the real legacy schema
     has zero FK constraints anywhere (Legacy enforces referential
-    integrity purely at the application level), so Phase 1 keeps that
-    exactly, per CLAUDE.md's structural-parity mandate."""
+    integrity purely at the application level), so the structural 1:1
+    transfer keeps that exactly, per CLAUDE.md's structural-parity
+    mandate."""
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]

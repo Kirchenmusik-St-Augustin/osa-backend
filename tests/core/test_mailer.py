@@ -10,7 +10,7 @@ from app.db.models.sent_email import SentEmail
 
 @pytest.fixture(autouse=True)
 def _clear_sent_emails(db_session):
-    """The shared test-session SQLite DB has no per-test transaction
+    """The shared test-session DB has no per-test transaction
     rollback (unlike a per-test SAVEPOINT setup) -- kill-switch tests
     count ALL rows in `sent_emails`, so leftover rows from an earlier
     test would otherwise make these tests order-dependent."""

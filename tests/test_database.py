@@ -6,8 +6,7 @@ from app.db.database import get_db
 
 
 def test_get_db_session_enforces_foreign_keys():
-    """Postgres enforces FK constraints natively and unconditionally --
-    unlike SQLite (Phase 1), there is no per-connection PRAGMA to check.
+    """Postgres enforces FK constraints natively and unconditionally.
     user_roles is the one table with a real ForeignKey (see
     app/db/models/user_role.py); a role_id that doesn't exist must be
     rejected, not silently inserted."""

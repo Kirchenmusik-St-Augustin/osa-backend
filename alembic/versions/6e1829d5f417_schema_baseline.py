@@ -182,8 +182,8 @@ def upgrade() -> None:
         sa.UniqueConstraint("name", "artist_id"),
     )
     # No PrimaryKeyConstraint here on purpose: the real legacy table has no
-    # PK at all (see tests/fixtures/legacy_schema.sql -- plain columns, no
-    # "primary key"). The SQLAlchemy model declares email as primary_key=True
+    # PK at all -- plain columns, no "primary key". The SQLAlchemy model
+    # declares email as primary_key=True
     # purely for the ORM's identity map/delete() (see
     # app/db/models/password_reset_token.py's docstring) -- letting
     # autogenerate turn that into a real Postgres PrimaryKeyConstraint would

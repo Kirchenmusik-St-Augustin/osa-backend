@@ -1427,9 +1427,8 @@ class TestGetPopular:
                 db_session, request
             ).id
             # Each performance gets its OWN distinct past schedule --
-            # `performances` has a real UNIQUE(schedule, location_id) index
-            # (see tests/fixtures/legacy_schema.sql), so reusing
-            # local_now()-1day for all of them (like the shared
+            # `performances` has a real UNIQUE(schedule, location_id) index,
+            # so reusing local_now()-1day for all of them (like the shared
             # _move_to_past() helper does) would risk a collision here.
             performance = _get_performance(db_session, performance_id)
             performance.schedule = local_now() - timedelta(days=next(past_offset_days))

@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 def _unique(base: str = "Element") -> str:
     """Every test gets its own collision-free name -- tests/conftest.py's
-    shared SQLite file has no per-test rollback (1:1 make_user's uuid-based
+    shared test DB has no per-test rollback (1:1 make_user's uuid-based
     emails for the same reason), and coreelement names are globally unique
     per type, unlike Users."""
     return f"{base}-{uuid.uuid4().hex[:8]}"

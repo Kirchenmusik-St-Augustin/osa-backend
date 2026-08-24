@@ -30,10 +30,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
 ENTRYPOINT ["./docker-entrypoint.sh"]
-# 1 worker: matched Phase 1 (SQLite, where the scheduler's
-# pg_try_advisory_lock guard -- see app/core/scheduler.py -- is a no-op, so
-# >1 worker would double-fire every cron job). Postgres (Phase 2) makes
-# that guard meaningful, but the worker count itself is an intentionally
-# separate follow-up decision, not part of the 1:1 structural DB transfer.
+# 1 worker: the scheduler's pg_try_advisory_lock guard (see
+# app/core/scheduler.py) makes >1 worker safe against double-firing cron
+# jobs, but raising the worker count itself is an intentionally separate
+# follow-up decision, not part of the structural 1:1 DB transfer.
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-"]

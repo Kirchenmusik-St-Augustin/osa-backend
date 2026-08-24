@@ -1,7 +1,4 @@
-import warnings
-
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import Session
 
 from app.schemas.sql_inspector import TableColumnOutput, TableDataOutput
@@ -34,19 +31,10 @@ def get_table_data(
         raise TableNotFoundError
 
     inspector = inspect(db.get_bind())
-    # Legacy's SQLite schema declares booleans as `tinyint(1)` (see
-    # tests/fixtures/legacy_schema.sql) -- SQLAlchemy's SQLite reflection
-    # can't construct an INTEGER type with that length argument and warns
-    # about it on every such column, even though the affinity fallback it
-    # uses instead (plain INTEGER) is correct for our purposes here (we
-    # only ever stringify `column["type"]`, never instantiate it). Narrowly
-    # suppressed right around the two reflection calls that trigger it.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=SAWarning)
-        primary_key_columns = set(
-            inspector.get_pk_constraint(table_name).get("constrained_columns", [])
-        )
-        raw_columns = inspector.get_columns(table_name)
+    primary_key_columns = set(
+        inspector.get_pk_constraint(table_name).get("constrained_columns", [])
+    )
+    raw_columns = inspector.get_columns(table_name)
     columns = [
         TableColumnOutput(
             name=column["name"],

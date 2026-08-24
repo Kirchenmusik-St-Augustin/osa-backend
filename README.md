@@ -9,8 +9,8 @@ the full migration phasing and coding standards.
 
 - **Runtime:** Python 3.12, FastAPI, SQLAlchemy (sync — deliberately not
   async, see `app/db/database.py`), Pydantic v2, APScheduler
-- **Database:** SQLite (Phase 1 — structurally identical to the legacy
-  schema; PostgreSQL migration is Phase 2, not yet started, see
+- **Database:** PostgreSQL (structurally identical to the legacy schema —
+  a 1:1 transfer, not yet the full redesign described in
   [`CLAUDE.md`](../CLAUDE.md) section 3)
 - **Backup:** Koofr (WebDAV), see [Scheduler](#scheduler) and
   [Scripts](#scripts) below
@@ -42,14 +42,11 @@ have failed too.
 podman exec osa-backend pytest --tb=short -q
 ```
 
-The test suite runs against an isolated, throwaway SQLite file rebuilt from
-`tests/fixtures/legacy_schema.sql` per session — never against the real
-619 MB `database/database.sqlite`. Regenerate that fixture (only needed if
-the legacy schema itself changes) with:
-
-```bash
-podman exec osa-backend python scripts/dump_test_schema.py
-```
+The test suite runs against a dedicated PostgreSQL database
+(`TEST_DATABASE_URL`, falling back to `DATABASE_URL`), schema built from
+the real Alembic migrations — never against the production database. See
+`tests/conftest.py`'s module docstring for the full isolation model
+(per-test transaction + savepoint).
 
 Coverage costs noticeable extra time (`coverage.py` + `greenlet` overhead)
 — use `pytest -q --no-cov` for quick iteration, and only run the full
@@ -70,16 +67,24 @@ podman exec osa-backend python -m pyright
 podman exec osa-backend python scripts/check_router_soc.py
 ```
 
-## No Alembic in Phase 1
+## Database Migrations
 
-This repo has **no migrations tooling** (`alembic.ini`, `alembic/`) yet —
-deliberately. Phase 1 keeps the schema structurally identical to the
-legacy SQLite database (same tables/columns/types), so there is nothing to
-migrate. Alembic + a real Postgres schema redesign (UUID PKs, native
-enums, CHECK constraints, audit triggers, ...) is entirely Phase 2 —
-see [`CLAUDE.md`](../CLAUDE.md) section 3 for the full boundary. Ruff/
-pyright/coverage configs already carve out an `alembic/` exception for
-when that lands, but nothing currently lives there.
+Schema changes go through Alembic (`alembic/`). `docker-entrypoint.sh`
+runs `alembic upgrade head` automatically on every container start, so
+there is no manual migration step in the deploy runbook. To generate a
+new migration after changing a model:
+
+```bash
+podman exec osa-backend alembic revision --autogenerate -m "describe the change"
+```
+
+Always review the generated migration before committing it — autogenerate
+can miss things Alembic doesn't detect on its own (renamed columns,
+some constraint changes). The current schema is still a structural 1:1
+transfer of the legacy schema (same tables/columns/types) — a real
+Postgres schema redesign (UUID PKs, native enums, CHECK constraints,
+audit triggers, ...) is a separate, not-yet-started step, see
+[`CLAUDE.md`](../CLAUDE.md) section 3 for the full boundary.
 
 ## Environment Variables
 
@@ -101,10 +106,9 @@ Settings are tiered (see `app/core/config.py`'s module docstring):
 
 Background jobs run via a single in-process APScheduler instance
 (`app/core/scheduler.py`), started/stopped via `main.py`'s FastAPI
-lifespan. A `pg_try_advisory_lock` guard prevents duplicate registration
-across multiple Gunicorn workers — a no-op under SQLite (Phase 1, always a
-single worker, see the `Dockerfile`'s `--workers 1`), relevant once
-Phase 2 (Postgres) runs a real multi-worker production deployment.
+lifespan. A `pg_try_advisory_lock` guard prevents duplicate registration across
+multiple Gunicorn workers, should `--workers` ever be raised above its
+current `1` (see the `Dockerfile`'s comment on why it hasn't been yet).
 
 | Job ID | Schedule | Stage | Purpose |
 |---|---|---|---|
@@ -135,7 +139,6 @@ container:
 | `scripts/backup_db.py` | Manually trigger a Koofr backup (`--list`, `--cleanup`, `--cleanup --dry-run`) |
 | `scripts/restore_db.py` | Restore the DB from a Koofr backup (`--list`, `--backup-name NAME`, `--force`) |
 | `scripts/check_router_soc.py` | Router/service separation-of-concerns pre-commit check |
-| `scripts/dump_test_schema.py` | Regenerate `tests/fixtures/legacy_schema.sql` from the real DB |
 
 ```bash
 podman exec osa-backend python scripts/backup_db.py --list
@@ -181,8 +184,8 @@ Phasenplanung und die Coding-Standards stehen in
 
 - **Runtime:** Python 3.12, FastAPI, SQLAlchemy (synchron — bewusst nicht
   async, siehe `app/db/database.py`), Pydantic v2, APScheduler
-- **Datenbank:** SQLite (Phase 1 — strukturgleich zum Legacy-Schema;
-  die PostgreSQL-Migration ist Phase 2, noch nicht begonnen, siehe
+- **Datenbank:** PostgreSQL (strukturgleich zum Legacy-Schema — ein
+  1:1-Übertrag, noch nicht das volle Redesign aus
   [`CLAUDE.md`](../CLAUDE.md) Abschnitt 3)
 - **Backup:** Koofr (WebDAV), siehe [Scheduler](#scheduler-1) und
   [Skripte](#skripte) unten
@@ -215,14 +218,11 @@ Pre-Commit-Hook heißt also, dass CI ebenfalls fehlschlagen würde.
 podman exec osa-backend pytest --tb=short -q
 ```
 
-Die Testsuite läuft gegen eine isolierte, wegwerfbare SQLite-Datei, die pro
-Sitzung aus `tests/fixtures/legacy_schema.sql` neu aufgebaut wird — niemals
-gegen die echte, 619 MB große `database/database.sqlite`. Dieses Fixture
-(nur nötig, wenn sich das Legacy-Schema selbst ändert) neu erzeugen mit:
-
-```bash
-podman exec osa-backend python scripts/dump_test_schema.py
-```
+Die Testsuite läuft gegen eine dedizierte PostgreSQL-Datenbank
+(`TEST_DATABASE_URL`, fällt auf `DATABASE_URL` zurück), Schema kommt aus
+den echten Alembic-Migrationen — niemals gegen die Produktions-Datenbank.
+Volles Isolationsmodell (Transaktion+Savepoint pro Test) siehe
+`tests/conftest.py`s Modul-Docstring.
 
 Coverage-Erhebung kostet spürbar mehr Zeit (`coverage.py`- +
 `greenlet`-Overhead) — für schnelle Zwischenläufe `pytest -q --no-cov`
@@ -244,17 +244,24 @@ podman exec osa-backend python -m pyright
 podman exec osa-backend python scripts/check_router_soc.py
 ```
 
-## Kein Alembic in Phase 1
+## Datenbank-Migrationen
 
-Dieses Repo hat (noch) **keine Migrations-Tools** (`alembic.ini`,
-`alembic/`) — bewusst. Phase 1 hält das Schema strukturgleich zur
-Legacy-SQLite-Datenbank (gleiche Tabellen/Spalten/Typen), es gibt also
-nichts zu migrieren. Alembic + ein echtes Postgres-Schema-Redesign
-(UUID-PKs, native Enums, CHECK-Constraints, Audit-Trigger, ...) ist
-vollständig Phase 2 — die genaue Grenze steht in
-[`CLAUDE.md`](../CLAUDE.md) Abschnitt 3. Ruff-/Pyright-/Coverage-Konfigs
-halten bereits eine `alembic/`-Ausnahme für später bereit, aktuell liegt
-dort aber nichts.
+Schema-Änderungen laufen über Alembic (`alembic/`). `docker-entrypoint.sh`
+führt bei jedem Container-Start automatisch `alembic upgrade head` aus,
+kein manueller Migrationsschritt im Deploy-Runbook nötig. Neue Migration
+nach einer Modell-Änderung erzeugen:
+
+```bash
+podman exec osa-backend alembic revision --autogenerate -m "Änderung beschreiben"
+```
+
+Die generierte Migration immer vor dem Committen durchlesen — Autogenerate
+erkennt nicht alles zuverlässig selbst (umbenannte Spalten, manche
+Constraint-Änderungen). Das aktuelle Schema ist weiterhin ein struktureller
+1:1-Übertrag des Legacy-Schemas (gleiche Tabellen/Spalten/Typen) — ein
+echtes Postgres-Schema-Redesign (UUID-PKs, native Enums, CHECK-Constraints,
+Audit-Trigger, ...) ist ein separater, noch nicht begonnener Schritt, siehe
+[`CLAUDE.md`](../CLAUDE.md) Abschnitt 3 für die genaue Grenze.
 
 ## Umgebungsvariablen
 
@@ -277,11 +284,9 @@ Die Settings sind gestuft (siehe den Docstring des Moduls
 
 Hintergrund-Jobs laufen über eine einzige, prozessinterne
 APScheduler-Instanz (`app/core/scheduler.py`), gestartet/gestoppt über
-`main.py`s FastAPI-Lifespan. Ein `pg_try_advisory_lock`-Schutz verhindert
-Doppel-Registrierung über mehrere Gunicorn-Worker hinweg — unter SQLite
-(Phase 1, immer nur ein Worker, siehe des `Dockerfile`s `--workers 1`) ein
-No-Op, relevant erst, sobald Phase 2 (Postgres) einen echten
-Multi-Worker-Produktivbetrieb fährt.
+`main.py`s FastAPI-Lifespan. Ein `pg_try_advisory_lock`-Schutz verhindert Doppel-Registrierung über
+mehrere Gunicorn-Worker hinweg, sollte `--workers` je über den aktuellen
+Wert `1` angehoben werden (siehe den Kommentar dazu im `Dockerfile`).
 
 | Job-ID | Zeitplan | Stage | Zweck |
 |---|---|---|---|
@@ -314,7 +319,6 @@ Container:
 | `scripts/backup_db.py` | Löst manuell ein Koofr-Backup aus (`--list`, `--cleanup`, `--cleanup --dry-run`) |
 | `scripts/restore_db.py` | Stellt die DB aus einem Koofr-Backup wieder her (`--list`, `--backup-name NAME`, `--force`) |
 | `scripts/check_router_soc.py` | Pre-Commit-Check für die Router-/Service-Schichtentrennung |
-| `scripts/dump_test_schema.py` | Erzeugt `tests/fixtures/legacy_schema.sql` neu aus der echten DB |
 
 ```bash
 podman exec osa-backend python scripts/backup_db.py --list
