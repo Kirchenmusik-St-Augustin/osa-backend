@@ -2,6 +2,8 @@ fastapi
 uvicorn[standard]
 gunicorn
 sqlalchemy
+psycopg2-binary
+alembic
 apscheduler
 pydantic-settings
 bcrypt

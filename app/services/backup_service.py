@@ -1,20 +1,25 @@
-"""SQLite -> Koofr WebDAV backup/restore -- Phase 1 (SQLite) equivalent of
-Legacy's OsaScheduleBackupProdDB.php Artisan command.
+"""PostgreSQL -> Koofr WebDAV backup/restore -- Phase 2 (Postgres) equivalent
+of Legacy's OsaScheduleBackupProdDB.php Artisan command, and this module's
+own Phase 1 (SQLite) predecessor.
 
-Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].tar.gz`,
+Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`,
 1:1 the vb-fastapi-vue sister project's `run_backup()` naming, User decision
-2026-08-13) -- a DELIBERATE, confirmed break of this module's earlier
-byte-for-byte compatibility with
-osa-einteilung.hochamt.at/tools/restore-koofr-backup.sh: that script only
-recognizes the old unprefixed "osa_database_backup_{Y-m-d_H-i-s}.tar.gz"
-naming, so it keeps working for backups created BEFORE this change but not
-for any created after. Accepted -- Legacy is being retired soon and the
-Koofr account/path itself is unchanged, only the filename shape.
+2026-08-13) -- unchanged convention, only the extension moved from `.tar.gz`
+(a tarred SQLite file copy) to `.dump` (pg_dump's own `--format=custom`
+output, already a single binary file, nothing to tar). Backups created
+before the Phase 2 cutover keep their old `.tar.gz` names on Koofr and no
+longer match _FILENAME_PATTERN -- same accepted, documented naming break as
+the 2026-08-13 stage-prefix change before it (see git history), not a
+special case this module needs to handle.
 
 Uses raw WebDAV HTTP verbs via `requests` (already a pinned dependency)
 instead of shelling out to rclone (what the existing restore script does)
 or adding a dedicated WebDAV client library -- no new dependency, no
-subprocess/shell-escaping surface.
+subprocess/shell-escaping surface for the upload/download/list/delete side.
+pg_dump/pg_restore/psql themselves are unavoidably subprocesses (no pure-
+Python equivalent exists) -- 1:1 vb-api's `_run_pg_subprocess()` pattern,
+including its stderr-surfacing fix (a bare CalledProcessError hides exactly
+the detail that matters for debugging a failed disaster-recovery run).
 
 Known, deliberately NOT replicated Legacy bug: Legacy's own
 cleanupOldBackups() passes the WebDAV-absolute paths returned by PROPFIND
@@ -28,9 +33,10 @@ koofr_base_uri + koofr_backup_path + basename via `_koofr_url()`.
 """
 
 import logging
+import os
 import re
-import sqlite3
-import tarfile
+import shutil
+import subprocess
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -60,7 +66,7 @@ _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 # to extract the timestamp, not to validate the settings enum.
 _FILENAME_PATTERN = re.compile(
     r"^(?P<stage>[a-z]+)-(?P<timestamp>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})"
-    r"(?:-manual)?\.tar\.gz$"
+    r"(?:-manual)?\.dump$"
 )
 _DAV_HREF_TAG = "{DAV:}href"
 
@@ -71,17 +77,116 @@ class BackupError(Exception):
     app.services.backup_jobs) ever need to catch."""
 
 
-def _sqlite_path() -> Path:
-    """Extract the DB file path from DATABASE_URL. Backup/restore only
-    ever run against SQLite in Phase 1 -- Phase 2 adds a parallel
-    pg_dump/pg_restore-based path once Postgres lands (CLAUDE.md
-    section 3)."""
-    database_url = require_setting(get_settings().database_url, "DATABASE_URL")
-    url = make_url(database_url)
-    if url.get_backend_name() != "sqlite" or not url.database:
-        msg = f"Backup/restore requires a SQLite DATABASE_URL, got: {database_url}"
+def _require_postgres(database_url: str) -> None:
+    if not database_url.startswith("postgresql"):
+        msg = f"Backup/restore requires a PostgreSQL DATABASE_URL, got: {database_url}"
         raise BackupError(msg)
-    return Path(url.database)
+
+
+def _resolve_pg_tool(name: str) -> str:
+    path = shutil.which(name)
+    if path is None:
+        msg = f"'{name}' not found in PATH. Install postgresql-client."
+        raise BackupError(msg)
+    return path
+
+
+def _parse_db_url(database_url: str) -> tuple[str, str, str, int, str]:
+    """Return (host, username, password, port, dbname).
+
+    Uses SQLAlchemy's own connection-string parser (the same one
+    create_engine(DATABASE_URL) uses elsewhere in this app) rather than
+    urllib.parse.urlparse -- the latter treats the first '/' after '://'
+    as the start of the path, so a password containing '/' (common in
+    randomly-generated passwords) makes it misparse the whole netloc.
+    """
+    url = make_url(database_url)
+    return (
+        url.host or "localhost",
+        url.username or "",
+        url.password or "",
+        url.port or 5432,
+        url.database or "",
+    )
+
+
+def _build_pg_env(password: str) -> dict[str, str]:
+    return {**os.environ, "PGPASSWORD": password}
+
+
+def _run_pg_subprocess(
+    args: list[str], env: dict[str, str], tool_name: str
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a pg_dump/pg_restore/psql subprocess.
+
+    On failure, raises BackupError with the tool's actual stderr -- a bare
+    subprocess.CalledProcessError hides stderr from the caller, which makes
+    a disaster-recovery script undebuggable exactly when it matters most.
+    """
+    try:
+        return subprocess.run(args, capture_output=True, env=env, check=True)  # noqa: S603
+    except subprocess.CalledProcessError as exc:
+        stderr = (
+            exc.stderr.decode("utf-8", errors="replace").strip()
+            if exc.stderr
+            else "(no stderr captured)"
+        )
+        msg = f"{tool_name} failed (exit {exc.returncode}): {stderr}"
+        raise BackupError(msg) from exc
+
+
+def run_backup(*, manual: bool = False) -> str:
+    """Dump the Postgres database (pg_dump --format=custom), upload to Koofr.
+
+    manual=True tags the filename with a "-manual" suffix, distinguishing
+    ad-hoc backups (admin-triggered API call, CLI script) from the ones the
+    scheduled backup_koofr job produces unsuffixed -- 1:1 vb-api's
+    run_backup(manual=...).
+
+    Returns the uploaded archive's filename. Raises BackupError on any
+    failure -- nothing is left behind on Koofr on failure, the upload is
+    the last step.
+    """
+    database_url = require_setting(get_settings().database_url, "DATABASE_URL")
+    _require_postgres(database_url)
+    host, user, password, port, dbname = _parse_db_url(database_url)
+
+    timestamp = local_now().strftime(_TIMESTAMP_FORMAT)
+    suffix = "-manual" if manual else ""
+    archive_name = f"{get_settings().app_environment}-{timestamp}{suffix}.dump"
+
+    logger.info("Creating pg_dump snapshot: %s", archive_name)
+    pg_dump = _resolve_pg_tool("pg_dump")
+    result = _run_pg_subprocess(
+        [
+            pg_dump,
+            "--format=custom",
+            f"--host={host}",
+            f"--port={port}",
+            f"--username={user}",
+            f"--dbname={dbname}",
+        ],
+        env=_build_pg_env(password),
+        tool_name="pg_dump",
+    )
+
+    logger.info("Uploading backup to Koofr: %s", archive_name)
+    _upload_to_koofr(archive_name, result.stdout)
+
+    logger.info("Backup complete: %s", archive_name)
+    return archive_name
+
+
+def _upload_to_koofr(filename: str, data: bytes) -> None:
+    user, password = _koofr_auth()
+    try:
+        response = requests.put(
+            _koofr_url(filename), data=data, auth=(user, password), timeout=120
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        msg = f"Koofr upload failed for {filename}: {exc}"
+        raise BackupError(msg) from exc
 
 
 def _koofr_auth() -> tuple[str, str]:
@@ -102,69 +207,6 @@ def _koofr_url(filename: str = "") -> str:
     base = settings.koofr_base_uri.rstrip("/")
     path = settings.koofr_backup_path.strip("/")
     return f"{base}/{path}/{filename}" if filename else f"{base}/{path}/"
-
-
-def _backup_sqlite_file(source_path: Path, dest_path: Path) -> None:
-    """Consistent online snapshot via sqlite3's own C-level backup API
-    (Connection.backup()) -- functionally identical to Legacy's
-    `sqlite3 <db> ".backup <copy>"` CLI call, but native Python: no
-    subprocess, no shell-escaping, no dependency on the sqlite3 CLI binary
-    being present in the prod image."""
-    source_conn = sqlite3.connect(source_path)
-    try:
-        dest_conn = sqlite3.connect(dest_path)
-        try:
-            source_conn.backup(dest_conn)
-        finally:
-            dest_conn.close()
-    finally:
-        source_conn.close()
-
-
-def run_backup(*, manual: bool = False) -> str:
-    """Create a consistent SQLite snapshot, tar.gz it, upload to Koofr.
-
-    manual=True tags the filename with a "-manual" suffix, distinguishing
-    ad-hoc backups (admin-triggered API call, CLI script) from the ones the
-    scheduled backup_koofr job produces unsuffixed -- 1:1 vb-api's
-    run_backup(manual=...).
-
-    Returns the uploaded archive's filename. Raises BackupError on any
-    failure -- nothing is left behind on Koofr on failure, the upload is
-    the last step.
-    """
-    source_path = _sqlite_path()
-    timestamp = local_now().strftime(_TIMESTAMP_FORMAT)
-    suffix = "-manual" if manual else ""
-    archive_name = f"{get_settings().app_environment}-{timestamp}{suffix}.tar.gz"
-
-    with tempfile.TemporaryDirectory(prefix="osa-backup-") as tmp_dir:
-        tmp_db_copy = Path(tmp_dir) / source_path.name
-        tmp_archive = Path(tmp_dir) / archive_name
-
-        logger.info("Creating consistent SQLite snapshot: %s", archive_name)
-        _backup_sqlite_file(source_path, tmp_db_copy)
-
-        with tarfile.open(tmp_archive, "w:gz") as tar:
-            tar.add(tmp_db_copy, arcname=source_path.name)
-
-        logger.info("Uploading backup to Koofr: %s", archive_name)
-        _upload_to_koofr(archive_name, tmp_archive.read_bytes())
-
-    logger.info("Backup complete: %s", archive_name)
-    return archive_name
-
-
-def _upload_to_koofr(filename: str, data: bytes) -> None:
-    user, password = _koofr_auth()
-    try:
-        response = requests.put(
-            _koofr_url(filename), data=data, auth=(user, password), timeout=120
-        )
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        msg = f"Koofr upload failed for {filename}: {exc}"
-        raise BackupError(msg) from exc
 
 
 def list_backups(*, stage: str | None = None) -> list[str]:
@@ -299,27 +341,75 @@ def _delete_from_koofr(filename: str) -> None:
         raise BackupError(msg) from exc
 
 
-def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
-    """Download a Koofr backup and atomically replace the local SQLite file.
+def _wipe_public_schema(
+    host: str, user: str, password: str, port: int, dbname: str
+) -> None:
+    """Drop and recreate the 'public' schema before a full restore.
 
-    Extracts into a temp directory INSIDE the target file's own parent
-    directory (not the system temp dir) so the final swap is a same-
-    filesystem os.replace() -- a real atomic rename, not just a copy that
-    could leave a half-written file behind on a crash.
+    pg_restore --clean computes DROP order from the dump's dependency
+    graph, which can get self-referencing/cross foreign keys wrong -- it
+    then aborts that one DROP with "cannot drop constraint ... because
+    other objects depend on it", and pg_restore's default error-tolerant
+    behavior silently continues past the failure, leaving the target
+    schema in an inconsistent, partially-restored state. Wiping the schema
+    upfront and restoring without --clean sidesteps the ordering problem
+    entirely -- there is nothing left to drop, so no DROP order can ever
+    be wrong. 1:1 vb-api's own fix for the identical failure mode
+    (observed there in practice against a real production dump).
+
+    DROP SCHEMA needs an ACCESS EXCLUSIVE lock, which any other session
+    with an open transaction on this database can block. Terminating every
+    other session first makes lock acquisition deterministic instead of a
+    timing race -- any session still using the old schema is about to get
+    errors the instant it's dropped anyway. The scheduler's own
+    advisory-lock-holding connection (see _acquire_scheduler_lock() in
+    app.core.scheduler) is deliberately spared -- it never touches a
+    table, so it can never conflict with DROP SCHEMA, and terminating it
+    would silently stop this worker's scheduled jobs until the next
+    restart. lock_timeout is a safety net for a new connection arriving in
+    the brief window between the terminate and the DROP SCHEMA -- a fast,
+    clearly logged failure instead of an unbounded hang.
+    """
+    psql = _resolve_pg_tool("psql")
+    _run_pg_subprocess(
+        [
+            psql,
+            f"--host={host}",
+            f"--port={port}",
+            f"--username={user}",
+            f"--dbname={dbname}",
+            "-c",
+            (
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = current_database() "
+                "AND pid != pg_backend_pid() "
+                "AND query NOT ILIKE '%pg_try_advisory_lock%'; "
+                "SET lock_timeout = '5s'; DROP SCHEMA public CASCADE; "
+                "CREATE SCHEMA public;"
+            ),
+        ],
+        env=_build_pg_env(password),
+        tool_name="psql",
+    )
+
+
+def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
+    """Download a Koofr backup and restore it into the live Postgres database.
 
     Requires force=True when APP_ENVIRONMENT=production -- a restore
     overwrites the live database.
 
-    Calls engine.dispose() after the swap: app.db.database's engine has no
-    poolclass=NullPool override, so SQLAlchemy's default QueuePool for a
-    file-based SQLite URL keeps connections open across requests. A pooled
-    connection opened before the swap stays bound to the OLD (now unlinked)
-    inode until it's actually closed -- dispose() drops every pooled
-    connection so the next request opens a fresh one against the new file.
-    Cheap and idempotent for the CLI script call site (scripts/restore_db.py
-    never touches this engine), essential for the in-app trigger/job call
-    sites added for the downsync feature.
+    Calls engine.dispose() after the restore: _wipe_public_schema() above
+    terminates every other session on this database (except the
+    scheduler's advisory-lock connection), including any this app's own
+    connection pool was holding idle. pool_pre_ping=True (see
+    app.db.database) would eventually catch and transparently replace each
+    of those on next use anyway, but disposing the whole pool immediately
+    is simpler than waiting for that to happen one connection at a time.
     """
+    database_url = require_setting(get_settings().database_url, "DATABASE_URL")
+    _require_postgres(database_url)
+
     if get_settings().app_environment == "production" and not force:
         msg = (
             "Restore in production requires explicit force=True. "
@@ -338,7 +428,6 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
         msg = f"'{backup_name}' is not a valid backup filename."
         raise BackupError(msg)
 
-    target_path = _sqlite_path()
     user, password = _koofr_auth()
     try:
         response = requests.get(
@@ -349,18 +438,29 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
         msg = f"Koofr download failed for {backup_name}: {exc}"
         raise BackupError(msg) from exc
 
-    with tempfile.TemporaryDirectory(
-        prefix=".osa-restore-", dir=target_path.parent
-    ) as tmp_dir:
-        archive_path = Path(tmp_dir) / backup_name
-        archive_path.write_bytes(response.content)
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(tmp_dir, filter="data")
-        extracted = Path(tmp_dir) / target_path.name
-        if not extracted.is_file():
-            msg = f"Archive {backup_name} did not contain {target_path.name}."
-            raise BackupError(msg)
-        extracted.replace(target_path)
+    host, db_user, db_password, port, dbname = _parse_db_url(database_url)
+    with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
+        tmp.write(response.content)
+        tmp_path = tmp.name
+
+    logger.info("Restoring DB from backup: %s", backup_name)
+    pg_restore = _resolve_pg_tool("pg_restore")
+    try:
+        _wipe_public_schema(host, db_user, db_password, port, dbname)
+        _run_pg_subprocess(
+            [
+                pg_restore,
+                f"--host={host}",
+                f"--port={port}",
+                f"--username={db_user}",
+                f"--dbname={dbname}",
+                tmp_path,
+            ],
+            env=_build_pg_env(db_password),
+            tool_name="pg_restore",
+        )
+    finally:
+        Path(tmp_path).unlink()
 
     engine.dispose()
     logger.info("Restore complete from: %s", backup_name)

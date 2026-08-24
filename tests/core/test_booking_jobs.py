@@ -140,7 +140,9 @@ def _make_log(
 
 class TestPurgeStaleBookingRequests:
     def test_deletes_requests_for_past_performances(
-        self, db_session: Session, make_user
+        self,
+        db_session: Session,
+        make_user,
     ):
         performance_id = _make_performance(db_session)
         _move_to_past(db_session, performance_id)
@@ -161,7 +163,9 @@ class TestPurgeStaleBookingRequests:
         assert remaining == []
 
     def test_keeps_requests_for_future_performances(
-        self, db_session: Session, make_user
+        self,
+        db_session: Session,
+        make_user,
     ):
         performance_id = _make_performance(db_session)
         user = make_user()
@@ -310,7 +314,9 @@ class TestLatestUnnotifiedEntries:
 
 class TestNotifyUpcomingBookingStatus:
     def test_sends_one_mail_per_user_and_marks_notified(
-        self, db_session: Session, make_user
+        self,
+        db_session: Session,
+        make_user,
     ):
         performance_id = _make_performance(db_session)
         user = make_user()
@@ -326,22 +332,28 @@ class TestNotifyUpcomingBookingStatus:
         with patch("app.core.mailer._send_message") as mock_send:
             booking_jobs.notify_upcoming_booking_status()
 
-        # Runs against the whole (shared, non-hermetic-across-tests) DB by
-        # design -- assert this user's own call happened, not an exact
-        # total call count, since other tests' leftover verified users
-        # with pending notifications may legitimately coexist.
+        # Asserts this user's own call happened, not an exact total call
+        # count -- conftest.py's SessionLocal patch routes the job through
+        # this test's own per-test transaction, so it only ever sees this
+        # test's own rows, but staying precise about "this user's call"
+        # rather than a bare count keeps the test's intent clear regardless.
         matching_calls = [
             call for call in mock_send.call_args_list if call.args[1] == [user.email]
         ]
         assert len(matching_calls) == 1
-        # notify_upcoming_booking_status() commits via its OWN SessionLocal()
+        # notify_upcoming_booking_status() commits via its own SessionLocal()
+        # (patched to the same session as db_session here, see conftest.py)
         # -- db_session already has `log` in its identity map from creating
         # it above, so a plain re-query would return the stale cached
         # object without expire() forcing an actual re-SELECT.
         db_session.expire(log)
         assert log.notified_at is not None
 
-    def test_skips_users_without_verified_email(self, db_session: Session, make_user):
+    def test_skips_users_without_verified_email(
+        self,
+        db_session: Session,
+        make_user,
+    ):
         performance_id = _make_performance(db_session)
         user = make_user(verified=False)
         _make_log(
@@ -356,11 +368,10 @@ class TestNotifyUpcomingBookingStatus:
 
         assert all(call.args[1] != [user.email] for call in mock_send.call_args_list)
 
-    def test_noop_when_no_upcoming_performances_have_logs(self, db_session: Session):
+    def test_noop_when_no_upcoming_performances_have_logs(self):
         # Doesn't create any data of its own -- only asserts this doesn't
-        # crash against whatever (possibly empty, possibly not) state the
-        # shared test DB happens to be in. Call-count assertions here would
-        # be flaky against other tests' leftover data (same reasoning as
-        # the two tests above).
+        # crash. conftest.py's SessionLocal patch routes the job through
+        # this test's own (empty, freshly-rolled-back-per-test) transaction,
+        # so there's no leftover-data flakiness concern here anymore.
         with patch("app.core.mailer._send_message"):
             booking_jobs.notify_upcoming_booking_status()

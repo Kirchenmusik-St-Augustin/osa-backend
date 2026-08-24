@@ -2,9 +2,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import Session
 
-from app.db.database import engine
 from app.db.models.performance import Performance
 
 
@@ -71,16 +70,21 @@ def _make_location(client, make_user) -> int:
     return response.json()["id"]
 
 
-def _move_to_past(performance_id: int) -> None:
+def _move_to_past(db_session: Session, performance_id: int) -> None:
     """There is no API path to move an existing performance's schedule
     into the past (updates are themselves schedule-validated) -- forcing
-    it directly at the DB layer mirrors the equivalent service-level test."""
-    with OrmSession(engine) as session:
-        performance = session.execute(
-            select(Performance).where(Performance.id == performance_id)
-        ).scalar_one()
-        performance.schedule = datetime.now(UTC) - timedelta(days=1)
-        session.commit()
+    it directly at the DB layer mirrors the equivalent service-level test.
+
+    Uses the test's own db_session (not an independent Session(engine)) so
+    the mutation is visible to the SAME session client's requests are
+    routed through via conftest.py's override_get_db() -- a separate
+    session bound to its own connection would be isolated behind the
+    test's still-open outer transaction and never see this row at all."""
+    performance = db_session.execute(
+        select(Performance).where(Performance.id == performance_id)
+    ).scalar_one()
+    performance.schedule = datetime.now(UTC) - timedelta(days=1)
+    db_session.commit()
 
 
 def _base_payload(
@@ -216,7 +220,7 @@ class TestFormData:
 
 
 class TestPastLock:
-    def test_update_past_performance_returns_403(self, client, make_user):
+    def test_update_past_performance_returns_403(self, client, make_user, db_session):
         headers = _auth_headers(client, make_user)
         composer_id = _make_composer(client, headers)
         work_id = _make_ordinariumwork(client, headers, composer_id)
@@ -226,7 +230,7 @@ class TestPastLock:
         )
         performance_id = create_response.json()["id"]
 
-        _move_to_past(performance_id)
+        _move_to_past(db_session, performance_id)
 
         response = client.put(
             f"/performances/{performance_id}",

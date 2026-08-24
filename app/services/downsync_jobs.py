@@ -1,7 +1,7 @@
 """Scheduled downsync job, registered in app.core.scheduler.
 
 Non-production counterpart to backup_jobs.job_backup_koofr: nightly restores
-the latest PRODUCTION backup into this stage's own local SQLite file, so
+the latest PRODUCTION backup into this stage's own local database, so
 dev/test/qa stages regularly get refreshed with real production data.
 
 Like job_backup_koofr, this catches its own errors (only BackupError, per

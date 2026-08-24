@@ -1,12 +1,23 @@
+import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.db.database import get_db
 
 
 def test_get_db_session_enforces_foreign_keys():
+    """Postgres enforces FK constraints natively and unconditionally --
+    unlike SQLite (Phase 1), there is no per-connection PRAGMA to check.
+    user_roles is the one table with a real ForeignKey (see
+    app/db/models/user_role.py); a role_id that doesn't exist must be
+    rejected, not silently inserted."""
+    insert_orphan = text(
+        "INSERT INTO user_roles (user_id, role_id) VALUES (:user_id, :role_id)"
+    )
     for session in get_db():
-        result = session.execute(text("PRAGMA foreign_keys"))
-        assert result.scalar() == 1
+        with pytest.raises(IntegrityError, match="foreign key constraint"):
+            session.execute(insert_orphan, {"user_id": -1, "role_id": -1})
+        session.rollback()
         break
 
 

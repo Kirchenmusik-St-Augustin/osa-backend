@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import extract, select
 from sqlalchemy.orm import Session
 
 from app.db.models.sent_email import SentEmail
@@ -12,12 +12,16 @@ class SentEmailNotFoundError(Exception):
 def list_for_month(db: Session, year: int, month: int) -> list[SentEmailShortOutput]:
     """1:1 Legacy's `SentEmail::ofMonth()` -- filters/sorts by `updated_at`
     (not `created_at`), same real-indexed-query technique as
-    performance_service.list_performances_for_month()'s strftime match."""
-    month_str = f"{year:04d}-{month:02d}"
+    performance_service.list_performances_for_month()'s year/month
+    extract() match (was SQLite's `strftime('%Y-%m', ...)` before the
+    Phase 2 Postgres cutover)."""
     emails = (
         db.execute(
             select(SentEmail)
-            .where(func.strftime("%Y-%m", SentEmail.updated_at) == month_str)
+            .where(
+                extract("year", SentEmail.updated_at) == year,
+                extract("month", SentEmail.updated_at) == month,
+            )
             .order_by(SentEmail.updated_at.desc())
         )
         .scalars()

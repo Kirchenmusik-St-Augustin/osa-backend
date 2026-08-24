@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI script to restore the SQLite database from a Koofr WebDAV backup.
+"""CLI script to restore the database from a Koofr WebDAV backup.
 
 Usage:
     python scripts/restore_db.py [--list] [--backup-name NAME] [--force]
@@ -25,7 +25,7 @@ from app.services.backup_service import (
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Restore the SQLite DB from a Koofr WebDAV backup.",
+        description="Restore the DB from a Koofr WebDAV backup.",
     )
     parser.add_argument(
         "--backup-name",

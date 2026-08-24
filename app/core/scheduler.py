@@ -286,6 +286,22 @@ def stop_scheduler() -> None:
     scheduler.remove_listener(_log_job_outcome)
 
     if _scheduler_lock_conn is not None:
+        # pg_advisory_lock is session-scoped at the Postgres server level,
+        # not tied to this SQLAlchemy Connection object -- .close() alone
+        # only returns the underlying DBAPI connection to the pool for
+        # reuse, it does not terminate the server-side session, so the
+        # lock would stay held there indefinitely (irrelevant in
+        # production, where this process's connection pool -- and thus
+        # every session in it -- only ever goes away when the process
+        # itself exits; it matters here because tests call
+        # start_scheduler()/stop_scheduler() repeatedly against one
+        # long-lived pool within a single process). Explicitly unlocking
+        # first releases it regardless of what happens to the connection
+        # afterward.
+        if engine.dialect.name == "postgresql":
+            _scheduler_lock_conn.execute(
+                text("SELECT pg_advisory_unlock(:key)"), {"key": _SCHEDULER_LOCK_KEY}
+            )
         _scheduler_lock_conn.close()
         _scheduler_lock_conn = None
 

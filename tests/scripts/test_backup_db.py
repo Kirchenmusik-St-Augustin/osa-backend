@@ -10,7 +10,7 @@ class TestMainList:
     def test_prints_each_backup_on_its_own_line(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ):
-        monkeypatch.setattr(backup_db, "list_backups", lambda: ["a.tar.gz", "b.tar.gz"])
+        monkeypatch.setattr(backup_db, "list_backups", lambda: ["a.dump", "b.dump"])
         monkeypatch.setattr(sys, "argv", ["backup_db.py", "--list"])
 
         with pytest.raises(SystemExit) as exc_info:
@@ -18,8 +18,8 @@ class TestMainList:
 
         assert exc_info.value.code == 0
         out = capsys.readouterr().out
-        assert "a.tar.gz" in out
-        assert "b.tar.gz" in out
+        assert "a.dump" in out
+        assert "b.dump" in out
 
     def test_reports_when_no_backups_exist(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -45,29 +45,29 @@ class TestMainBackup:
             cleanup_called = True
             return []
 
-        monkeypatch.setattr(backup_db, "run_backup", lambda: "new.tar.gz")
+        monkeypatch.setattr(backup_db, "run_backup", lambda: "new.dump")
         monkeypatch.setattr(backup_db, "cleanup_old_backups", fake_cleanup)
         monkeypatch.setattr(sys, "argv", ["backup_db.py"])
 
         backup_db.main()
 
-        assert "new.tar.gz" in capsys.readouterr().out
+        assert "new.dump" in capsys.readouterr().out
         assert cleanup_called is False
 
     def test_cleanup_flag_runs_cleanup_afterward(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ):
-        monkeypatch.setattr(backup_db, "run_backup", lambda: "new.tar.gz")
+        monkeypatch.setattr(backup_db, "run_backup", lambda: "new.dump")
         monkeypatch.setattr(
-            backup_db, "cleanup_old_backups", lambda **_kwargs: ["old.tar.gz"]
+            backup_db, "cleanup_old_backups", lambda **_kwargs: ["old.dump"]
         )
         monkeypatch.setattr(sys, "argv", ["backup_db.py", "--cleanup"])
 
         backup_db.main()
 
         out = capsys.readouterr().out
-        assert "new.tar.gz" in out
-        assert "old.tar.gz" in out
+        assert "new.dump" in out
+        assert "old.dump" in out
 
     def test_cleanup_dry_run_is_passed_through(self, monkeypatch: pytest.MonkeyPatch):
         received: dict[str, bool] = {}
@@ -76,7 +76,7 @@ class TestMainBackup:
             received["dry_run"] = dry_run
             return []
 
-        monkeypatch.setattr(backup_db, "run_backup", lambda: "new.tar.gz")
+        monkeypatch.setattr(backup_db, "run_backup", lambda: "new.dump")
         monkeypatch.setattr(backup_db, "cleanup_old_backups", fake_cleanup)
         monkeypatch.setattr(sys, "argv", ["backup_db.py", "--cleanup", "--dry-run"])
 

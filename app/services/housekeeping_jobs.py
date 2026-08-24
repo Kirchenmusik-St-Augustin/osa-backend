@@ -32,8 +32,17 @@ def purge_expired_password_reset_tokens() -> None:
     cutoff = datetime.now(UTC) - timedelta(minutes=settings.password_reset_ttl_minutes)
     db = SessionLocal()
     try:
+        # synchronize_session=False: this bulk DELETE never needs to keep
+        # in-memory ORM objects in sync afterward (the session is closed
+        # right below anyway) -- the default "evaluate" strategy would
+        # otherwise try to Python-side re-check the WHERE clause against
+        # any already-loaded PasswordResetToken in this session's identity
+        # map, comparing the naive `created_at` column against `cutoff`
+        # (tz-aware) and raising TypeError, instead of letting Postgres
+        # itself do the comparison in SQL.
         db.execute(
-            delete(PasswordResetToken).where(PasswordResetToken.created_at <= cutoff)
+            delete(PasswordResetToken).where(PasswordResetToken.created_at <= cutoff),
+            execution_options={"synchronize_session": False},
         )
         db.commit()
     finally:
@@ -46,7 +55,13 @@ def purge_old_request_logs() -> None:
     cutoff = datetime.now(UTC) - timedelta(days=_REQUEST_LOG_RETENTION_DAYS)
     db = SessionLocal()
     try:
-        db.execute(delete(RequestLog).where(RequestLog.created_at <= cutoff))
+        # synchronize_session=False -- see purge_expired_password_reset_
+        # tokens() above for why (identical naive-column-vs-aware-cutoff
+        # TypeError risk from the default "evaluate" strategy otherwise).
+        db.execute(
+            delete(RequestLog).where(RequestLog.created_at <= cutoff),
+            execution_options={"synchronize_session": False},
+        )
         db.commit()
     finally:
         db.close()
