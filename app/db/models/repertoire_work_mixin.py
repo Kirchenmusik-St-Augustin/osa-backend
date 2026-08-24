@@ -13,7 +13,7 @@ class RepertoireWorkColumns:
     `artist_id` is a plain int, not a ForeignKey: the real legacy schema
     has zero FK constraints anywhere (Legacy enforces referential
     integrity purely at the application level), so the structural 1:1
-    transfer keeps that exactly, per CLAUDE.md's structural-parity
+    transfer keeps that exactly, per the project's structural-parity
     mandate."""
 
     id: Mapped[int] = mapped_column(primary_key=True)

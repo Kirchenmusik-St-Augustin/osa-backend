@@ -539,7 +539,7 @@ class TestQueryCount:
     ):
         """Regression guard for N+1 in list_coreelements(): a plain
         `SELECT ... ORDER BY` must issue the same number of statements
-        regardless of how many rows come back (CLAUDE.md testing_constraints)."""
+        regardless of how many rows come back."""
         headers = _auth_headers(client, make_user)
 
         client.post(

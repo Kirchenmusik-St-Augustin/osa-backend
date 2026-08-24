@@ -93,9 +93,9 @@ def _write_log_entry(
 ) -> None:
     """The one synchronous, DB-touching unit of work per request -- always
     invoked through `run_in_threadpool()` by the middleware below so it
-    never blocks the event loop (CLAUDE.md: async handlers must never
-    block; a Starlette middleware, unlike a sync FastAPI route function,
-    does NOT get that offload automatically)."""
+    never blocks the event loop (async handlers must never block; a
+    Starlette middleware, unlike a sync FastAPI route function, does NOT
+    get that offload automatically)."""
     db: Session = SessionLocal()
     try:
         user_id = _resolve_user_id(db, auth_header)

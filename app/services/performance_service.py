@@ -441,8 +441,8 @@ def _build_proprium_by_performance(
 ) -> dict[int, list[PerformancePropriumOutput]]:
     """Batched across a whole list of performances -- an N+1-safe building
     block for both the single-performance get_proprium() below and the
-    calendar's list_performances_for_month() (CLAUDE.md testing_constraints:
-    query count must not scale with the number of performances returned)."""
+    calendar's list_performances_for_month() -- query count must not scale
+    with the number of performances returned."""
     result: dict[int, list[PerformancePropriumOutput]] = {
         pid: [] for pid in performance_ids
     }
@@ -572,7 +572,7 @@ class PerformanceBatchEntry:
     booking_service.get_upcoming_requests_and_bookings_for_user() (Schritt
     7) both need to enrich a raw Performance row -- extracted so the two
     N+1-safe batch loaders share ONE implementation instead of duplicating
-    it (CLAUDE.md: striktes DRY im Backend)."""
+    it."""
 
     location: PerformanceLocationOutput
     ordinariumwork_id: int

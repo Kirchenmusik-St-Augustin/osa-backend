@@ -27,7 +27,7 @@ class PersonalAccessToken(Base):
     callers keep reading/writing/querying meaningful names while the
     underlying row stays legacy-shaped. Integer PK, not UUID: kept as part
     of the structural 1:1 transfer -- UUID PKs are part of the not-yet-
-    started full schema redesign (CLAUDE.md section 3)."""
+    started full schema redesign."""
 
     __tablename__ = "personal_access_tokens"
     __table_args__ = (

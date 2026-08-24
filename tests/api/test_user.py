@@ -302,7 +302,7 @@ class TestNPlusOne:
         """Regression guard for N+1 in search_users(): the search result is
         a flat id+label projection (no per-row position/role/oauth2 detail
         attached), so the query count must stay the same regardless of how
-        many rows come back (CLAUDE.md testing_constraints)."""
+        many rows come back."""
         headers = _auth_headers(client, make_user)
         marker = _unique("Vielzahl")
 

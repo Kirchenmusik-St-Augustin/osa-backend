@@ -7,7 +7,7 @@ purpose is safety-netting the production database must never itself
 prevent the scheduler from continuing to fire other jobs, and
 backup_service.BackupError already carries a far more actionable message
 than APScheduler's generic "job errored" log line. Only BackupError is
-caught -- CLAUDE.md still bans generic exception handling; this narrows to
+caught -- generic exception handling is still banned; this narrows to
 the one exception type backup_service ever raises.
 """
 

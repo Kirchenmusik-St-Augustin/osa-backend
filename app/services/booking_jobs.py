@@ -6,7 +6,7 @@ Depends ruff ban, see pyproject.toml's per-file-ignores and app.core.mailer
 for the same pattern). Exceptions are deliberately NOT caught here --
 APScheduler's own executor already logs a job's exception and keeps the
 scheduler itself running, so an extra `except Exception` here would only
-duplicate that (and CLAUDE.md bans generic exception handling anyway).
+duplicate that (and generic exception handling is banned anyway).
 """
 
 from collections.abc import Sequence

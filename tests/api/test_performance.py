@@ -285,7 +285,7 @@ class TestQueryCount:
     ):
         """Regression guard for N+1 in list_performances_for_month(): the
         query count must stay flat as more performances are added to the
-        same month (CLAUDE.md testing_constraints)."""
+        same month."""
         headers = _auth_headers(client, make_user)
         composer_id = _make_composer(client, headers)
         work_id = _make_ordinariumwork(client, headers, composer_id)

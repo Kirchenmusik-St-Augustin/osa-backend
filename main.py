@@ -66,8 +66,8 @@ async def _validation_error_handler(
     )
 
 
-# Pydantic's own error catalog is English-only -- CLAUDE.md requires fully
-# German validation text for the Auth-domain forms this slice introduces
+# Pydantic's own error catalog is English-only -- the project requires
+# fully German validation text for the Auth-domain forms this slice introduces
 # (User decision 2026-07-28, see the Schritt-2 plan). Only translates the
 # error `type`s Pydantic's built-in validation can actually produce; custom
 # field_validators (added in later Auth-domain schemas) already raise their
@@ -128,9 +128,9 @@ app.add_exception_handler(Exception, _unhandled_exception_handler)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Same-origin in the default deployment (see CLAUDE.md) -- never triggers
-# today. Kept real and typed so a future domain split is a pure config
-# change (CORS_ORIGINS), never a code change.
+# Same-origin in the default deployment -- never triggers today. Kept
+# real and typed so a future domain split is a pure config change
+# (CORS_ORIGINS), never a code change.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,

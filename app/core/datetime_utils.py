@@ -7,8 +7,8 @@ from pydantic import BeforeValidator
 from app.core.config import get_settings
 
 # Our DateTime columns are still declared without timezone=True (a real
-# TIMESTAMPTZ migration is a separate, not-yet-started step, see CLAUDE.md
-# section 3), so every datetime read back from the DB comes back naive,
+# TIMESTAMPTZ migration is a separate, not-yet-started step), so every
+# datetime read back from the DB comes back naive,
 # even though every write goes through datetime.now(UTC). Comparing a naive
 # value against an aware one raises TypeError, so any code comparing a
 # stored timestamp against "now" needs this normalization first.
