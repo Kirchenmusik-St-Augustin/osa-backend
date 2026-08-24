@@ -38,7 +38,7 @@ def test_get_table_data_stringifies_values_and_keeps_null_as_none(
 def test_get_table_data_pagination_pages_are_disjoint_and_total_is_stable(
     db_session, make_user
 ):
-    # Doesn't assume an empty table (the test-session SQLite file is shared
+    # Doesn't assume an empty table (the test-session database is shared
     # across test modules, see tests/conftest.py's module docstring) -- only
     # asserts pagination behaves correctly relative to whatever is there.
     for _ in range(4):

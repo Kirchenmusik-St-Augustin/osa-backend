@@ -7,8 +7,8 @@ from app.db.database import Base
 
 
 class RequestLog(Base):
-    """Mirrors legacy `request_logs` exactly (Phase 1, see
-    tests/fixtures/legacy_schema.sql for the exact column set). Written by
+    """Mirrors legacy `request_logs` exactly (structural 1:1 transfer, no
+    new FK constraints beyond what Legacy had). Written by
     `app.api.middleware.request_logging.RequestLoggingMiddleware` for every
     non-excluded request -- 1:1 legacy's `RequestLog::process()`, called
     from `RequestLogging` middleware's `terminate()` hook. `client_ips`/

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.services import user_position_service
 
-# tests/conftest.py's shared SQLite file has no per-test rollback -- small
+# tests/conftest.py's shared test DB has no per-test rollback -- small
 # fixed position_ids like 1/2/3 collide with residue left by other tests in
 # this same file (or a prior run), since position_id has no FK to a real
 # instruments/voices/choirjobs row in Phase 1. A monotonically increasing,

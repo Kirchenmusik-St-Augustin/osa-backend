@@ -295,7 +295,7 @@ class TestListDaysWithUsersForMonth:
         # scope applied to EVERY User query, including this whereIn lookup.
         # Surnames prefixed via _unique() -- `users` has a real UNIQUE
         # (surname, givenname) constraint, and the shared test-session
-        # SQLite DB isn't rolled back between tests/files.
+        # DB isn't rolled back between tests/files.
         third = make_user()
         third.surname, third.givenname = _unique("ZEHETNER"), "Anna"
         first = make_user()

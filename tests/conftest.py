@@ -1,13 +1,9 @@
 """Shared pytest fixtures.
 
 The test suite runs against a dedicated PostgreSQL database
-(TEST_DATABASE_URL, falling back to DATABASE_URL) -- not the throwaway
-SQLite file this project used through Phase 1 (see git history; that
-version built a fresh sqlite3 file per session from
-tests/fixtures/legacy_schema.sql, regenerated via
-scripts/dump_test_schema.py -- both now obsolete leftovers, not deleted
-yet, see the migration plan). Schema comes from the real Alembic
-migrations (command.upgrade(..., "head")), not
+(TEST_DATABASE_URL, falling back to DATABASE_URL) -- not a throwaway
+per-session file (see git history for that earlier fixture setup). Schema
+comes from the real Alembic migrations (command.upgrade(..., "head")), not
 Base.metadata.create_all() -- running the actual migration here is what
 would catch model/migration drift, not just a fixture rebuilt from the
 models themselves. Env vars are set at module level, BEFORE `main`/
@@ -17,9 +13,9 @@ time (E402 is already allowed project-wide for exactly this reason, see
 pyproject.toml).
 
 Per-test isolation is the vb-fastapi-vue sister project's transaction+
-SAVEPOINT pattern (db_session below), not the Phase-1-era "plain get_db()
+SAVEPOINT pattern (db_session below), not the earlier "plain get_db()
 generator, data persists across tests" model this suite used against its
-throwaway-per-session SQLite file. That original model relied on tests
+throwaway-per-session file. That original model relied on tests
 picking mutually-unique fixture data (uuid-suffixed emails, monotonic
 `itertools.count()` ids in a few files) to avoid collisions -- against
 real Postgres, with the full suite's actual connection/session traffic
@@ -91,10 +87,7 @@ from app.services import booking_jobs, housekeeping_jobs
 from main import app
 
 if engine.dialect.name != "postgresql":
-    msg = (
-        f"Test suite requires PostgreSQL, got dialect {engine.dialect.name!r}. "
-        "SQLite is no longer supported for tests as of the Phase 2 cutover."
-    )
+    msg = f"Test suite requires PostgreSQL, got dialect {engine.dialect.name!r}."
     raise RuntimeError(msg)
 
 _ALEMBIC_INI = Path(__file__).parent.parent / "alembic.ini"

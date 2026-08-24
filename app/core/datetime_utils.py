@@ -6,10 +6,12 @@ from pydantic import BeforeValidator
 
 from app.core.config import get_settings
 
-# SQLite has no timezone-aware storage -- every datetime read back from the
-# DB comes back naive, even though every write goes through datetime.now(UTC).
-# Comparing a naive value against an aware one raises TypeError, so any code
-# comparing a stored timestamp against "now" needs this normalization first.
+# Our DateTime columns are still declared without timezone=True (a real
+# TIMESTAMPTZ migration is a separate, not-yet-started step, see CLAUDE.md
+# section 3), so every datetime read back from the DB comes back naive,
+# even though every write goes through datetime.now(UTC). Comparing a naive
+# value against an aware one raises TypeError, so any code comparing a
+# stored timestamp against "now" needs this normalization first.
 #
 # This applies ONLY to genuinely UTC audit columns (created_at/updated_at,
 # token/session timestamps) that are actually written via datetime.now(UTC).
@@ -35,7 +37,7 @@ def ensure_tz_aware(dt: datetime | None) -> datetime | None:
 # schema -- use this instead of a bare `datetime` for every field mirroring
 # the categories above (created_at/updated_at, token/session timestamps,
 # email_verified_at/auth_lastsignal/deleted_at, ...). Runs ensure_tz_aware()
-# as a pydantic BeforeValidator, so the naive value SQLite hands back is
+# as a pydantic BeforeValidator, so the naive value the DB hands back is
 # stamped UTC before pydantic ever serializes it -- FastAPI's JSON response
 # then carries a real "+00:00" offset instead of an offset-free string.
 # Without this, the frontend's offset-aware formatters (dateFormat.ts's

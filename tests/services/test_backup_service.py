@@ -9,7 +9,7 @@ from app.services import backup_service
 from app.services.backup_service import BackupError
 
 PG_URL = "postgresql://user:secret@localhost:5432/testdb"
-SQLITE_URL = "sqlite:///test.db"
+NON_POSTGRES_URL = "mysql://user:secret@localhost:3306/testdb"
 FAKE_PG_DUMP = "/usr/bin/pg_dump"
 FAKE_PG_RESTORE = "/usr/bin/pg_restore"
 FAKE_PSQL = "/usr/bin/psql"
@@ -151,7 +151,7 @@ class TestRunBackup:
     def test_raises_for_a_non_postgres_database_url(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setenv("DATABASE_URL", SQLITE_URL)
+        monkeypatch.setenv("DATABASE_URL", NON_POSTGRES_URL)
 
         with pytest.raises(BackupError, match="PostgreSQL"):
             backup_service.run_backup()
@@ -598,7 +598,7 @@ class TestRunRestore:
     def test_raises_for_a_non_postgres_database_url(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setenv("DATABASE_URL", SQLITE_URL)
+        monkeypatch.setenv("DATABASE_URL", NON_POSTGRES_URL)
 
         with pytest.raises(BackupError, match="PostgreSQL"):
             backup_service.run_restore(

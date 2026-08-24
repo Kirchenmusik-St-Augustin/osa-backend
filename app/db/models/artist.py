@@ -7,9 +7,10 @@ from app.db.database import Base
 
 
 class Artist(Base):
-    """Mirrors legacy `artists` exactly (Phase 1 -- no renames, no schema
-    changes). `surname`/`givenname` are nullable in the real SQLite schema
-    even though app-level validation always requires them -- structural
+    """Mirrors legacy `artists` exactly (structural 1:1 transfer -- no
+    renames, no schema changes). `surname`/`givenname` are nullable in the
+    real legacy schema even though app-level validation always requires
+    them -- structural
     parity keeps the model nullable regardless (see coreelement's
     Location.address for the same pattern). `composer`/`conductor` are
     orthogonal boolean flags, not mutually exclusive (an Artist row can be

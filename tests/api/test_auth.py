@@ -167,7 +167,7 @@ def test_logout_success_clears_cookie(client, make_user):
 
 
 def test_me_returns_profile_with_permissions(client, make_user, db_session):
-    # The shared test-session SQLite DB has no per-test rollback -- the
+    # The shared test-session DB has no per-test rollback -- the
     # kill-switch assertion below counts ALL `sent_emails` rows, so it must
     # start from a clean table (same reasoning as test_mailer.py's
     # `_clear_sent_emails` fixture).

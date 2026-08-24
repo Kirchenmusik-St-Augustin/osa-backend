@@ -13,8 +13,7 @@ def list_for_month(db: Session, year: int, month: int) -> list[SentEmailShortOut
     """1:1 Legacy's `SentEmail::ofMonth()` -- filters/sorts by `updated_at`
     (not `created_at`), same real-indexed-query technique as
     performance_service.list_performances_for_month()'s year/month
-    extract() match (was SQLite's `strftime('%Y-%m', ...)` before the
-    Phase 2 Postgres cutover)."""
+    extract() match."""
     emails = (
         db.execute(
             select(SentEmail)

@@ -9,7 +9,7 @@ from app.services import coreelement_service
 
 def _unique(base: str = "Element") -> str:
     """Every test gets its own collision-free name -- tests/conftest.py's
-    shared SQLite file has no per-test rollback (1:1 make_user's uuid-based
+    shared test DB has no per-test rollback (1:1 make_user's uuid-based
     emails for the same reason), and coreelement names are globally unique
     per type, unlike Users."""
     return f"{base}-{uuid.uuid4().hex[:8]}"
@@ -354,7 +354,7 @@ class TestMoveCoreelement:
 
     def test_move_up_at_top_is_a_no_op(self, db_session: Session):
         """Whichever row is currently first for this type (regardless of
-        which test created it -- tests/conftest.py's shared SQLite file
+        which test created it -- tests/conftest.py's shared test DB
         has no per-test rollback), moving it further up must be a no-op."""
         coreelement_service.create_coreelement(
             db_session, CoreelementType.propriumelement, _request()

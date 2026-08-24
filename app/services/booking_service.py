@@ -742,8 +742,8 @@ def _popular_for_position(
 
     seen: set[int] = set()
     recent: list[PopularRecentUserOutput] = []
-    # Naive datetime.min, deliberately without tzinfo: SQLite round-trips
-    # every datetime column here as naive regardless of how it was written
+    # Naive datetime.min, deliberately without tzinfo: our DateTime columns
+    # round-trip every value as naive regardless of how it was written
     # (see app.core.datetime_utils.ensure_tz_aware for the same round-trip
     # caveat elsewhere) -- a tz-aware fallback would raise on comparison
     # against the real (naive) `updated_at` values instead of just sorting

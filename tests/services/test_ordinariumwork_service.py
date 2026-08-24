@@ -110,7 +110,7 @@ class TestGetAvailablePositions:
     def test_returns_instruments_and_voices_ordered_by_core_element_order(
         self, db_session: Session
     ):
-        # Shared SQLite test DB has no per-test rollback (see conftest.py) --
+        # Shared test DB has no per-test rollback (see conftest.py) --
         # other tests' Instrument/Voice rows persist across this whole
         # file, so assertions must check relative order/membership, not
         # exact list equality.

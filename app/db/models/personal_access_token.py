@@ -16,8 +16,8 @@ class PersonalAccessToken(Base):
     table stays byte-for-byte structurally identical to legacy (same
     columns, same nullability, same indexes, no FK -- legacy's own
     `tokenable_id` has none either, it's a polymorphic reference) so a
-    fresh prod SQLite copy can always be dropped straight into dev without
-    a schema patch, until the Phase 2 Postgres cutover. That means no new
+    fresh prod DB copy (see the downsync job) can always be dropped
+    straight into dev without a schema patch. That means no new
     columns and no renames -- legacy's generic/dead columns are repurposed
     instead: `tokenable_type` always holds the constant "User" (never
     branched on, same as legacy's own dead code never branched on it),
@@ -25,9 +25,9 @@ class PersonalAccessToken(Base):
     legacy) holds the refresh token hash, `expires_at` holds the refresh
     token's expiry. `user_id`/`refresh_token_hash` are hybrid properties so
     callers keep reading/writing/querying meaningful names while the
-    underlying row stays legacy-shaped. Integer PK, not UUID: Phase 1 keeps
-    SQLite-appropriate IDs project-wide, UUID PKs are Phase-2-only
-    (CLAUDE.md section 3, currently inactive)."""
+    underlying row stays legacy-shaped. Integer PK, not UUID: kept as part
+    of the structural 1:1 transfer -- UUID PKs are part of the not-yet-
+    started full schema redesign (CLAUDE.md section 3)."""
 
     __tablename__ = "personal_access_tokens"
     __table_args__ = (

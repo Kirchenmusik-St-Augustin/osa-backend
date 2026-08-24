@@ -660,10 +660,8 @@ def list_performances_for_month(
     there, not an anti-pattern to fix) -- relies on `schedule` always being
     written as a naive local wall-clock value (Settings.app_timezone, see
     app.core.datetime_utils.local_now()), never UTC-converted, so a plain
-    year+month match is reliable. Was SQLite's `strftime('%Y-%m', ...)`
-    before the Phase 2 Postgres cutover -- extract() compiles to each
-    dialect's native EXTRACT/date-part function instead of a single
-    SQLite-only one."""
+    year+month match is reliable. extract() compiles to each dialect's
+    native EXTRACT/date-part function, portable across database engines."""
     performances = (
         db.execute(
             select(Performance)

@@ -130,8 +130,8 @@ def authenticate_user(
     db: Session, email: str, password: str
 ) -> tuple[User | None, AuthFailureReason | Literal["ok"]]:
     """Case-sensitive email match, matching Legacy's actual DB comparison
-    (SQLite default BINARY collation, no COLLATE NOCASE on `users.email`) --
-    deliberately NOT lowercased here, unlike the throttle key above."""
+    (no case-insensitive collation on `users.email`) -- deliberately NOT
+    lowercased here, unlike the throttle key above."""
     result = db.execute(
         select(User)
         .options(selectinload(User.roles))

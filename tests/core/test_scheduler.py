@@ -43,8 +43,8 @@ def _ensure_scheduler_stopped():
 
 
 def test_acquire_scheduler_lock_succeeds_when_free():
-    # The test DB (see conftest.py) is Postgres as of the Phase 2 cutover --
-    # this is a real pg_try_advisory_lock() now, not the SQLite-era no-op.
+    # The test DB (see conftest.py) is Postgres, so this is a real
+    # pg_try_advisory_lock(), not a no-op.
     # _ensure_scheduler_stopped's teardown (stop_scheduler()) releases it
     # via an explicit pg_advisory_unlock() afterward, see app/core/
     # scheduler.py -- without that, the lock would stay held at the
