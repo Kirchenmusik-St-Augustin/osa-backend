@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from subprocess import CalledProcessError
 from unittest.mock import MagicMock
@@ -22,6 +23,23 @@ _FAKE_PG_TOOLS = {
 
 def _which_side_effect(name: str) -> str:
     return _FAKE_PG_TOOLS[name]
+
+
+def _fake_pg_subprocess_run(
+    calls: list[list[str]], *, row_count: bytes = b"5"
+) -> Callable[..., MagicMock]:
+    """Build a subprocess.run fake that records every call and answers
+    _verify_restore_populated()'s row-count query with `row_count` --
+    every other psql/pg_restore invocation gets a generic empty stdout,
+    matching what the real tools' non-SELECT statements return."""
+
+    def fake_run(args: list[str], **_kw: object) -> MagicMock:
+        calls.append(args)
+        if "SUM(n_live_tup)" in args[-1]:
+            return MagicMock(stdout=row_count, returncode=0)
+        return MagicMock(stdout=b"", returncode=0)
+
+    return fake_run
 
 
 class _FakeResponse:
@@ -422,8 +440,13 @@ class TestListBackups:
     def test_raises_when_propfind_fails(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.time, "sleep", lambda _seconds: None)
+
+        attempts = 0
 
         def fake_request(*_args: object, **_kwargs: object) -> _FakeResponse:
+            nonlocal attempts
+            attempts += 1
             msg = "timed out"
             raise requests.Timeout(msg)
 
@@ -431,6 +454,10 @@ class TestListBackups:
 
         with pytest.raises(BackupError, match="listing failed"):
             backup_service.list_backups()
+
+        # Proves the retry wrapper is actually wired in here, not a dead
+        # helper that only exists in isolation.
+        assert attempts == 3
 
     def test_sorts_correctly_across_pre_and_post_fix_names_despite_the_bounded_skew(
         self, monkeypatch: pytest.MonkeyPatch
@@ -505,6 +532,7 @@ class TestCleanupOldBackups:
     def test_raises_when_koofr_delete_fails(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.time, "sleep", lambda _seconds: None)
 
         old_name = "production-2000-01-01_00-00-00.dump"
         monkeypatch.setattr(backup_service, "list_backups", lambda: [old_name])
@@ -609,6 +637,7 @@ class TestRunRestore:
         monkeypatch.setenv("DATABASE_URL", PG_URL)
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.time, "sleep", lambda _seconds: None)
 
         def fake_get(*_args: object, **_kwargs: object) -> _FakeResponse:
             msg = "connection reset"
@@ -637,21 +666,51 @@ class TestRunRestore:
         monkeypatch.setattr(backup_service, "engine", _FakeEngine())
 
         calls: list[list[str]] = []
-
-        def fake_run(args: list[str], **_kw: object) -> MagicMock:
-            calls.append(args)
-            return MagicMock(stdout=b"", returncode=0)
-
-        monkeypatch.setattr(backup_service.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            backup_service.subprocess, "run", _fake_pg_subprocess_run(calls)
+        )
 
         backup_name = "production-2024-01-01_00-00-00.dump"
         result = backup_service.run_restore(backup_name=backup_name, force=True)
 
         assert result == backup_name
-        assert len(calls) == 2  # psql (wipe) then pg_restore
+        # psql (wipe), pg_restore, psql (ANALYZE), psql (row-count verify)
+        assert len(calls) == 4
         assert calls[0][0] == FAKE_PSQL
         assert "DROP SCHEMA public CASCADE" in calls[0][-1]
         assert calls[1][0] == FAKE_PG_RESTORE
+        assert calls[2][0] == FAKE_PSQL
+        assert calls[2][-1] == "ANALYZE;"
+        assert calls[3][0] == FAKE_PSQL
+        assert "SUM(n_live_tup)" in calls[3][-1]
+
+    def test_raises_when_the_restored_database_ends_up_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Regression guard: a pg_restore that exits 0 does not guarantee
+        any rows actually landed -- the sibling vb-fastapi-vue project hit
+        this in production, where an automated restore reported success
+        while leaving every table empty and nothing caught it."""
+        monkeypatch.setenv("DATABASE_URL", PG_URL)
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(status_code=200, content=b"x"),
+        )
+        monkeypatch.setattr(backup_service, "engine", _FakeEngine())
+        monkeypatch.setattr(
+            backup_service.subprocess,
+            "run",
+            _fake_pg_subprocess_run([], row_count=b"0"),
+        )
+
+        with pytest.raises(BackupError, match="zero rows"):
+            backup_service.run_restore(
+                backup_name="production-2024-01-01_00-00-00.dump", force=True
+            )
 
     def test_wipe_excludes_the_advisory_lock_holding_session(
         self, monkeypatch: pytest.MonkeyPatch
@@ -672,9 +731,7 @@ class TestRunRestore:
         )
         monkeypatch.setattr(backup_service, "engine", _FakeEngine())
         monkeypatch.setattr(
-            backup_service.subprocess,
-            "run",
-            lambda *_a, **_kw: MagicMock(stdout=b"", returncode=0),
+            backup_service.subprocess, "run", _fake_pg_subprocess_run([])
         )
 
         backup_service.run_restore(
@@ -717,9 +774,7 @@ class TestRunRestore:
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
         monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
         monkeypatch.setattr(
-            backup_service.subprocess,
-            "run",
-            lambda *_a, **_kw: MagicMock(stdout=b"", returncode=0),
+            backup_service.subprocess, "run", _fake_pg_subprocess_run([])
         )
         monkeypatch.setattr(backup_service, "engine", _FakeEngine())
 
@@ -783,9 +838,7 @@ class TestRunRestore:
             lambda *_a, **_kw: _FakeResponse(status_code=200, content=b"x"),
         )
         monkeypatch.setattr(
-            backup_service.subprocess,
-            "run",
-            lambda *_a, **_kw: MagicMock(stdout=b"", returncode=0),
+            backup_service.subprocess, "run", _fake_pg_subprocess_run([])
         )
 
         fake_engine = _FakeEngine()
@@ -819,3 +872,34 @@ class TestRunRestore:
             )
 
         assert fake_engine.disposed is False
+
+
+class TestRetryTransientKoofrRequest:
+    def test_succeeds_on_first_attempt(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(backup_service.time, "sleep", lambda _seconds: None)
+        operation = MagicMock(return_value="ok")
+
+        result = backup_service._retry_transient_koofr_request(operation)
+
+        assert result == "ok"
+        assert operation.call_count == 1
+
+    def test_retries_then_succeeds(self, monkeypatch: pytest.MonkeyPatch):
+        sleeps: list[float] = []
+        monkeypatch.setattr(backup_service.time, "sleep", sleeps.append)
+        operation = MagicMock(side_effect=[requests.ConnectionError("boom"), "ok"])
+
+        result = backup_service._retry_transient_koofr_request(operation)
+
+        assert result == "ok"
+        assert operation.call_count == 2
+        assert sleeps == [1.0]
+
+    def test_gives_up_after_exhausting_attempts(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(backup_service.time, "sleep", lambda _seconds: None)
+        operation = MagicMock(side_effect=requests.Timeout("timed out"))
+
+        with pytest.raises(requests.Timeout):
+            backup_service._retry_transient_koofr_request(operation)
+
+        assert operation.call_count == 3

@@ -38,6 +38,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree
@@ -133,6 +135,35 @@ def _run_pg_subprocess(
         )
         msg = f"{tool_name} failed (exit {exc.returncode}): {stderr}"
         raise BackupError(msg) from exc
+
+
+def _retry_transient_koofr_request[T](
+    operation: Callable[[], T], *, attempts: int = 3, base_delay: float = 1.0
+) -> T:
+    """Retry a Koofr WebDAV read/delete call a few times with exponential
+    backoff.
+
+    Guards against transient network blips and momentary 5xx responses on
+    the calls most exposed to them. Deliberately NOT applied to
+    _upload_to_koofr(): a failed backup upload is safe to simply fail and
+    retry the whole backup job on the next scheduled run, whereas a
+    restore/list/cleanup call failing mid-operation is the more disruptive
+    case worth smoothing over here.
+    """
+    for attempt in range(attempts - 1):
+        try:
+            return operation()
+        except requests.RequestException as exc:
+            delay = base_delay * (2**attempt)
+            logger.warning(
+                "Transient Koofr request error on attempt %d/%d, retrying in %.0fs: %s",
+                attempt + 1,
+                attempts,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    return operation()  # final attempt -- let any RequestException propagate
 
 
 def run_backup(*, manual: bool = False) -> str:
@@ -233,7 +264,8 @@ def list_backups(*, stage: str | None = None) -> list[str]:
         '<?xml version="1.0"?>'
         '<d:propfind xmlns:d="DAV:"><d:prop><d:getlastmodified/></d:prop></d:propfind>'
     )
-    try:
+
+    def _do_propfind() -> requests.Response:
         response = requests.request(
             "PROPFIND",
             _koofr_url(),
@@ -243,6 +275,10 @@ def list_backups(*, stage: str | None = None) -> list[str]:
             timeout=30,
         )
         response.raise_for_status()
+        return response
+
+    try:
+        response = _retry_transient_koofr_request(_do_propfind)
     except requests.RequestException as exc:
         msg = f"Koofr directory listing failed: {exc}"
         raise BackupError(msg) from exc
@@ -331,11 +367,16 @@ def cleanup_old_backups(*, dry_run: bool = False) -> list[str]:
 
 def _delete_from_koofr(filename: str) -> None:
     user, password = _koofr_auth()
-    try:
+
+    def _do_delete() -> requests.Response:
         response = requests.delete(
             _koofr_url(filename), auth=(user, password), timeout=30
         )
         response.raise_for_status()
+        return response
+
+    try:
+        _retry_transient_koofr_request(_do_delete)
     except requests.RequestException as exc:
         msg = f"Koofr delete failed for {filename}: {exc}"
         raise BackupError(msg) from exc
@@ -393,6 +434,58 @@ def _wipe_public_schema(
     )
 
 
+def _verify_restore_populated(
+    host: str, user: str, password: str, port: int, dbname: str
+) -> None:
+    """Raise BackupError if the just-restored database has zero rows.
+
+    A pg_restore that exits 0 does not guarantee any rows actually landed.
+    ANALYZE refreshes planner statistics immediately after the bulk load,
+    then this sums row-count estimates across every table in 'public' --
+    table-agnostic on purpose, this module has no business-domain
+    knowledge of which specific tables should hold data.
+    """
+    psql = _resolve_pg_tool("psql")
+    _run_pg_subprocess(
+        [
+            psql,
+            f"--host={host}",
+            f"--port={port}",
+            f"--username={user}",
+            f"--dbname={dbname}",
+            "-c",
+            "ANALYZE;",
+        ],
+        env=_build_pg_env(password),
+        tool_name="psql",
+    )
+    result = _run_pg_subprocess(
+        [
+            psql,
+            f"--host={host}",
+            f"--port={port}",
+            f"--username={user}",
+            f"--dbname={dbname}",
+            "--tuples-only",
+            "--no-align",
+            "-c",
+            (
+                "SELECT COALESCE(SUM(n_live_tup), 0)::bigint FROM"
+                " pg_stat_user_tables WHERE schemaname = 'public';"
+            ),
+        ],
+        env=_build_pg_env(password),
+        tool_name="psql",
+    )
+    total_rows = int(result.stdout.strip())
+    if total_rows == 0:
+        msg = (
+            "Restore completed but the database has zero rows across all "
+            "tables in 'public' -- treating this as a failed restore."
+        )
+        raise BackupError(msg)
+
+
 def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
     """Download a Koofr backup and restore it into the live Postgres database.
 
@@ -429,11 +522,16 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
         raise BackupError(msg)
 
     user, password = _koofr_auth()
-    try:
+
+    def _do_download() -> requests.Response:
         response = requests.get(
             _koofr_url(backup_name), auth=(user, password), timeout=120
         )
         response.raise_for_status()
+        return response
+
+    try:
+        response = _retry_transient_koofr_request(_do_download)
     except requests.RequestException as exc:
         msg = f"Koofr download failed for {backup_name}: {exc}"
         raise BackupError(msg) from exc
@@ -459,6 +557,7 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
             env=_build_pg_env(db_password),
             tool_name="pg_restore",
         )
+        _verify_restore_populated(host, db_user, db_password, port, dbname)
     finally:
         Path(tmp_path).unlink()
 
