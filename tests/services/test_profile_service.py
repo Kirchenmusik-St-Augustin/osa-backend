@@ -185,11 +185,11 @@ class TestUpdateProfile:
     def test_email_case_change_counts_as_changed_raw_comparison(
         self, db_session: Session, make_user
     ):
-        # Legacy compares raw strings (`!==`), not case-normalized -- see
-        # project_osa_migration_plan memory. Local-part casing specifically
-        # (not the domain): Pydantic's EmailStr already lowercases the
-        # domain itself, so only a local-part-only case change actually
-        # reaches update_profile() with a different string.
+        # Legacy compares raw strings (`!==`), not case-normalized.
+        # Local-part casing specifically (not the domain): Pydantic's
+        # EmailStr already lowercases the domain itself, so only a
+        # local-part-only case change actually reaches update_profile()
+        # with a different string.
         base = _unique("case")
         user = make_user(email=f"{base}@example.com", password=_CURRENT_PASSWORD)
         user.email_verified_at = datetime.now(UTC)

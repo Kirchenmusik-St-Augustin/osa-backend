@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 class Role(Base):
     """Mirrors legacy `roles` exactly (Phase 1 -- no renames, no schema
     changes). Five rows exist in practice: planner, disponent, billing,
-    scores, shorturls (see project_osa_legacy_domain_map memory) --
-    `administrator` is a separate boolean flag on `users`, not a role row."""
+    scores, shorturls -- `administrator` is a separate boolean flag on
+    `users`, not a role row."""
 
     __tablename__ = "roles"
 

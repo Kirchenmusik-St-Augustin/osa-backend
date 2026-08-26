@@ -16,7 +16,7 @@ class BookingLog(Base):
     `BookingLog::checkNotificationForUpcomingPerformances()`). Never cleaned
     up on Performance deletion -- Legacy has no FK/cleanup path either,
     historical log rows are meant to outlive the Performance they
-    describe (see project_osa_performance_domain_research memory)."""
+    describe."""
 
     __tablename__ = "booking_logs"
     __table_args__ = (

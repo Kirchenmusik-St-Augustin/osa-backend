@@ -51,10 +51,10 @@ def trigger_backup(
     """Manually trigger an immediate Koofr backup, independent of the daily
     scheduled job. Runs synchronously -- FastAPI runs sync `def` handlers in
     a threadpool, so the event loop isn't blocked; no background-job
-    infrastructure needed for this DB size (same reasoning as vb-api's
-    equivalent endpoint). Deliberately callable in every stage server-side
-    (the shared Koofr path makes a stage gate here pure UI convenience, not
-    a real security boundary) -- only the frontend restricts this to
+    infrastructure needed for this DB size. Deliberately callable in every
+    stage server-side (the shared Koofr path makes a stage gate here pure
+    UI convenience, not a real security boundary) -- only the frontend
+    restricts this to
     production; the permission check above still applies in every stage."""
     try:
         backup_name = run_backup(manual=True)

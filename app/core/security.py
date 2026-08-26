@@ -31,8 +31,7 @@ def verify_password(plain_password: str, hashed_password: str | None) -> bool:
     `$2a$`/`$2b$`. Both prefixes denote the exact same algorithm revision
     for any password that doesn't hit the historical 8-bit-vs-7-bit-high-bit
     edge case, so normalizing the prefix before verifying is safe and lets
-    every already-migrated Legacy user log in unchanged (1:1 vb-api
-    pattern)."""
+    every already-migrated Legacy user log in unchanged."""
     try:
         if not hashed_password:
             return False

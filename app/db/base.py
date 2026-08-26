@@ -3,7 +3,7 @@
 resolve string-based relationship() arguments (e.g. User.roles' primaryjoin
 referencing "UserRole" by name) regardless of which model happens to be
 queried first. Import this module once, early, at app startup (see
-main.py) -- 1:1 vb-api pattern (app/db/base.py)."""
+main.py)."""
 
 from app.db.database import Base  # noqa: F401
 from app.db.models.artist import Artist  # noqa: F401

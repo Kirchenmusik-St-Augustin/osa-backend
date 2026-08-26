@@ -108,6 +108,14 @@ variables live vault-encrypted in [`osa-deploy`](../osa-deploy)'s
 [Maintaining secrets](../osa-deploy/README.md#maintaining-secrets)
 section.
 
+`GOOGLE_CLIENT_ID` is Tier 3 on both sides (backend and
+[frontend](../osa-frontend/README.md#environment-variables)) — leave it
+empty/unset on a stage where Google's Developer Console isn't configured
+and Google Login is simply absent there: the frontend's button doesn't
+render, and `require_setting()` (see `app/core/config.py`) only raises if
+`/auth/google/callback`/`/auth/google/link` are somehow called anyway,
+never at boot.
+
 ## Scheduler
 
 Background jobs run via a single in-process APScheduler instance
@@ -296,6 +304,15 @@ dieselben Variablen liegen dort vault-verschlüsselt in
 [`osa-deploy`](../osa-deploy)s `secrets/<stage>/osa-backend.env.j2`, siehe
 den Abschnitt [Secrets pflegen](../osa-deploy/README.md#secrets-pflegen)
 in dessen README.
+
+`GOOGLE_CLIENT_ID` ist auf beiden Seiten Stufe 3 (Backend und
+[Frontend](../osa-frontend/README.md#umgebungsvariablen)) — auf einer
+Stage, auf der die Google Developer Console nicht konfiguriert ist,
+einfach leer/unset lassen, dann ist Google Login dort schlichtweg nicht
+vorhanden: der Button im Frontend rendert nicht, und `require_setting()`
+(siehe `app/core/config.py`) wirft nur dann, wenn
+`/auth/google/callback`/`/auth/google/link` trotzdem irgendwie aufgerufen
+werden — nie beim Boot.
 
 ## Scheduler
 

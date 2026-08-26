@@ -74,8 +74,7 @@ def update_profile(
         raise ProfileValidationError(errors)
 
     # Raw string comparison, not case-normalized -- 1:1 Legacy's
-    # `auth()->user()->email !== $validated['email']` (see
-    # project_osa_migration_plan memory).
+    # `auth()->user()->email !== $validated['email']`.
     email_changed = data.email != user.email
 
     if data.change_password and data.password:

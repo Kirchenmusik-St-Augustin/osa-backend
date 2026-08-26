@@ -12,8 +12,7 @@ class Booking(Base):
     `order` is the position within that position's cast list (0-based array
     index at save time) -- `order < performance_positions.quantity` is what
     makes a booking "regular" (cast) vs. "standby", computed in
-    booking_service, never stored as a column (see
-    project_osa_performance_domain_research memory).
+    booking_service, never stored as a column.
 
     Two unique constraints, both load-bearing: the four-column one is the
     obvious one-slot-per-user-per-position rule; the two-column

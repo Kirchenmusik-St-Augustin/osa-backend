@@ -59,7 +59,7 @@ def is_bookable(
     actually needs. Legacy runs a redundant, commutative
     `array_intersect($a,$b) || array_intersect($b,$a)` check per type --
     that duplication is not replicated here, a single intersection per type
-    is equivalent (see project_osa_migration_plan memory, Schritt 6 plan)."""
+    is equivalent."""
     return any(
         user_position_ids[position_type] & performance_position_ids[position_type]
         for position_type in POSITION_TYPES

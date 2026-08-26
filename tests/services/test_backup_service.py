@@ -90,8 +90,7 @@ class TestParseDbUrl:
         after '://' as the start of the path, so a password containing '/'
         (common in randomly-generated passwords, e.g. base64-derived) makes
         it misparse the whole netloc and raise `ValueError: Port could not
-        be cast to integer value` -- observed against a real production
-        password in the vb-api sister project. make_url() (the same parser
+        be cast to integer value`. make_url() (the same parser
         create_engine() already uses successfully for this DATABASE_URL
         elsewhere in the app) handles it correctly."""
         host, user, password, port, dbname = backup_service._parse_db_url(
@@ -688,9 +687,10 @@ class TestRunRestore:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         """Regression guard: a pg_restore that exits 0 does not guarantee
-        any rows actually landed -- the sibling vb-fastapi-vue project hit
-        this in production, where an automated restore reported success
-        while leaving every table empty and nothing caught it."""
+        any rows actually landed -- pg_restore's own error-tolerant default
+        can skip a failed statement without a non-zero exit, so an
+        automated restore can silently report success while leaving every
+        table empty."""
         monkeypatch.setenv("DATABASE_URL", PG_URL)
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")

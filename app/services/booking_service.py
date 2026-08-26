@@ -136,10 +136,9 @@ def _setup_position_ids(setup: PerformanceSetupOutput) -> dict[PositionType, set
 
 def _users_by_id(db: Session, user_ids: set[int]) -> dict[int, User]:
     """Includes soft-deleted users -- for displaying an EXISTING booking's/
-    request's user, which must never crash on a deactivated account (see
-    project_osa_performance_domain_research memory, Schritt-5
-    withTrashed()-consistency decision, applied here to every Booking
-    display in Schritt 6 too)."""
+    request's user, which must never crash on a deactivated account
+    (Schritt-5 withTrashed()-consistency decision, applied here to every
+    Booking display in Schritt 6 too)."""
     if not user_ids:
         return {}
     rows = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
@@ -292,8 +291,8 @@ def get_my_booking_status(
     """Public entry point for `GET /performances/{id}/my-booking-status` --
     deliberately its own small endpoint+service function (not a retrofit of
     performance_service.get_performance_detail) to keep performance_service
-    and booking_service decoupled at module-import time (see
-    project_osa_migration_plan memory, Schritt 6 plan B.4). Always reveals
+    and booking_service decoupled at module-import time (Schritt 6 plan
+    B.4). Always reveals
     the real status even for a past performance -- the Show page needs to
     render the self-service badge/trigger regardless of date."""
     performance = _get_performance_or_404(db, performance_id)
@@ -310,7 +309,7 @@ def user_booking_status_batch(
     """N+1-safe: a fixed, small number of queries regardless of how many
     user_ids are passed in -- mirrors Performance::userBookingStatus()
     called once per user in Legacy's requestsAndBookings(), but without
-    the N+1 (project_osa_migration_plan memory, Schritt 6 plan A.8)."""
+    the N+1 (Schritt 6 plan A.8)."""
     if not user_ids:
         return {}
     if performance.schedule < local_now() and not keep_past_status:
@@ -406,7 +405,7 @@ def user_booking_status_for_performances(
     (Short resource's `auth_user_booking` accessor) runs userBookingStatus()
     once per row, a real N+1 there; the project's N+1-protection
     requirement means the business RESULT is ported here, not that query
-    pattern (see project_osa_migration_plan memory, Schritt 6 plan A.8).
+    pattern (Schritt 6 plan A.8).
 
     `keep_past_status` mirrors Legacy's `userBookingStatus($user,
     $keepPastStatus)` second argument: every caller so far passes nothing
@@ -908,9 +907,9 @@ def _save_cast_item(
     old_quantity: int | None,
 ) -> None:
     """1:1 port of Performance::saveCastItem() -- the append-only diff/log
-    engine behind every cast mutation (see project_osa_migration_plan
-    memory, Schritt 6 plan, "Exakte Legacy-Business-Logik" section for the
-    bindingly-specified algorithm this mirrors line for line)."""
+    engine behind every cast mutation (Schritt 6 plan's "Exakte
+    Legacy-Business-Logik" section specifies the algorithm this mirrors
+    line for line)."""
     old_bookings = (
         db.execute(
             select(Booking)
@@ -1086,8 +1085,8 @@ def reconcile_setup_change(
 ) -> None:
     """Port of Performance::setup()'s cast-reconciliation step, called from
     performance_service.update_performance() right after `_sync_positions`
-    (see project_osa_migration_plan memory, Schritt 6 plan A.5b) -- purges
-    bookings on removed positions, then re-evaluates promote/demote on
+    (Schritt 6 plan A.5b) -- purges bookings on removed positions, then
+    re-evaluates promote/demote on
     every remaining position against its OLD quantity. `removed_keys`/
     `old_quantities` are `str`-keyed (not the `PositionType` Literal) since
     they originate from `PerformancePosition.position_type`, a DB column
@@ -1254,8 +1253,8 @@ def change_user_request_status(
     schema): the server recomputes the CURRENT status itself via
     user_booking_status() and dispatches on that, exactly like Legacy's
     `switch ($performance->auth_user_booking['status'])`. A client can
-    never dictate an arbitrary transition (see project_osa_migration_plan
-    memory, Schritt 6 plan, "Korrektur eines eigenen Design-Fehlers").
+    never dictate an arbitrary transition (this endpoint's own earlier
+    draft schema allowed one and was corrected before implementation).
 
     Returns the notification descriptor (or None) for the ROUTER to
     schedule via `BackgroundTasks.add_task(mailer.send_booked_or_standby_
@@ -1375,8 +1374,7 @@ def get_billing(
     db: Session, performance_id: int, current_user: User
 ) -> PerformanceBillingResponse:
     """No past-lock -- Legacy's `billing` policy checks only the `billing`
-    role, unlike `cast`/`maintain` (see project_osa_migration_plan memory,
-    Schritt 6 plan, router table)."""
+    role, unlike `cast`/`maintain` (Schritt 6 plan, router table)."""
     performance = _get_performance_or_404(db, performance_id)
     detail = performance_service.get_performance_detail(db, performance_id)
     setup = detail.setup
@@ -1558,8 +1556,7 @@ def get_message_to_cast_page(
     `Performance::class` (no instance), so `maintain`'s object-level
     past-check never triggers here, unlike requestsAndBookings() which
     authorizes against the actual `$performance` instance. Replicated as
-    an intentional Legacy quirk, not "fixed" (see project_osa_migration_plan
-    memory, Schritt 6 plan)."""
+    an intentional Legacy quirk, not "fixed"."""
     performance = _get_performance_or_404(db, performance_id)
     detail = performance_service.get_performance_detail(db, performance_id)
     setup = detail.setup
@@ -1625,9 +1622,9 @@ def get_message_recipients(
 def send_message_to_cast(
     db: Session, performance_id: int, sender: User, data: SendMessageRequest
 ) -> tuple[list[str], str, str]:
-    """The MessageToCast send bugfix (see project_osa_migration_plan
-    memory) -- Legacy's "Nachricht senden" button posted to a GET-only
-    route (guaranteed HTTP 405, the feature was never reachable). This
+    """The MessageToCast send bugfix -- Legacy's "Nachricht senden" button
+    posted to a GET-only route (guaranteed HTTP 405, the feature was
+    never reachable). This
     builds a real, working send on top of the same mailer/template
     infrastructure Legacy already had sitting unused for exactly this
     purpose (`user_message.blade.php`).

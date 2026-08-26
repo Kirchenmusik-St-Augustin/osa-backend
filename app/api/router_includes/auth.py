@@ -180,7 +180,7 @@ def login(
 def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONResponse:
     """Exchange the refresh-token cookie for a new access token, rotating
     the refresh secret on every use. No Legacy equivalent (Legacy has no
-    JWT refresh concept at all) -- per-IP rate limit only, 1:1 vb-api."""
+    JWT refresh concept at all) -- per-IP rate limit only."""
     _ensure_trusted_origin(request)
     cookie_value = request.cookies.get("refresh_token")
     if not cookie_value:

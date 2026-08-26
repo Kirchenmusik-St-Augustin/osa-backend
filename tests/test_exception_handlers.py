@@ -5,7 +5,7 @@ TestClient's default raise_server_exceptions=True regardless of a
 registered handler being present, so a handler can only be observed via
 raise_server_exceptions=False -- and doing that against the full app would
 also swallow real bugs in unrelated routes, hence the dedicated throwaway
-app (1:1 vb-api's own equivalent test module).
+app.
 """
 
 from fastapi import FastAPI

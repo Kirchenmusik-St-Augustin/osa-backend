@@ -20,7 +20,7 @@ if config.config_file_name is not None:
 
 # DATABASE_URL is read at runtime, not from alembic.ini -- keeps a single
 # source of truth with app.core.config.Settings across every environment
-# (dev/test/CI/prod), 1:1 vb-api's alembic/env.py.
+# (dev/test/CI/prod).
 config.set_main_option(
     "sqlalchemy.url",
     os.environ["DATABASE_URL"],

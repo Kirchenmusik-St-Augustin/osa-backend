@@ -3,10 +3,10 @@ Legacy's OsaScheduleBackupProdDB.php Artisan command, and this module's
 own file-copy-based predecessor.
 
 Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`,
-1:1 the vb-fastapi-vue sister project's `run_backup()` naming, User decision
-2026-08-13) -- unchanged convention, only the extension moved from `.tar.gz`
-(a tarred file copy) to `.dump` (pg_dump's own `--format=custom`
-output, already a single binary file, nothing to tar). Backups created
+User decision 2026-08-13) -- unchanged convention, only the extension
+moved from `.tar.gz` (a tarred file copy) to `.dump` (pg_dump's own
+`--format=custom` output, already a single binary file, nothing to tar).
+Backups created
 before the Postgres cutover keep their old `.tar.gz` names on Koofr and no
 longer match _FILENAME_PATTERN -- same accepted, documented naming break as
 the 2026-08-13 stage-prefix change before it (see git history), not a
@@ -17,9 +17,9 @@ instead of shelling out to rclone (what the existing restore script does)
 or adding a dedicated WebDAV client library -- no new dependency, no
 subprocess/shell-escaping surface for the upload/download/list/delete side.
 pg_dump/pg_restore/psql themselves are unavoidably subprocesses (no pure-
-Python equivalent exists) -- 1:1 vb-api's `_run_pg_subprocess()` pattern,
-including its stderr-surfacing fix (a bare CalledProcessError hides exactly
-the detail that matters for debugging a failed disaster-recovery run).
+Python equivalent exists) -- `_run_pg_subprocess()` surfaces stderr on
+failure (a bare CalledProcessError hides exactly the detail that matters
+for debugging a failed disaster-recovery run).
 
 Known, deliberately NOT replicated Legacy bug: Legacy's own
 cleanupOldBackups() passes the WebDAV-absolute paths returned by PROPFIND
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 _EPOCH = datetime.min  # noqa: DTZ901
 
 _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
-# Stage-prefixed, optionally "-manual"-suffixed -- 1:1 vb-api's
+# Stage-prefixed, optionally "-manual"-suffixed --
 # f"{app_environment}-{timestamp}{suffix}" naming (User decision,
 # 2026-08-13, see module docstring). `stage` is intentionally not
 # constrained to Settings' exact _VALID_ENVIRONMENTS set here -- this
@@ -171,8 +171,7 @@ def run_backup(*, manual: bool = False) -> str:
 
     manual=True tags the filename with a "-manual" suffix, distinguishing
     ad-hoc backups (admin-triggered API call, CLI script) from the ones the
-    scheduled backup_koofr job produces unsuffixed -- 1:1 vb-api's
-    run_backup(manual=...).
+    scheduled backup_koofr job produces unsuffixed.
 
     Returns the uploaded archive's filename. Raises BackupError on any
     failure -- nothing is left behind on Koofr on failure, the upload is
@@ -247,11 +246,9 @@ def list_backups(*, stage: str | None = None) -> list[str]:
     Sorts by _parse_backup_timestamp(), NOT by plain string order: since
     filenames are stage-prefixed, a raw sorted() would order by stage name
     first (e.g. every "test-..." name would sort after every
-    "production-..." one regardless of actual age) -- exactly the latent
-    weakness vb-api's own S3-key sort has, deliberately not replicated
-    here since it would silently break run_restore()'s "latest backup"
-    auto-selection across differently-staged backups sharing this one
-    Koofr path.
+    "production-..." one regardless of actual age), which would silently
+    break run_restore()'s "latest backup" auto-selection across
+    differently-staged backups sharing this one Koofr path.
 
     `stage`, when given, restricts the result to backups created by that
     exact stage (e.g. "production") -- used by the downsync job/trigger to
@@ -395,8 +392,7 @@ def _wipe_public_schema(
     schema in an inconsistent, partially-restored state. Wiping the schema
     upfront and restoring without --clean sidesteps the ordering problem
     entirely -- there is nothing left to drop, so no DROP order can ever
-    be wrong. 1:1 vb-api's own fix for the identical failure mode
-    (observed there in practice against a real production dump).
+    be wrong.
 
     DROP SCHEMA needs an ACCESS EXCLUSIVE lock, which any other session
     with an open transaction on this database can block. Terminating every

@@ -8,8 +8,7 @@ from app.db.models.voice import Voice
 # shared by Performance/PerformancePosition (Schritt 5), User/UserPosition
 # and Booking/BookingLog (Schritt 6). Extracted here so all three domains
 # key off the exact same three literal strings and model classes instead of
-# each redefining their own copy (DRY, see project_osa_migration_plan
-# memory, Schritt 6 plan A.1).
+# each redefining their own copy (DRY, Schritt 6 plan A.1).
 PositionType = Literal["instruments", "voices", "choirjobs"]
 
 POSITION_TYPES: tuple[PositionType, ...] = ("instruments", "voices", "choirjobs")

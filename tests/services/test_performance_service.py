@@ -395,7 +395,7 @@ class TestCreatePerformance:
 
     def test_accepts_choirjob_position(self, db_session: Session):
         """Unlike Ordinariumwork, Performance's setup legitimately includes
-        choirjobs (confirmed live, see project_osa_performance_domain_research)."""
+        choirjobs (confirmed live)."""
         composer_id = _make_artist(db_session, composer=True)
         location = _make_location(db_session)
         work = _make_ordinariumwork(db_session, composer_id)
@@ -783,10 +783,10 @@ class TestUpdatePerformance:
     def test_setup_shrink_reconciles_bookings_via_booking_service(
         self, db_session: Session, make_user
     ):
-        """Retrofit A.5b (see project_osa_migration_plan memory, Schritt 6
-        plan): shrinking a position's quantity must demote the now-standby
-        booking, and removing a position entirely must purge its bookings
-        -- both via booking_service.reconcile_setup_change, wired in from
+        """Retrofit A.5b (Schritt 6 plan): shrinking a position's quantity
+        must demote the now-standby booking, and removing a position
+        entirely must purge its bookings -- both via
+        booking_service.reconcile_setup_change, wired in from
         update_performance()."""
         composer_id = _make_artist(db_session, composer=True)
         location = _make_location(db_session)

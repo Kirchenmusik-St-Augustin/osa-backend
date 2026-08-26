@@ -11,9 +11,8 @@ class PermissionRule:
     condition: Callable[[set[str], bool], bool]
 
 
-# Ported from Legacy's 21 Policy ability-rules (app/Models/Policies/*Policy.php
-# -- see project_osa_legacy_domain_map memory) into one centralized,
-# testable matrix, 1:1 vb-api pattern. `role_names` is the set of Role.name
+# Ported from Legacy's 21 Policy ability-rules (app/Models/Policies/*Policy.php)
+# into one centralized, testable matrix. `role_names` is the set of Role.name
 # values currently assigned to the user (planner/disponent/billing/scores/
 # shorturls); `is_administrator` is the separate `users.administrator`
 # boolean flag, never a role row.

@@ -10,8 +10,7 @@ class CoreelementType(StrEnum):
     `HasCoreelementFeatures` lookup tables (Instrument/Voice/Choirjob/
     Location/Role/Propriumelement), administered through one generic
     endpoint instead of six near-identical modules -- Legacy itself already
-    does this via a single `type`-prop-driven Vue page, see
-    project_osa_migration_plan memory, Schritt 3."""
+    does this via a single `type`-prop-driven Vue page (Schritt 3)."""
 
     instrument = "instrument"
     voice = "voice"

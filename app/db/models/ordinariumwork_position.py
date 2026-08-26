@@ -12,10 +12,9 @@ class OrdinariumworkPosition(Base):
     `position_id` polymorphy (Relation::morphMap 'instruments'/'voices'/
     'choirjobs') is deliberately restricted to 'instruments'/'voices' ONLY
     here -- confirmed by the real CHECK constraint AND by live data (1677
-    rows, zero 'choirjobs' -- see project_osa_migration_plan memory,
-    Schritt 4). No standalone controller/routes in Legacy: managed
-    entirely through Ordinariumwork's own create/update ("setup" payload),
-    never directly -- same here (see ordinariumwork_service.py)."""
+    rows, zero 'choirjobs'). No standalone controller/routes in Legacy:
+    managed entirely through Ordinariumwork's own create/update ("setup"
+    payload), never directly -- same here (see ordinariumwork_service.py)."""
 
     __tablename__ = "ordinariumwork_positions"
     __table_args__ = (

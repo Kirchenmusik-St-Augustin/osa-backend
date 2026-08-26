@@ -10,11 +10,11 @@ from app.core.config import get_settings
 # unset, so by the time get_settings() returns, it is guaranteed non-None.
 SQLALCHEMY_DATABASE_URL = cast("str", get_settings().database_url)
 
-# Synchronous SQLAlchemy (Session, no AsyncSession/asyncpg/greenlet) --
-# 1:1 vb-api's stack. Schritt 1 originally chose the async engine; switched
-# back here (User decision, 2026-07-28) because both osa-backend and vb-api
-# are low-concurrency internal scheduling tools (never more than ~10
-# concurrent users observed on either in practice) -- async's real benefit
+# Synchronous SQLAlchemy (Session, no AsyncSession/asyncpg/greenlet).
+# Schritt 1 originally chose the async engine; switched back here (User
+# decision, 2026-07-28) because osa-backend is a low-concurrency internal
+# scheduling tool (never more than ~10 concurrent users observed in
+# practice) -- async's real benefit
 # (serving many concurrent in-flight I/O waits without consuming a thread
 # each) buys nothing at this scale, while it already cost one concrete bug
 # class (coverage.py silently losing the trace across greenlet_spawn,

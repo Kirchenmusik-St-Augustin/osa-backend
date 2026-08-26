@@ -361,8 +361,8 @@ def send_user_message_email(
     -- previously only wired up for the unrelated Selfadmin/Support
     "message a contact person" feature (Schritt 7 scope), now reused for
     the Schritt-6 MessageToCast send bugfix (see
-    booking_service.send_message_to_cast, project_osa_migration_plan
-    memory). Sent via Bcc (User-confirmed 2026-07-31, Datenschutz) --
+    booking_service.send_message_to_cast). Sent via Bcc (User-confirmed
+    2026-07-31, Datenschutz) --
     `to_emails` here is a disponent-picked, potentially large group of
     musicians/singers who don't necessarily know each other and have no
     reason to see one another's address, unlike e.g. the small, fixed

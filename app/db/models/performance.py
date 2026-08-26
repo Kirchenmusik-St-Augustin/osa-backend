@@ -16,8 +16,7 @@ class Performance(Base):
     `choirjob_defaultfee`/`instrument_defaultfee`/`voice_defaultfee` are
     NOT the fee actually paid to a booked musician (chosen per-booking on
     the Cast page, Schritt 6) -- they're placeholder billing rates used
-    only to price still-unfilled slots in the Abrechnung (see
-    project_osa_performance_domain_research memory)."""
+    only to price still-unfilled slots in the Abrechnung."""
 
     __tablename__ = "performances"
 

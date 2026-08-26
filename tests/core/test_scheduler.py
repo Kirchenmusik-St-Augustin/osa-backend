@@ -85,7 +85,7 @@ def test_purge_stale_booking_requests_uses_a_deterministic_cron_trigger(
 
 def test_start_and_stop_scheduler_toggle_running_state():
     # osa-backend's test suite is otherwise fully synchronous (TestClient,
-    # not AsyncClient -- 1:1 vb-api), but AsyncIOScheduler is an inherently
+    # not AsyncClient), but AsyncIOScheduler is an inherently
     # async API regardless of that -- driving it via a single asyncio.run()
     # call is simpler than pulling in pytest-asyncio for just this one test.
     async def _run() -> None:
