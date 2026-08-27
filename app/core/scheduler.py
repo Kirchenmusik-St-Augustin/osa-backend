@@ -1,8 +1,7 @@
 """Process-wide APScheduler instance, started/stopped via main.py's
 FastAPI lifespan.
 
-Deliberately in-process (not a separate scheduler container), analogous to
-the vb-fastapi-vue sister project's app/core/scheduler.py -- including its
+Deliberately in-process (not a separate scheduler container), with a
 pg_try_advisory_lock guard against duplicate job registration across
 multiple Gunicorn worker processes. Currently a de facto no-op (`--workers`
 is still `1`, see the Dockerfile), but active by construction the moment
@@ -312,10 +311,10 @@ def stop_scheduler() -> None:
 def _format_next_run(job: Job) -> str | None:
     """Normalizes display to Settings.app_timezone. Trusts
     `job.next_run_time` directly rather than recomputing it from the
-    trigger -- unlike the vb-api sister project's multi-worker deployment,
-    osa-backend's production Dockerfile runs a single Gunicorn worker
-    (--workers 1, see Dockerfile comment), so the process that registers a
-    job is always the same one answering this read."""
+    trigger -- safe because osa-backend's production Dockerfile runs a
+    single Gunicorn worker (--workers 1, see Dockerfile comment), so the
+    process that registers a job is always the same one answering this
+    read."""
     if job.next_run_time is None:
         return None
     return job.next_run_time.astimezone(get_app_timezone()).strftime("%d.%m.%Y, %H:%M")

@@ -11,10 +11,9 @@ from app.schemas.validators import (
 class ProfileUpdateRequest(StrictInputModel):
     """Mirrors Legacy's Selfadmin/ProfileController UpdateRequest. Unlike
     System::UserController's UserRequest, email and phone are PFLICHT here
-    -- a deliberate Legacy rule difference, not a typo (see
-    project_osa_migration_plan memory). `auth_password` (the user's CURRENT
-    password) is always required -- every profile change, even just a
-    phone number, must be re-authenticated."""
+    -- a deliberate Legacy rule difference, not a typo. `auth_password`
+    (the user's CURRENT password) is always required -- every profile
+    change, even just a phone number, must be re-authenticated."""
 
     givenname: str = Field(min_length=3, max_length=32)
     surname: str = Field(min_length=3, max_length=32)

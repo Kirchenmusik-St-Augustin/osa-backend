@@ -32,6 +32,11 @@ _DOWNSYNC_BLOCKED_IN_PRODUCTION_DETAIL = (
     "Downsync ist in Production nicht verfügbar - Production ist die "
     "führende Datenquelle."
 )
+_BACKUP_BLOCKED_OUTSIDE_PRODUCTION_DETAIL = (
+    "Backup ist außerhalb von Production nicht verfügbar - Production ist "
+    "die einzige Stage mit Schreibrechten auf den gemeinsamen "
+    "Koofr-Backup-Bestand."
+)
 _NO_PRODUCTION_BACKUP_DETAIL = "Kein Production-Backup auf Koofr vorhanden."
 
 
@@ -51,11 +56,16 @@ def trigger_backup(
     """Manually trigger an immediate Koofr backup, independent of the daily
     scheduled job. Runs synchronously -- FastAPI runs sync `def` handlers in
     a threadpool, so the event loop isn't blocked; no background-job
-    infrastructure needed for this DB size (same reasoning as vb-api's
-    equivalent endpoint). Deliberately callable in every stage server-side
-    (the shared Koofr path makes a stage gate here pure UI convenience, not
-    a real security boundary) -- only the frontend restricts this to
-    production; the permission check above still applies in every stage."""
+    infrastructure needed for this DB size. Production-only: the shared
+    Koofr path holds one backup history across every stage. Enforced here
+    (409, avoiding a misleading 500) AND independently inside run_backup()
+    itself, so scripts/backup_db.py and the scheduled job stay protected
+    even without going through this endpoint."""
+    if get_settings().app_environment != "production":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_BACKUP_BLOCKED_OUTSIDE_PRODUCTION_DETAIL,
+        )
     try:
         backup_name = run_backup(manual=True)
     except BackupError as exc:

@@ -14,10 +14,9 @@ from app.schemas.performance import (
 
 # Field names are snake_case throughout (not Legacy's camelCase `notBooked`)
 # -- both this API and osa-frontend are built from scratch here, so there is
-# no wire-compatibility reason to mirror Legacy's JSON casing (see
-# project_osa_migration_plan memory, Schritt 6 plan A.3). `for` (Legacy's
-# field name on a booking-status "for" position) is a reserved Python
-# keyword, renamed to `position`.
+# no wire-compatibility reason to mirror Legacy's JSON casing (Schritt 6
+# plan A.3). `for` (Legacy's field name on a booking-status "for" position)
+# is a reserved Python keyword, renamed to `position`.
 
 
 class CastMemberInput(StrictInputModel):

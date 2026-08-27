@@ -3,10 +3,10 @@ Legacy's OsaScheduleBackupProdDB.php Artisan command, and this module's
 own file-copy-based predecessor.
 
 Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`,
-1:1 the vb-fastapi-vue sister project's `run_backup()` naming, User decision
-2026-08-13) -- unchanged convention, only the extension moved from `.tar.gz`
-(a tarred file copy) to `.dump` (pg_dump's own `--format=custom`
-output, already a single binary file, nothing to tar). Backups created
+User decision 2026-08-13) -- unchanged convention, only the extension
+moved from `.tar.gz` (a tarred file copy) to `.dump` (pg_dump's own
+`--format=custom` output, already a single binary file, nothing to tar).
+Backups created
 before the Postgres cutover keep their old `.tar.gz` names on Koofr and no
 longer match _FILENAME_PATTERN -- same accepted, documented naming break as
 the 2026-08-13 stage-prefix change before it (see git history), not a
@@ -17,9 +17,9 @@ instead of shelling out to rclone (what the existing restore script does)
 or adding a dedicated WebDAV client library -- no new dependency, no
 subprocess/shell-escaping surface for the upload/download/list/delete side.
 pg_dump/pg_restore/psql themselves are unavoidably subprocesses (no pure-
-Python equivalent exists) -- 1:1 vb-api's `_run_pg_subprocess()` pattern,
-including its stderr-surfacing fix (a bare CalledProcessError hides exactly
-the detail that matters for debugging a failed disaster-recovery run).
+Python equivalent exists) -- `_run_pg_subprocess()` surfaces stderr on
+failure (a bare CalledProcessError hides exactly the detail that matters
+for debugging a failed disaster-recovery run).
 
 Known, deliberately NOT replicated Legacy bug: Legacy's own
 cleanupOldBackups() passes the WebDAV-absolute paths returned by PROPFIND
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 _EPOCH = datetime.min  # noqa: DTZ901
 
 _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
-# Stage-prefixed, optionally "-manual"-suffixed -- 1:1 vb-api's
+# Stage-prefixed, optionally "-manual"-suffixed --
 # f"{app_environment}-{timestamp}{suffix}" naming (User decision,
 # 2026-08-13, see module docstring). `stage` is intentionally not
 # constrained to Settings' exact _VALID_ENVIRONMENTS set here -- this
@@ -171,8 +171,13 @@ def run_backup(*, manual: bool = False) -> str:
 
     manual=True tags the filename with a "-manual" suffix, distinguishing
     ad-hoc backups (admin-triggered API call, CLI script) from the ones the
-    scheduled backup_koofr job produces unsuffixed -- 1:1 vb-api's
-    run_backup(manual=...).
+    scheduled backup_koofr job produces unsuffixed.
+
+    Production-only: the Koofr path is ONE shared destination across every
+    stage, so a backup from any other stage would pollute that shared
+    history. Enforced here (not just in the scheduler's job-registration
+    gate or the frontend) so scripts/backup_db.py and any future caller are
+    protected the same way.
 
     Returns the uploaded archive's filename. Raises BackupError on any
     failure -- nothing is left behind on Koofr on failure, the upload is
@@ -180,6 +185,11 @@ def run_backup(*, manual: bool = False) -> str:
     """
     database_url = require_setting(get_settings().database_url, "DATABASE_URL")
     _require_postgres(database_url)
+
+    if get_settings().app_environment != "production":
+        msg = "Backup is only permitted in production."
+        raise BackupError(msg)
+
     host, user, password, port, dbname = _parse_db_url(database_url)
 
     timestamp = local_now().strftime(_TIMESTAMP_FORMAT)
@@ -247,18 +257,17 @@ def list_backups(*, stage: str | None = None) -> list[str]:
     Sorts by _parse_backup_timestamp(), NOT by plain string order: since
     filenames are stage-prefixed, a raw sorted() would order by stage name
     first (e.g. every "test-..." name would sort after every
-    "production-..." one regardless of actual age) -- exactly the latent
-    weakness vb-api's own S3-key sort has, deliberately not replicated
-    here since it would silently break run_restore()'s "latest backup"
-    auto-selection across differently-staged backups sharing this one
-    Koofr path.
+    "production-..." one regardless of actual age), which would silently
+    break run_restore()'s "latest backup" auto-selection across
+    differently-staged backups sharing this one Koofr path.
 
     `stage`, when given, restricts the result to backups created by that
-    exact stage (e.g. "production") -- used by the downsync job/trigger to
-    find "the latest PRODUCTION backup" rather than the latest backup
-    overall, since a manually-triggered backup is callable from any stage
-    and lands in this same shared Koofr path too (see
-    app.api.router_includes.scheduler.trigger_backup's docstring)."""
+    exact stage (e.g. "production") -- used by the downsync job/trigger and
+    by run_restore()'s own auto-select fallback to find "the latest
+    PRODUCTION backup" rather than the latest backup overall. Even though
+    run_backup() is production-only (see its docstring), this filter stays
+    meaningful: Koofr can still hold non-production-labeled backups
+    uploaded before that gate existed."""
     user, password = _koofr_auth()
     propfind_body = (
         '<?xml version="1.0"?>'
@@ -395,8 +404,7 @@ def _wipe_public_schema(
     schema in an inconsistent, partially-restored state. Wiping the schema
     upfront and restoring without --clean sidesteps the ordering problem
     entirely -- there is nothing left to drop, so no DROP order can ever
-    be wrong. 1:1 vb-api's own fix for the identical failure mode
-    (observed there in practice against a real production dump).
+    be wrong.
 
     DROP SCHEMA needs an ACCESS EXCLUSIVE lock, which any other session
     with an open transaction on this database can block. Terminating every
@@ -511,12 +519,16 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
         raise BackupError(msg)
 
     if backup_name is None:
-        available = list_backups()
+        # Filtered to "production" regardless of which stage is restoring:
+        # production is the one canonical source, so the auto-selected
+        # "latest" backup must never be an older, non-production-labeled
+        # dump that happens to sort after it.
+        available = list_backups(stage="production")
         if not available:
-            msg = "No backups found on Koofr."
+            msg = "No production backups found on Koofr."
             raise BackupError(msg)
         backup_name = available[-1]
-        logger.info("Auto-selected latest backup: %s", backup_name)
+        logger.info("Auto-selected latest production backup: %s", backup_name)
     elif not _FILENAME_PATTERN.match(backup_name):
         msg = f"'{backup_name}' is not a valid backup filename."
         raise BackupError(msg)

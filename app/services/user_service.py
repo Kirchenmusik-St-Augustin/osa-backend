@@ -366,8 +366,8 @@ def update_user(
 
     # Asymmetric with profile_service.update_profile() by design: an admin
     # changing someone ELSE's email resets verification but does NOT send a
-    # new verification mail (1:1 Legacy quirk, see project_osa_migration_plan
-    # memory) -- only the user's own Selfadmin-Profil edit does that.
+    # new verification mail (1:1 Legacy quirk) -- only the user's own
+    # Selfadmin-Profil edit does that.
     if data.email != user.email:
         user.email_verified_at = None
 

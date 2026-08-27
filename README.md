@@ -12,14 +12,16 @@ legacy Laravel/Inertia/Vue application.
   a 1:1 transfer, not yet the full schema redesign)
 - **Backup:** Koofr (WebDAV), see [Scheduler](#scheduler) and
   [Scripts](#scripts) below
-- **Container:** Podman Quadlets (rootless systemd) — production quadlets
-  live in [`osa-deploy`](../osa-deploy)
+- **Container:** Podman Quadlets (rootless systemd) — quadlets for every
+  stage, including local dev, live in [`osa-deploy`](../osa-deploy)
 
 ## Development Setup
 
 ### Prerequisites
 
-- Podman with the `osa-backend` container running (see Quadlet config under
+- Podman with the `osa-backend` container running — see
+  [`osa-deploy`'s README](../osa-deploy/README.md#local-development-environment)
+  for how to set this up from a fresh clone (Quadlet config ends up under
   `~/.config/containers/systemd/osa/osa-backend/` on the dev host)
 - Python dev dependencies are installed inside the container
   (`requirements-dev.txt`)
@@ -69,8 +71,9 @@ podman exec osa-backend python scripts/check_router_soc.py
 
 Schema changes go through Alembic (`alembic/`). `docker-entrypoint.sh`
 runs `alembic upgrade head` automatically on every container start, so
-there is no manual migration step in the deploy runbook. To generate a
-new migration after changing a model:
+there is no manual migration step in
+[`osa-deploy`'s deploy runbook](../osa-deploy/README.md) (Phase 2). To
+generate a new migration after changing a model:
 
 ```bash
 podman exec osa-backend alembic revision --autogenerate -m "describe the change"
@@ -98,6 +101,20 @@ Settings are tiered (see `app/core/config.py`'s module docstring):
 | 1 | Boot-critical, validated at startup — process exits if missing/invalid | `APP_ENVIRONMENT`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS` |
 | 2 | Optional, sane defaults, no boot-time validation | `APP_TIMEZONE`, mail sender identity, Koofr backup target/retention |
 | 3 | Feature-required, no default — first real use raises, not boot | `SMTP_HOST`, `GOOGLE_CLIENT_ID`, `KOOFR_USER`/`KOOFR_PASSWORD` |
+
+`.env` is for local dev only. Production/test/qa never use it — the same
+variables live vault-encrypted in [`osa-deploy`](../osa-deploy)'s
+`secrets/<stage>/osa-backend.env.j2`, see its README's
+[Maintaining secrets](../osa-deploy/README.md#maintaining-secrets)
+section.
+
+`GOOGLE_CLIENT_ID` is Tier 3 on both sides (backend and
+[frontend](../osa-frontend/README.md#environment-variables)) — leave it
+empty/unset on a stage where Google's Developer Console isn't configured
+and Google Login is simply absent there: the frontend's button doesn't
+render, and `require_setting()` (see `app/core/config.py`) only raises if
+`/auth/google/callback`/`/auth/google/link` are somehow called anyway,
+never at boot.
 
 ## Scheduler
 
@@ -167,6 +184,11 @@ on manual dispatch:
    pushes `ghcr.io/kirchenmusik-st-augustin/osa-backend:latest` and
    `:${{ github.sha }}`
 
+A pushed image reaches a running stage on its own, via
+`podman-auto-update.timer` — or immediately, via `--tags deploy-backend`.
+See [`osa-deploy`'s README](../osa-deploy/README.md) for that full deploy
+flow; this repo doesn't run it.
+
 ---
 
 # Deutsch
@@ -183,16 +205,19 @@ Migriert eine bestehende Laravel/Inertia/Vue-Anwendung.
   1:1-Übertrag, noch nicht das volle Schema-Redesign)
 - **Backup:** Koofr (WebDAV), siehe [Scheduler](#scheduler-1) und
   [Skripte](#skripte) unten
-- **Container:** Podman Quadlets (rootless systemd) — die
-  Produktions-Quadlets liegen in [`osa-deploy`](../osa-deploy)
+- **Container:** Podman Quadlets (rootless systemd) — die Quadlets für
+  jede Stage, inklusive lokaler Entwicklung, liegen in
+  [`osa-deploy`](../osa-deploy)
 
 ## Entwicklungs-Setup
 
 ### Voraussetzungen
 
-- Podman mit laufendem `osa-backend`-Container (siehe Quadlet-Konfiguration
-  unter `~/.config/containers/systemd/osa/osa-backend/` auf der
-  Dev-Umgebung)
+- Podman mit laufendem `osa-backend`-Container — wie das von einem
+  frischen Checkout aus aufgesetzt wird, steht in
+  [`osa-deploy`s README](../osa-deploy/README.md#lokale-entwicklungsumgebung)
+  (die Quadlet-Konfiguration landet dabei unter
+  `~/.config/containers/systemd/osa/osa-backend/` auf der Dev-Umgebung)
 - Die Python-Dev-Abhängigkeiten sind im Container bereits installiert
   (`requirements-dev.txt`)
 
@@ -242,8 +267,9 @@ podman exec osa-backend python scripts/check_router_soc.py
 
 Schema-Änderungen laufen über Alembic (`alembic/`). `docker-entrypoint.sh`
 führt bei jedem Container-Start automatisch `alembic upgrade head` aus,
-kein manueller Migrationsschritt im Deploy-Runbook nötig. Neue Migration
-nach einer Modell-Änderung erzeugen:
+kein manueller Migrationsschritt im
+[Deploy-Runbook von `osa-deploy`](../osa-deploy/README.md) (Phase 2)
+nötig. Neue Migration nach einer Modell-Änderung erzeugen:
 
 ```bash
 podman exec osa-backend alembic revision --autogenerate -m "Änderung beschreiben"
@@ -272,6 +298,21 @@ Die Settings sind gestuft (siehe den Docstring des Moduls
 | 1 | Boot-kritisch, beim Start validiert — Prozess beendet sich bei Fehlen/Ungültigkeit | `APP_ENVIRONMENT`, `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS` |
 | 2 | Optional, sinnvolle Defaults, keine Validierung beim Boot | `APP_TIMEZONE`, Mail-Absenderidentität, Koofr-Backup-Ziel/-Retention |
 | 3 | Feature-erforderlich, kein Default — erst bei echter Nutzung ein Fehler, nicht beim Boot | `SMTP_HOST`, `GOOGLE_CLIENT_ID`, `KOOFR_USER`/`KOOFR_PASSWORD` |
+
+`.env` ist nur für lokale Entwicklung. Produktion/Test/QA nutzen es nie —
+dieselben Variablen liegen dort vault-verschlüsselt in
+[`osa-deploy`](../osa-deploy)s `secrets/<stage>/osa-backend.env.j2`, siehe
+den Abschnitt [Secrets pflegen](../osa-deploy/README.md#secrets-pflegen)
+in dessen README.
+
+`GOOGLE_CLIENT_ID` ist auf beiden Seiten Stufe 3 (Backend und
+[Frontend](../osa-frontend/README.md#umgebungsvariablen)) — auf einer
+Stage, auf der die Google Developer Console nicht konfiguriert ist,
+einfach leer/unset lassen, dann ist Google Login dort schlichtweg nicht
+vorhanden: der Button im Frontend rendert nicht, und `require_setting()`
+(siehe `app/core/config.py`) wirft nur dann, wenn
+`/auth/google/callback`/`/auth/google/link` trotzdem irgendwie aufgerufen
+werden — nie beim Boot.
 
 ## Scheduler
 
@@ -342,3 +383,9 @@ CodeQL-Refresh) und bei manuellem Dispatch:
    PRs oder dem geplanten Lauf), baut das `Dockerfile`s `prod`-Target,
    pusht `ghcr.io/kirchenmusik-st-augustin/osa-backend:latest` und
    `:${{ github.sha }}`
+
+Ein gepushtes Image erreicht eine laufende Stage von selbst, über
+`podman-auto-update.timer` — oder sofort, über `--tags deploy-backend`.
+Den vollständigen Deploy-Flow dazu beschreibt
+[`osa-deploy`s README](../osa-deploy/README.md); dieses Repo führt ihn
+nicht selbst aus.

@@ -370,8 +370,8 @@ class TestUserBookingStatus:
 
 class TestUserBookingStatusForPerformances:
     """The other axis of user_booking_status_batch(): one user, many
-    performances -- what the calendar list needs (see
-    project_osa_migration_plan memory, Schritt 6 plan B.4 correction)."""
+    performances -- what the calendar list needs (Schritt 6 plan B.4
+    correction)."""
 
     def test_empty_performance_list_returns_empty_dict(
         self, db_session: Session, make_user
@@ -758,7 +758,7 @@ class TestGetCastPageAndSaveCast:
         # OrderBySurnameGivenname scope, not any explicit orderBy in
         # Performance::staff() itself -- qualified user ids come out of a
         # plain Python set on this side, so this is a real regression risk,
-        # not just cosmetic (see project_osa_migration_plan memory).
+        # not just cosmetic.
         instrument = _make_instrument(db_session)
         performance_id = _make_performance(db_session, instruments={instrument.id: 1})
         zimmermann = _make_named_user(

@@ -11,8 +11,7 @@ class PerformancePosition(Base):
     in what quantity. Unlike OrdinariumworkPosition, Performance's
     position_type polymorphy legitimately includes ALL THREE types --
     confirmed live: Legacy's Performance uses instruments/voices/choirjobs,
-    only Ordinariumwork's CHECK constraint excludes choirjobs (see
-    project_osa_performance_domain_research memory)."""
+    only Ordinariumwork's CHECK constraint excludes choirjobs."""
 
     __tablename__ = "performance_positions"
     __table_args__ = (

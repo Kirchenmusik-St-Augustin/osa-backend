@@ -69,15 +69,14 @@ class PerformanceInPastError(Exception):
     is attempted on a performance whose schedule has already passed --
     mirrors PerformancePolicy::maintain()'s per-instance past-date lock,
     now enforced at fetch-time too, not just at save (User-Entscheidung
-    2026-07-29, see project_osa_performance_domain_research memory)."""
+    2026-07-29)."""
 
 
 class PerformanceInUseError(Exception):
     """Raised when delete is blocked by an existing Booking/BookingRequest
     row -- mirrors Legacy's HasDependencies check
     (`Performance::$dependencies = ['bookings', 'bookingrequests']`), added
-    once the Booking domain landed (Schritt 6, see
-    project_osa_migration_plan memory plan A.5a)."""
+    once the Booking domain landed (Schritt 6 plan A.5a)."""
 
 
 def _get_or_404(db: Session, performance_id: int) -> Performance:
@@ -162,8 +161,8 @@ def _validate_collision(
 ) -> list[tuple[str, str]]:
     """Legacy truncates to the HOUR (not the DB's exact-timestamp unique
     indexes) and, per User-Entscheidung 2026-07-29, now runs on both
-    create AND update (Legacy itself only ran this on create -- a real gap,
-    fixed here, see project_osa_performance_domain_research memory)."""
+    create AND update (Legacy itself only ran this on create -- a real
+    gap, fixed here)."""
     schedule = data.schedule
     hour_start = schedule.replace(minute=0, second=0, microsecond=0)
     hour_end = hour_start + timedelta(hours=1)
@@ -236,8 +235,8 @@ def _sync_positions(
     db: Session, performance_id: int, data: PerformanceRequest
 ) -> tuple[set[tuple[str, int]], dict[tuple[str, int], int]]:
     """Returns (removed_keys, old_quantities) for
-    booking_service.reconcile_setup_change (see project_osa_migration_plan
-    memory, Schritt 6 plan A.5b) -- old_quantities covers only positions
+    booking_service.reconcile_setup_change (Schritt 6 plan A.5b) --
+    old_quantities covers only positions
     that existed for THIS performance before the update, not every
     Instrument/Voice/Choirjob row system-wide the way Legacy's setup()
     does: a position never previously configured here cannot have any
@@ -385,8 +384,7 @@ def get_setup(db: Session, performance_id: int) -> PerformanceSetupOutput:
     """Output order follows each Instrument/Voice/Choirjob's own `order`
     column (their shared global admin-managed ordering), not pivot-row
     insertion order -- same lesson as Ordinariumwork's setup(), confirmed
-    live to apply here too (see project_osa_performance_domain_research
-    memory)."""
+    live to apply here too."""
     positions = (
         db.execute(
             select(PerformancePosition).where(
@@ -682,11 +680,10 @@ def list_performances_for_month(
     # Narrow, function-local import: booking_service imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
     # module level, so a module-level import here would be circular. Port of
-    # the Short resource's `auth_user_booking` accessor (see
-    # project_osa_migration_plan memory, Schritt 6 plan B.4 correction) --
-    # the calendar's self-service badge/trigger needs the real status per
-    # row, batched N+1-safe across the whole month instead of Legacy's own
-    # per-row query.
+    # the Short resource's `auth_user_booking` accessor (Schritt 6 plan
+    # B.4 correction) -- the calendar's self-service badge/trigger needs
+    # the real status per row, batched N+1-safe across the whole month
+    # instead of Legacy's own per-row query.
     from app.services.booking_service import (  # noqa: PLC0415
         user_booking_status_for_performances,
     )
@@ -886,10 +883,9 @@ def update_performance(
     # Narrow, function-local import: booking_service imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
     # module level, so a module-level import here would be circular. Port
-    # of Performance::setup()'s cast-reconciliation step (see
-    # project_osa_migration_plan memory, Schritt 6 plan A.5b) -- purges
-    # bookings on removed positions and re-evaluates promote/demote on
-    # every remaining position against its old quantity.
+    # of Performance::setup()'s cast-reconciliation step (Schritt 6 plan
+    # A.5b) -- purges bookings on removed positions and re-evaluates
+    # promote/demote on every remaining position against its old quantity.
     from app.services.booking_service import reconcile_setup_change  # noqa: PLC0415
 
     reconcile_setup_change(db, performance_id, removed_keys, old_quantities)

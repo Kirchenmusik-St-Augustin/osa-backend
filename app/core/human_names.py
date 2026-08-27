@@ -16,8 +16,7 @@ def label_for_name(surname: str, givenname: str | None) -> str:
     ("SURNAME, Givenname") -- 1:1 artist_service.label_for(), but taking
     plain fields instead of an Artist instance so it works for User too
     (booking_service needs a display name for both Artists (conductors)
-    and Users (cast members), see project_osa_migration_plan memory,
-    Schritt 6)."""
+    and Users (cast members), Schritt 6)."""
     if not givenname:
         return surname
     return f"{surname}, {givenname}"

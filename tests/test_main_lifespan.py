@@ -15,7 +15,7 @@ def _ensure_scheduler_stopped():
 
 def test_lifespan_starts_scheduler_on_entry_and_stops_it_on_exit():
     # osa-backend's test suite is otherwise fully synchronous (TestClient,
-    # not AsyncClient -- 1:1 vb-api), but AsyncIOScheduler/FastAPI's async
+    # not AsyncClient), but AsyncIOScheduler/FastAPI's async
     # lifespan() are inherently async APIs regardless of that -- driving
     # them via a single asyncio.run() call is simpler than pulling in
     # pytest-asyncio for just this one test.

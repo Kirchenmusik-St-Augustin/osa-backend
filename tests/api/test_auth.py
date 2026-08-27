@@ -145,7 +145,7 @@ def test_refresh_rotates_token_and_reuse_is_rejected(client, make_user):
 
     assert refresh_response.status_code == 200
     # The access token's jti (session id) deliberately stays constant across
-    # a refresh (1:1 vb-api design) -- within the same wall-clock second,
+    # a refresh -- within the same wall-clock second,
     # iat/exp/sub/jti are then all identical too, so the JWT bytes can
     # legitimately be unchanged. What's actually guaranteed to rotate is the
     # refresh secret itself (old one must stop working, see below).

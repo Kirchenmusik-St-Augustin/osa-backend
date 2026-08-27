@@ -365,9 +365,9 @@ def move_coreelement(
 ) -> Sequence[CoreelementModel]:
     """Two-row order swap, replacing Legacy's HasCoreelementFeatures::move()
     (loads the entire table, then reindexes and re-saves EVERY row on
-    every single click -- an O(n) anti-pattern flagged for modernization,
-    see project_osa_legacy_domain_map memory). No-op at either boundary,
-    mirroring Legacy's disabled up/down buttons at the list's ends."""
+    every single click -- an O(n) anti-pattern flagged for modernization).
+    No-op at either boundary, mirroring Legacy's disabled up/down buttons
+    at the list's ends."""
     items = list(list_coreelements(db, type_))
     index = next((i for i, item in enumerate(items) if item.id == element_id), None)
     if index is None:

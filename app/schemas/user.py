@@ -39,9 +39,9 @@ class UserRequest(StrictInputModel):
     deliberately Optional -- `users.email` is DB-nullable and Legacy's own
     `required_if:doReset,true` rule is dead code (the `doReset` field is
     never sent by the frontend), so the real, observable business result is
-    that email stays optional here too (see project_osa_migration_plan
-    memory). `roles` is accepted from every caller but only actually
-    persisted for a real administrator -- see user_service.update_user().
+    that email stays optional here too. `roles` is accepted from every
+    caller but only actually persisted for a real administrator -- see
+    user_service.update_user().
     `administrator` follows the same pattern -- a deliberate divergence
     from Legacy (which has no such field/path at all): only an acting
     administrator can grant it, and only ever grant (see

@@ -12,7 +12,7 @@ class Fee(Base):
     (`Content/System/FeeController`, not the generic Coreelement mechanism)
     -- unlike Instrument/Voice/Choirjob/Location/Role/Propriumelement, `fees`
     has no `order` column, so it deliberately does NOT use
-    CoreelementColumns (see project_osa_legacy_domain_map memory). Bookings
+    CoreelementColumns. Bookings
     copy a Fee's `amount` into `bookings.fee`/`booking_logs.fee` as a plain
     integer at booking time -- there is no FK from either table back to
     `fees.id`, so deleting a Fee never orphans a booking."""

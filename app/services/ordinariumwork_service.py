@@ -35,8 +35,7 @@ _NAME_LENGTH_ERROR = (
 
 # Legacy's Relation::morphMap restricts Ordinariumwork positions to these
 # two types (the DB CHECK constraint on ordinariumwork_positions.position_type
-# excludes 'choirjobs' -- confirmed by 1677 live rows, zero choirjobs, see
-# project_osa_legacy_domain_map memory).
+# excludes 'choirjobs' -- confirmed by 1677 live rows, zero choirjobs).
 _POSITION_MODELS: dict[str, type[Instrument | Voice]] = {
     "instruments": Instrument,
     "voices": Voice,

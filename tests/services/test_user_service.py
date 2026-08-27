@@ -177,8 +177,8 @@ class TestGetUser:
         self, db_session: Session, make_user
     ):
         # order=1 inserted first, order=0 (lower) second -- response must
-        # still come back order=0 first (see QuantityEditor.vue lesson in
-        # project_osa_migration_plan memory).
+        # still come back order=0 first (regression guard for the
+        # QuantityEditor.vue sort-order bug).
         first = _make_instrument(db_session)
         first.order = 1
         second = _make_instrument(db_session)

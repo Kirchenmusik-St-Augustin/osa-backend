@@ -11,8 +11,8 @@ _TOKENABLE_TYPE = "User"
 
 class PersonalAccessToken(Base):
     """Backs the JWT refresh flow by reusing legacy's `personal_access_tokens`
-    table -- a dead, unused Sanctum artifact in Legacy (0 rows in prod, see
-    project_osa_legacy_domain_map memory). User-confirmed 2026-07-31: this
+    table -- a dead, unused Sanctum artifact in Legacy (0 rows in prod).
+    User-confirmed 2026-07-31: this
     table stays byte-for-byte structurally identical to legacy (same
     columns, same nullability, same indexes, no FK -- legacy's own
     `tokenable_id` has none either, it's a polymorphic reference) so a

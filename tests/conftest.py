@@ -12,8 +12,8 @@ module-level singleton engine from get_settings().database_url at import
 time (E402 is already allowed project-wide for exactly this reason, see
 pyproject.toml).
 
-Per-test isolation is the vb-fastapi-vue sister project's transaction+
-SAVEPOINT pattern (db_session below), not the earlier "plain get_db()
+Per-test isolation uses a transaction+SAVEPOINT pattern (db_session
+below), not the earlier "plain get_db()
 generator, data persists across tests" model this suite used against its
 throwaway-per-session file. That original model relied on tests
 picking mutually-unique fixture data (uuid-suffixed emails, monotonic
@@ -26,7 +26,7 @@ consistent with a rare timing-dependent cross-test interaction rather than
 a deterministic bug in any one test. Wrapping every test in its own
 transaction, rolled back afterward regardless of how the test or the code
 under test committed, removes the shared mutable state that a timing
-window could ever act on -- the same reasoning vb-api already applied.
+window could ever act on.
 """
 
 import os
@@ -112,8 +112,8 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 # Plain module-level holder, not a ContextVar: TestClient runs the ASGI app
 # in a separate worker thread via an anyio blocking portal, and ContextVar
-# values set in the test thread don't reliably propagate there (1:1 vb-api's
-# own conftest.py). The suite runs fully serially (no pytest-xdist), so a
+# values set in the test thread don't reliably propagate there. The suite
+# runs fully serially (no pytest-xdist), so a
 # single module global is safe.
 _active_session: Session | None = None
 
@@ -299,7 +299,7 @@ def count_queries() -> Callable[[], Iterator["QueryCounter"]]:
     """Yield a factory for a context manager that counts executed SQL
     statements, e.g. `with count_queries() as counter: ...; assert
     counter.count <= N` -- used to assert N+1 query patterns don't
-    regress (1:1 vb-api pattern)."""
+    regress."""
 
     @contextmanager
     def _count_queries() -> Iterator[QueryCounter]:

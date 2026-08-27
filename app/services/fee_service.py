@@ -86,8 +86,7 @@ def update_fee(db: Session, fee_id: int, data: FeeRequest) -> FeeResponse:
 def delete_fee(db: Session, fee_id: int) -> None:
     # No has_dependencies check -- Legacy's own DestroyRequest has an empty
     # rules() too, since bookings.fee/booking_logs.fee are plain integer
-    # copies of a Fee's amount, never an FK to fees.id (see
-    # project_osa_migration_plan memory, Schritt 6 research).
+    # copies of a Fee's amount, never an FK to fees.id.
     fee = _get_or_404(db, fee_id)
     db.delete(fee)
     db.commit()

@@ -33,10 +33,10 @@ class RequestLogNotFoundError(Exception):
 
 
 # Legacy's `RequestLog::process()` only masks 'password'/'password_confirmation'
-# in the REQUEST body. Extended here (User-confirmed 2026-08-10, see
-# project_osa_migration_plan memory Schritt 9) to also cover the RESPONSE
-# body and a wider set of keys -- our JWT auth returns `access_token`
-# directly in login/refresh response bodies (legacy's session id never
+# in the REQUEST body. Extended here (User-confirmed 2026-08-10, Schritt 9)
+# to also cover the RESPONSE body and a wider set of keys -- our JWT auth
+# returns `access_token` directly in login/refresh response bodies
+# (legacy's session id never
 # leaves an httponly cookie), so a 1:1 narrow mask would leak live tokens
 # into an administrator-readable log table. Pure security hardening, no
 # legacy business result changed -- security bugs get fixed, not
