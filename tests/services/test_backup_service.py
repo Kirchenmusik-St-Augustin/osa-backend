@@ -106,6 +106,14 @@ class TestParseDbUrl:
 
 
 class TestRunBackup:
+    @pytest.fixture(autouse=True)
+    def _production_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # run_backup() is production-only (see its docstring) -- every test
+        # in this class exercises the success/failure paths past that gate,
+        # so production is this class's ambient default. The one test that
+        # targets the gate itself overrides this back down.
+        monkeypatch.setenv("APP_ENVIRONMENT", "production")
+
     def test_uploads_a_dump_with_stage_prefixed_name(
         self, monkeypatch: pytest.MonkeyPatch
     ):
@@ -135,8 +143,9 @@ class TestRunBackup:
 
         match = backup_service._FILENAME_PATTERN.match(archive_name)
         assert match is not None
-        # APP_ENVIRONMENT is "test" in the test suite (see conftest.py).
-        assert match.group("stage") == "test"
+        # APP_ENVIRONMENT is "production" here (see _production_env above --
+        # run_backup() only ever succeeds in that stage).
+        assert match.group("stage") == "production"
         assert not archive_name.endswith("-manual.dump")
         assert str(uploaded["url"]).endswith(archive_name)
         assert uploaded["auth"] == ("user", "pw")
@@ -260,6 +269,18 @@ class TestRunBackup:
         archive_name = backup_service.run_backup()
 
         assert "2026-08-14_03-00-00" in archive_name
+
+    def test_refuses_outside_production(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("APP_ENVIRONMENT", "test")
+
+        def unexpected_run(*_a: object, **_kw: object) -> None:
+            msg = "pg_dump must not run when backup is blocked by the environment gate"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(backup_service.subprocess, "run", unexpected_run)
+
+        with pytest.raises(BackupError, match="production"):
+            backup_service.run_backup()
 
 
 # Deliberately absolute WebDAV hrefs (not bare filenames) -- see
@@ -780,7 +801,13 @@ class TestRunRestore:
 
         older = "production-2024-01-01_00-00-00.dump"
         newest = "production-2024-06-01_00-00-00.dump"
-        monkeypatch.setattr(backup_service, "list_backups", lambda: [older, newest])
+        received_stage: dict[str, str | None] = {}
+
+        def fake_list_backups(*, stage: str | None = None) -> list[str]:
+            received_stage["stage"] = stage
+            return [older, newest]
+
+        monkeypatch.setattr(backup_service, "list_backups", fake_list_backups)
 
         requested_urls: list[str] = []
 
@@ -794,6 +821,10 @@ class TestRunRestore:
 
         assert result == newest
         assert requested_urls[0].endswith(newest)
+        # Regression guard: auto-select must only ever consider production
+        # backups, never an older non-production dump that happens to sort
+        # after it.
+        assert received_stage["stage"] == "production"
 
     def test_rejects_a_malformed_backup_name_before_any_network_call(
         self, monkeypatch: pytest.MonkeyPatch
@@ -815,9 +846,9 @@ class TestRunRestore:
         monkeypatch.setenv("DATABASE_URL", PG_URL)
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
-        monkeypatch.setattr(backup_service, "list_backups", list)
+        monkeypatch.setattr(backup_service, "list_backups", lambda **_kwargs: [])
 
-        with pytest.raises(BackupError, match="No backups found"):
+        with pytest.raises(BackupError, match="No production backups found"):
             backup_service.run_restore(force=True)
 
     def test_disposes_the_engine_after_a_successful_restore(

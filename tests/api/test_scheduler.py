@@ -77,7 +77,14 @@ def test_returns_empty_list_when_scheduler_stopped(client, make_user):
 
 
 class TestTriggerBackup:
-    def test_returns_201_with_backup_name_and_triggered_at(self, client, make_user):
+    def test_returns_201_with_backup_name_and_triggered_at(
+        self, client, make_user, monkeypatch
+    ):
+        # Set the env BEFORE _auth_headers() triggers the first
+        # get_settings() call in this test (login itself doesn't depend on
+        # app_environment, but get_settings() is lru_cache'd -- see
+        # conftest.py's client fixture docstring).
+        monkeypatch.setenv("APP_ENVIRONMENT", "production")
         headers = _auth_headers(client, make_user, administrator=True)
 
         # Patched at the router's import site (app.api.router_includes.scheduler),
@@ -85,7 +92,7 @@ class TestTriggerBackup:
         # the name into the router module's own namespace.
         with patch(
             "app.api.router_includes.scheduler.run_backup",
-            return_value="test-2026-08-13_12-00-00-manual.tar.gz",
+            return_value="production-2026-08-13_12-00-00-manual.tar.gz",
         ) as mock_run_backup:
             response = client.post(
                 "/administrator/scheduler/backup/trigger", headers=headers
@@ -93,7 +100,7 @@ class TestTriggerBackup:
 
         assert response.status_code == 201
         body = response.json()
-        assert body["backup_name"] == "test-2026-08-13_12-00-00-manual.tar.gz"
+        assert body["backup_name"] == "production-2026-08-13_12-00-00-manual.tar.gz"
         # Locks in the UtcDatetime contract (Zeitzonen-Konsolidierung,
         # 2026-08-14): must carry a real UTC offset, not an offset-free
         # string, consistent with every other UTC-instant response field.
@@ -101,7 +108,10 @@ class TestTriggerBackup:
         assert triggered_at.tzinfo is not None
         mock_run_backup.assert_called_once_with(manual=True)
 
-    def test_returns_500_with_detail_when_backup_fails(self, client, make_user):
+    def test_returns_500_with_detail_when_backup_fails(
+        self, client, make_user, monkeypatch
+    ):
+        monkeypatch.setenv("APP_ENVIRONMENT", "production")
         headers = _auth_headers(client, make_user, administrator=True)
 
         with patch(
@@ -114,6 +124,25 @@ class TestTriggerBackup:
 
         assert response.status_code == 500
         assert response.json()["detail"] == "Koofr upload failed"
+
+    def test_returns_409_outside_production_without_running_backup(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        def unexpected_run_backup(**_kwargs: object) -> str:
+            msg = "must never run a backup once blocked by the production gate"
+            raise AssertionError(msg)
+
+        with patch(
+            "app.api.router_includes.scheduler.run_backup",
+            side_effect=unexpected_run_backup,
+        ):
+            response = client.post(
+                "/administrator/scheduler/backup/trigger", headers=headers
+            )
+
+        assert response.status_code == 409
 
 
 class TestTriggerDownsync:

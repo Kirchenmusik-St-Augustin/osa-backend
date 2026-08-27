@@ -173,12 +173,23 @@ def run_backup(*, manual: bool = False) -> str:
     ad-hoc backups (admin-triggered API call, CLI script) from the ones the
     scheduled backup_koofr job produces unsuffixed.
 
+    Production-only: the Koofr path is ONE shared destination across every
+    stage, so a backup from any other stage would pollute that shared
+    history. Enforced here (not just in the scheduler's job-registration
+    gate or the frontend) so scripts/backup_db.py and any future caller are
+    protected the same way.
+
     Returns the uploaded archive's filename. Raises BackupError on any
     failure -- nothing is left behind on Koofr on failure, the upload is
     the last step.
     """
     database_url = require_setting(get_settings().database_url, "DATABASE_URL")
     _require_postgres(database_url)
+
+    if get_settings().app_environment != "production":
+        msg = "Backup is only permitted in production."
+        raise BackupError(msg)
+
     host, user, password, port, dbname = _parse_db_url(database_url)
 
     timestamp = local_now().strftime(_TIMESTAMP_FORMAT)
@@ -251,11 +262,12 @@ def list_backups(*, stage: str | None = None) -> list[str]:
     differently-staged backups sharing this one Koofr path.
 
     `stage`, when given, restricts the result to backups created by that
-    exact stage (e.g. "production") -- used by the downsync job/trigger to
-    find "the latest PRODUCTION backup" rather than the latest backup
-    overall, since a manually-triggered backup is callable from any stage
-    and lands in this same shared Koofr path too (see
-    app.api.router_includes.scheduler.trigger_backup's docstring)."""
+    exact stage (e.g. "production") -- used by the downsync job/trigger and
+    by run_restore()'s own auto-select fallback to find "the latest
+    PRODUCTION backup" rather than the latest backup overall. Even though
+    run_backup() is production-only (see its docstring), this filter stays
+    meaningful: Koofr can still hold non-production-labeled backups
+    uploaded before that gate existed."""
     user, password = _koofr_auth()
     propfind_body = (
         '<?xml version="1.0"?>'
@@ -507,12 +519,16 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
         raise BackupError(msg)
 
     if backup_name is None:
-        available = list_backups()
+        # Filtered to "production" regardless of which stage is restoring:
+        # production is the one canonical source, so the auto-selected
+        # "latest" backup must never be an older, non-production-labeled
+        # dump that happens to sort after it.
+        available = list_backups(stage="production")
         if not available:
-            msg = "No backups found on Koofr."
+            msg = "No production backups found on Koofr."
             raise BackupError(msg)
         backup_name = available[-1]
-        logger.info("Auto-selected latest backup: %s", backup_name)
+        logger.info("Auto-selected latest production backup: %s", backup_name)
     elif not _FILENAME_PATTERN.match(backup_name):
         msg = f"'{backup_name}' is not a valid backup filename."
         raise BackupError(msg)
