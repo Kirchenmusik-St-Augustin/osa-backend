@@ -14,4 +14,3 @@ htmlcov
 tests
 Dockerfile
 *.md
-deploy
