@@ -1,8 +1,7 @@
 # osa-backend
 
 FastAPI backend for **OSA** ("Orchester-Einteilung") — the scheduling/casting
-system for the church musicians of Kirchenmusik St. Augustin. Migrates a
-legacy Laravel/Inertia/Vue application.
+system for the church musicians of Kirchenmusik St. Augustin.
 
 ## Tech Stack
 
@@ -13,14 +12,14 @@ legacy Laravel/Inertia/Vue application.
 - **Backup:** Koofr (WebDAV), see [Scheduler](#scheduler) and
   [Scripts](#scripts) below
 - **Container:** Podman Quadlets (rootless systemd) — quadlets for every
-  stage, including local dev, live in [`osa-deploy`](../osa-deploy)
+  stage, including local dev, live in [`osa-deploy`](https://github.com/Kirchenmusik-St-Augustin/osa-deploy)
 
 ## Development Setup
 
 ### Prerequisites
 
 - Podman with the `osa-backend` container running — see
-  [`osa-deploy`'s README](../osa-deploy/README.md#local-development-environment)
+  [`osa-deploy`'s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy#local-development-environment)
   for how to set this up from a fresh clone (Quadlet config ends up under
   `~/.config/containers/systemd/osa/osa-backend/` on the dev host)
 - Python dev dependencies are installed inside the container
@@ -72,7 +71,7 @@ podman exec osa-backend python scripts/check_router_soc.py
 Schema changes go through Alembic (`alembic/`). `docker-entrypoint.sh`
 runs `alembic upgrade head` automatically on every container start, so
 there is no manual migration step in
-[`osa-deploy`'s deploy runbook](../osa-deploy/README.md) (Phase 2). To
+[`osa-deploy`'s deploy runbook](https://github.com/Kirchenmusik-St-Augustin/osa-deploy) (Phase 2). To
 generate a new migration after changing a model:
 
 ```bash
@@ -103,13 +102,13 @@ Settings are tiered (see `app/core/config.py`'s module docstring):
 | 3 | Feature-required, no default — first real use raises, not boot | `SMTP_HOST`, `GOOGLE_CLIENT_ID`, `KOOFR_USER`/`KOOFR_PASSWORD` |
 
 `.env` is for local dev only. Production/test/qa never use it — the same
-variables live vault-encrypted in [`osa-deploy`](../osa-deploy)'s
+variables live vault-encrypted in [`osa-deploy`](https://github.com/Kirchenmusik-St-Augustin/osa-deploy)'s
 `secrets/<stage>/osa-backend.env.j2`, see its README's
-[Maintaining secrets](../osa-deploy/README.md#maintaining-secrets)
+[Maintaining secrets](https://github.com/Kirchenmusik-St-Augustin/osa-deploy#maintaining-secrets)
 section.
 
 `GOOGLE_CLIENT_ID` is Tier 3 on both sides (backend and
-[frontend](../osa-frontend/README.md#environment-variables)) — leave it
+[frontend](https://github.com/Kirchenmusik-St-Augustin/osa-frontend#environment-variables)) — leave it
 empty/unset on a stage where Google's Developer Console isn't configured
 and Google Login is simply absent there: the frontend's button doesn't
 render, and `require_setting()` (see `app/core/config.py`) only raises if
@@ -162,7 +161,7 @@ podman exec -it osa-backend python scripts/restore_db.py --force
 
 `restore_db.py` refuses to run under `APP_ENVIRONMENT=production` without
 `--force` — a restore overwrites the live database. See
-[`osa-deploy`'s README](../osa-deploy/README.md) for the full disaster
+[`osa-deploy`'s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy) for the full disaster
 recovery runbook.
 
 ## Branching
@@ -186,7 +185,7 @@ on manual dispatch:
 
 A pushed image reaches a running stage on its own, via
 `podman-auto-update.timer` — or immediately, via `--tags deploy-backend`.
-See [`osa-deploy`'s README](../osa-deploy/README.md) for that full deploy
+See [`osa-deploy`'s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy) for that full deploy
 flow; this repo doesn't run it.
 
 ---
@@ -195,7 +194,6 @@ flow; this repo doesn't run it.
 
 FastAPI-Backend für **OSA** ("Orchester-Einteilung") — das Dienstplan-/
 Besetzungssystem für die Kirchenmusiker von Kirchenmusik St. Augustin.
-Migriert eine bestehende Laravel/Inertia/Vue-Anwendung.
 
 ## Tech-Stack
 
@@ -207,7 +205,7 @@ Migriert eine bestehende Laravel/Inertia/Vue-Anwendung.
   [Skripte](#skripte) unten
 - **Container:** Podman Quadlets (rootless systemd) — die Quadlets für
   jede Stage, inklusive lokaler Entwicklung, liegen in
-  [`osa-deploy`](../osa-deploy)
+  [`osa-deploy`](https://github.com/Kirchenmusik-St-Augustin/osa-deploy)
 
 ## Entwicklungs-Setup
 
@@ -215,7 +213,7 @@ Migriert eine bestehende Laravel/Inertia/Vue-Anwendung.
 
 - Podman mit laufendem `osa-backend`-Container — wie das von einem
   frischen Checkout aus aufgesetzt wird, steht in
-  [`osa-deploy`s README](../osa-deploy/README.md#lokale-entwicklungsumgebung)
+  [`osa-deploy`s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy#lokale-entwicklungsumgebung)
   (die Quadlet-Konfiguration landet dabei unter
   `~/.config/containers/systemd/osa/osa-backend/` auf der Dev-Umgebung)
 - Die Python-Dev-Abhängigkeiten sind im Container bereits installiert
@@ -268,7 +266,7 @@ podman exec osa-backend python scripts/check_router_soc.py
 Schema-Änderungen laufen über Alembic (`alembic/`). `docker-entrypoint.sh`
 führt bei jedem Container-Start automatisch `alembic upgrade head` aus,
 kein manueller Migrationsschritt im
-[Deploy-Runbook von `osa-deploy`](../osa-deploy/README.md) (Phase 2)
+[Deploy-Runbook von `osa-deploy`](https://github.com/Kirchenmusik-St-Augustin/osa-deploy) (Phase 2)
 nötig. Neue Migration nach einer Modell-Änderung erzeugen:
 
 ```bash
@@ -301,12 +299,12 @@ Die Settings sind gestuft (siehe den Docstring des Moduls
 
 `.env` ist nur für lokale Entwicklung. Produktion/Test/QA nutzen es nie —
 dieselben Variablen liegen dort vault-verschlüsselt in
-[`osa-deploy`](../osa-deploy)s `secrets/<stage>/osa-backend.env.j2`, siehe
-den Abschnitt [Secrets pflegen](../osa-deploy/README.md#secrets-pflegen)
+[`osa-deploy`](https://github.com/Kirchenmusik-St-Augustin/osa-deploy)s `secrets/<stage>/osa-backend.env.j2`, siehe
+den Abschnitt [Secrets pflegen](https://github.com/Kirchenmusik-St-Augustin/osa-deploy#secrets-pflegen)
 in dessen README.
 
 `GOOGLE_CLIENT_ID` ist auf beiden Seiten Stufe 3 (Backend und
-[Frontend](../osa-frontend/README.md#umgebungsvariablen)) — auf einer
+[Frontend](https://github.com/Kirchenmusik-St-Augustin/osa-frontend#umgebungsvariablen)) — auf einer
 Stage, auf der die Google Developer Console nicht konfiguriert ist,
 einfach leer/unset lassen, dann ist Google Login dort schlichtweg nicht
 vorhanden: der Button im Frontend rendert nicht, und `require_setting()`
@@ -363,7 +361,7 @@ podman exec -it osa-backend python scripts/restore_db.py --force
 `restore_db.py` verweigert sich unter `APP_ENVIRONMENT=production` ohne
 `--force` — ein Restore überschreibt die Live-Datenbank. Das vollständige
 Disaster-Recovery-Runbook steht in
-[`osa-deploy`s README](../osa-deploy/README.md).
+[`osa-deploy`s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy).
 
 ## Branching
 
@@ -387,5 +385,5 @@ CodeQL-Refresh) und bei manuellem Dispatch:
 Ein gepushtes Image erreicht eine laufende Stage von selbst, über
 `podman-auto-update.timer` — oder sofort, über `--tags deploy-backend`.
 Den vollständigen Deploy-Flow dazu beschreibt
-[`osa-deploy`s README](../osa-deploy/README.md); dieses Repo führt ihn
+[`osa-deploy`s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy); dieses Repo führt ihn
 nicht selbst aus.
