@@ -16,6 +16,7 @@ from app.core import mailer
 from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings, require_setting
 from app.core.rate_limit import limiter
+from app.core.redacted import Redacted
 from app.core.security import (
     REFRESH_TOKEN_LIFETIME_DAYS,
     build_refresh_cookie_value,
@@ -304,7 +305,7 @@ async def register(
     if user.email is not None:
         verify_url = auth_service.build_verification_email_url(user)
         await arq_pool.enqueue_job(
-            send_verification_email_task.__name__, user.email, verify_url
+            send_verification_email_task.__name__, user.email, Redacted(verify_url)
         )
 
     return _build_login_response(access_token, session_id, refresh_secret)
@@ -334,7 +335,9 @@ async def resend_verification_email(
     verify_url = await run_in_threadpool(_resend_verification_email_sync, current_user)
     if verify_url is not None and current_user.email is not None:
         await arq_pool.enqueue_job(
-            send_verification_email_task.__name__, current_user.email, verify_url
+            send_verification_email_task.__name__,
+            current_user.email,
+            Redacted(verify_url),
         )
     return {
         "status": "ok",
@@ -397,7 +400,7 @@ async def forgot_password(
     reset_url = await run_in_threadpool(_forgot_password_sync, data, db)
     if reset_url is not None:
         await arq_pool.enqueue_job(
-            send_password_reset_email_task.__name__, data.email, reset_url
+            send_password_reset_email_task.__name__, data.email, Redacted(reset_url)
         )
     return {
         "status": "ok",

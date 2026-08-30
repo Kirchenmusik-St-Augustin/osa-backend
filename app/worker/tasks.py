@@ -6,14 +6,16 @@ ArqRedis.enqueue_job() -- e.g. app/api/router_includes/auth.py's
 forgot_password() enqueues send_password_reset_email_task.__name__.
 
 Every argument passed through enqueue_job() must be picklable (arq's
-default job serializer) -- true for every argument below (plain str/list
-values, and mailer.BookingCanceledMailEntry, a module-level frozen
-dataclass).
+default job serializer, pickle.dumps -- see arq.jobs.serialize_job) --
+true for every argument below (plain str/list values,
+mailer.BookingCanceledMailEntry, a module-level frozen dataclass, and
+Redacted, itself a plain frozen dataclass).
 """
 
 from starlette.concurrency import run_in_threadpool
 
 from app.core import mailer
+from app.core.redacted import Redacted
 
 
 async def send_new_registration_notice_task(
@@ -36,17 +38,22 @@ async def send_new_registration_notice_task(
 async def send_verification_email_task(
     ctx: dict[str, object],  # noqa: ARG001 -- see send_new_registration_notice_task
     to_email: str,
-    verify_url: str,
+    verify_url: Redacted,
 ) -> None:
-    await run_in_threadpool(mailer.send_verification_email, to_email, verify_url)
+    # verify_url arrives wrapped in Redacted so arq's own job-start/-finish
+    # logging (which reprs every argument) never shows the raw magic-link
+    # token in cleartext -- unwrapped here, right before the one place
+    # that actually needs the real value.
+    await run_in_threadpool(mailer.send_verification_email, to_email, verify_url.value)
 
 
 async def send_password_reset_email_task(
     ctx: dict[str, object],  # noqa: ARG001 -- see send_new_registration_notice_task
     to_email: str,
-    reset_url: str,
+    reset_url: Redacted,
 ) -> None:
-    await run_in_threadpool(mailer.send_password_reset_email, to_email, reset_url)
+    # See send_verification_email_task above for why this arrives wrapped.
+    await run_in_threadpool(mailer.send_password_reset_email, to_email, reset_url.value)
 
 
 async def send_booked_or_standby_canceled_email_task(
