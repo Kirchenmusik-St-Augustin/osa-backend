@@ -4,7 +4,7 @@ gunicorn
 sqlalchemy
 psycopg2-binary
 alembic
-apscheduler
+arq
 pydantic-settings
 bcrypt
 PyJWT

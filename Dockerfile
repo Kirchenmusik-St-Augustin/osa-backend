@@ -45,9 +45,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
 ENTRYPOINT ["./docker-entrypoint.sh"]
-# 1 worker: the scheduler's pg_try_advisory_lock guard (see
-# app/core/scheduler.py) makes >1 worker safe against double-firing cron
-# jobs, but raising the worker count itself is an intentionally separate
-# follow-up decision, not part of the structural 1:1 DB transfer.
+# 1 worker: no cron/background-job coordination concern drives this
+# choice anymore (cron jobs and ad-hoc background jobs both run
+# exclusively in the dedicated osa-backend-worker container now, see
+# app/worker/settings.py) -- raising this is a plain, independent
+# capacity decision for the web process itself.
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-"]

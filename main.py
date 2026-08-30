@@ -17,10 +17,10 @@ from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.api.router import api_router
 from app.api.router_includes.go import go_router
 from app.api.system import system_router
+from app.core.arq_pool import close_arq_pool
 from app.core.config import get_settings
 from app.core.logging_config import setup_logging
 from app.core.rate_limit import limiter
-from app.core.scheduler import start_scheduler, stop_scheduler
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -32,9 +32,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "*** osa-backend starting - environment: %s ***", settings.app_environment
     )
-    start_scheduler()
     yield
-    stop_scheduler()
+    await close_arq_pool()
     logger.info("osa-backend shutdown complete.")
 
 

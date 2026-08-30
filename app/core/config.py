@@ -8,10 +8,10 @@ Tier 1 (boot-critical, validated in _validate_tier1 below): APP_ENVIRONMENT,
 CORS_ORIGINS, DATABASE_URL, SECRET_KEY.
 
 Tier 2 (optional, defaults applied, no boot-time validation): session/JWT
-lifetimes, mail sender identity, registration/mail-kill-switch tuning --
-sane defaults (several taken straight from Legacy's config/mail.php and
-config/osa.php) so a deployment that never touches these features still
-boots.
+lifetimes, mail sender identity, registration/mail-kill-switch tuning,
+Valkey connection details for the arq job queue -- sane defaults (several
+taken straight from Legacy's config/mail.php and config/osa.php) so a
+deployment that never touches these features still boots.
 
 Tier 3 (feature-required, no default -- checked at first actual use via
 require_setting(), not at boot): SMTP_HOST/SMTP_PORT, GOOGLE_CLIENT_ID,
@@ -132,6 +132,18 @@ class Settings(BaseSettings):
     # Settings.app_timezone (see app.core.scheduler.start_scheduler()).
     backup_hour: int = Field(default=3, validation_alias="BACKUP_HOUR")
     backup_minute: int = Field(default=0, validation_alias="BACKUP_MINUTE")
+
+    # Tier 2 (arq/Valkey job queue) -- pod-internal only (see osa-deploy's
+    # osa-backend-valkey quadlet, no PublishPort=), so 127.0.0.1 is always
+    # correct in every real deployment; only the password genuinely varies
+    # per stage. None means "no password" -- valid for an unauthenticated
+    # local-dev Valkey that never sets VALKEY_PASSWORD at all.
+    valkey_host: str = Field(default="127.0.0.1", validation_alias="VALKEY_HOST")
+    valkey_port: int = Field(default=6379, validation_alias="VALKEY_PORT")
+    valkey_password: str | None = Field(
+        default=None, validation_alias="VALKEY_PASSWORD"
+    )
+    valkey_database: int = Field(default=0, validation_alias="VALKEY_DATABASE")
 
     # Tier 3 -- feature-required, no default, checked at first use via
     # require_setting() below.

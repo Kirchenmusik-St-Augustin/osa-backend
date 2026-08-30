@@ -1,7 +1,6 @@
 from datetime import datetime
 from unittest.mock import patch
 
-from app.core.scheduler import stop_scheduler
 from app.services.backup_service import BackupError
 
 
@@ -53,8 +52,8 @@ class TestPermissionGuard:
 
 
 def test_returns_registered_jobs_with_expected_shape(client, make_user):
-    # The client fixture's lifespan startup already ran start_scheduler()
-    # under APP_ENVIRONMENT=test, so at least the always-on job is present.
+    # purge_stale_booking_requests is active in every environment, so this
+    # is always non-empty regardless of APP_ENVIRONMENT.
     headers = _auth_headers(client, make_user, administrator=True)
 
     response = client.get("/administrator/scheduler/jobs", headers=headers)
@@ -66,14 +65,36 @@ def test_returns_registered_jobs_with_expected_shape(client, make_user):
         assert set(job.keys()) == {"id", "name", "trigger", "next_run", "description"}
 
 
-def test_returns_empty_list_when_scheduler_stopped(client, make_user):
-    stop_scheduler()
+def test_hides_production_only_jobs_outside_production(client, make_user):
     headers = _auth_headers(client, make_user, administrator=True)
 
     response = client.get("/administrator/scheduler/jobs", headers=headers)
 
     assert response.status_code == 200
-    assert response.json() == []
+    job_ids = {job["id"] for job in response.json()}
+    assert "purge_stale_booking_requests" in job_ids
+    assert "downsync" in job_ids
+    assert "backup_koofr" not in job_ids
+    assert "notify_upcoming_booking_status" not in job_ids
+    assert "purge_expired_password_reset_tokens" not in job_ids
+    assert "purge_old_request_logs" not in job_ids
+
+
+def test_shows_production_only_jobs_in_production(client, make_user, monkeypatch):
+    # Set the env BEFORE _auth_headers() triggers the first get_settings()
+    # call in this test (see the same pattern in TestTriggerBackup below).
+    monkeypatch.setenv("APP_ENVIRONMENT", "production")
+    headers = _auth_headers(client, make_user, administrator=True)
+
+    response = client.get("/administrator/scheduler/jobs", headers=headers)
+
+    assert response.status_code == 200
+    job_ids = {job["id"] for job in response.json()}
+    assert "backup_koofr" in job_ids
+    assert "notify_upcoming_booking_status" in job_ids
+    assert "purge_expired_password_reset_tokens" in job_ids
+    assert "purge_old_request_logs" in job_ids
+    assert "downsync" not in job_ids
 
 
 class TestTriggerBackup:

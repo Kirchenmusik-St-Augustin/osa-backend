@@ -2,15 +2,18 @@ from math import ceil
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from arq.connections import ArqRedis
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_guards import get_verified_user
 from app.api.deps import get_current_user, oauth2_scheme
 from app.api.error_responses import field_errors_to_detail
 from app.core import mailer
+from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings, require_setting
 from app.core.rate_limit import limiter
 from app.core.security import (
@@ -38,6 +41,11 @@ from app.services.auth_service import (
     RegistrationConflictError,
 )
 from app.services.permission_service import calculate_permissions
+from app.worker.tasks import (
+    send_new_registration_notice_task,
+    send_password_reset_email_task,
+    send_verification_email_task,
+)
 
 auth_router = APIRouter()
 
@@ -250,26 +258,44 @@ def get_current_user_profile(
     )
 
 
+def _register_sync(data: RegisterRequest, db: Session) -> tuple[User, str, str, str]:
+    """Original synchronous handler body, logic unchanged -- extracted so
+    the async router function below can run it via run_in_threadpool
+    instead of executing this blocking DB code directly on the event loop.
+    Lets RegistrationConflictError propagate uncaught -- run_in_threadpool
+    re-raises it in the calling (async) context, where the router's own
+    try/except below turns it into a 422 response, exactly as before."""
+    user = auth_service.register_user(db, data)
+    access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db, user
+    )
+    return user, access_token, session_id, refresh_secret
+
+
 @auth_router.post("/register")
-def register(
+async def register(
     data: RegisterRequest,
-    background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> JSONResponse:
     """Register + auto-login (mirrors Legacy's `Auth::login($user)` right
     after `User::create()`), then notify the disponent address in the
     background -- registration itself must not wait on (or fail because
-    of) mail delivery."""
+    of) mail delivery. No auth/permission dependency exists on this
+    endpoint (it must work logged-out), so there is no dependency-ordering
+    concern here, unlike resend_verification_email below."""
     try:
-        user = auth_service.register_user(db, data)
+        user, access_token, session_id, refresh_secret = await run_in_threadpool(
+            _register_sync, data, db
+        )
     except RegistrationConflictError as exc:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content={"detail": field_errors_to_detail(exc.errors)},
         )
 
-    background_tasks.add_task(
-        mailer.send_new_registration_notice,
+    await arq_pool.enqueue_job(
+        send_new_registration_notice_task.__name__,
         surname=user.surname,
         givenname=user.givenname,
         email=data.email.lower(),
@@ -277,32 +303,38 @@ def register(
     )
     if user.email is not None:
         verify_url = auth_service.build_verification_email_url(user)
-        background_tasks.add_task(
-            mailer.send_verification_email, user.email, verify_url
+        await arq_pool.enqueue_job(
+            send_verification_email_task.__name__, user.email, verify_url
         )
 
-    access_token, session_id, refresh_secret = auth_service.create_user_session(
-        db, user
-    )
     return _build_login_response(access_token, session_id, refresh_secret)
+
+
+def _resend_verification_email_sync(current_user: User) -> str | None:
+    if current_user.email_verified_at is None and current_user.email is not None:
+        return auth_service.build_verification_email_url(current_user)
+    return None
 
 
 @auth_router.post("/resend-verification-email")
 @limiter.limit("6/minute")  # type: ignore[reportUntypedFunctionDecorator]
-def resend_verification_email(
+async def resend_verification_email(
     request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
-    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_user)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> dict[str, str]:
     """1:1 Legacy's `POST verify-email` (EmailVerificationController::send()).
     Deliberately uses get_current_user, not get_verified_user -- an
     unverified user must be able to reach exactly this endpoint. No-op
     (still 200) if already verified, matching Legacy's own idempotent
-    `hasVerifiedEmail()` short-circuit."""
-    if current_user.email_verified_at is None and current_user.email is not None:
-        verify_url = auth_service.build_verification_email_url(current_user)
-        background_tasks.add_task(
-            mailer.send_verification_email, current_user.email, verify_url
+    `hasVerifiedEmail()` short-circuit. current_user is declared BEFORE
+    arq_pool on purpose: FastAPI resolves Depends() in declaration order,
+    and an invalid/expired bearer token must be rejected (401) before this
+    request ever pays for creating/reusing the ARQ pool connection."""
+    verify_url = await run_in_threadpool(_resend_verification_email_sync, current_user)
+    if verify_url is not None and current_user.email is not None:
+        await arq_pool.enqueue_job(
+            send_verification_email_task.__name__, current_user.email, verify_url
         )
     return {
         "status": "ok",
@@ -333,26 +365,39 @@ def verify_email(
     return _build_login_response(access_token, session_id, refresh_secret)
 
 
+def _forgot_password_sync(data: ForgotPasswordRequest, db: Session) -> str | None:
+    """Original synchronous handler body, logic unchanged -- extracted so
+    the async router function below can run it via run_in_threadpool
+    instead of executing this blocking DB code directly on the event loop."""
+    token = auth_service.request_password_reset(db, data.email)
+    if token is None:
+        return None
+    settings = get_settings()
+    base_url = require_setting(
+        settings.frontend_reset_password_url, "FRONTEND_RESET_PASSWORD_URL"
+    )
+    return f"{base_url}?{urlencode({'token': token, 'email': data.email})}"
+
+
 @auth_router.post("/forgot-password")
-def forgot_password(
+async def forgot_password(
     data: ForgotPasswordRequest,
-    background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> dict[str, str]:
     """Always responds 200 regardless of whether the email is registered
     -- prevents account enumeration (1:1 Legacy UX, even though Legacy's
     own server-side validation actually leaks this via a distinct
     "passwords.user" error; the neutral-response behavior is the
-    hardening, not a Legacy replication)."""
-    token = auth_service.request_password_reset(db, data.email)
-    if token is not None:
-        settings = get_settings()
-        base_url = require_setting(
-            settings.frontend_reset_password_url, "FRONTEND_RESET_PASSWORD_URL"
-        )
-        reset_url = f"{base_url}?{urlencode({'token': token, 'email': data.email})}"
-        background_tasks.add_task(
-            mailer.send_password_reset_email, data.email, reset_url
+    hardening, not a Legacy replication). No auth/permission dependency
+    exists on this endpoint (must work logged-out), so unlike
+    resend_verification_email above there is no dependency-ordering
+    concern here -- db and arq_pool are the only two dependencies and
+    neither one rejects the request."""
+    reset_url = await run_in_threadpool(_forgot_password_sync, data, db)
+    if reset_url is not None:
+        await arq_pool.enqueue_job(
+            send_password_reset_email_task.__name__, data.email, reset_url
         )
     return {
         "status": "ok",

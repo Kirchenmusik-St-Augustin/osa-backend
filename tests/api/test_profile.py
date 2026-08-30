@@ -1,5 +1,4 @@
 import uuid
-from unittest.mock import patch
 
 import pytest
 
@@ -96,33 +95,33 @@ class TestUpdateProfile:
         )
         assert response.status_code == 422
 
-    def test_unchanged_email_sends_no_verification_mail(self, client, make_user):
+    def test_unchanged_email_sends_no_verification_mail(
+        self, client, make_user, fake_arq_pool
+    ):
         headers, email = _auth_headers(client, make_user)
-        with patch("app.core.mailer.send_verification_email") as mock_send:
-            response = client.put(
-                "/profile", json=_payload(email=email), headers=headers
-            )
+        response = client.put("/profile", json=_payload(email=email), headers=headers)
         assert response.status_code == 200
-        mock_send.assert_not_called()
+        fake_arq_pool.enqueue_job.assert_not_called()
 
     def test_changed_email_resets_verification_and_sends_a_new_mail(
-        self, client, make_user, monkeypatch: pytest.MonkeyPatch
+        self, client, make_user, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify")
         headers, _old_email = _auth_headers(client, make_user)
         new_email = f"{_unique('new').lower()}@example.com"
 
-        with patch("app.core.mailer.send_verification_email") as mock_send:
-            response = client.put(
-                "/profile", json=_payload(email=new_email), headers=headers
-            )
+        response = client.put(
+            "/profile", json=_payload(email=new_email), headers=headers
+        )
 
         assert response.status_code == 200
         body = response.json()
         assert body["email"] == new_email
         assert body["email_verified_at"] is None
-        mock_send.assert_called_once()
-        assert mock_send.call_args[0][0] == new_email
+        fake_arq_pool.enqueue_job.assert_called_once()
+        args = fake_arq_pool.enqueue_job.call_args.args
+        assert args[0] == "send_verification_email_task"
+        assert args[1] == new_email
 
     def test_password_change_allows_login_with_the_new_password(
         self, client, make_user
