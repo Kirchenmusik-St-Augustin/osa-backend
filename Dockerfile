@@ -51,4 +51,11 @@ ENTRYPOINT ["./docker-entrypoint.sh"]
 # app/worker/settings.py) -- raising this is a plain, independent
 # capacity decision for the web process itself.
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-"]
+     "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-", \
+     "--no-control-socket"]
+# --no-control-socket: this feature (gunicorn >= 25.1.0) is for gunicornc,
+# a CLI tool for runtime worker management -- unused here (Podman/systemd
+# own the container lifecycle instead). Without this flag, gunicorn tries
+# to create $HOME/.gunicorn/gunicorn.ctl by default, which fails with a
+# permission error on every start: the app user above is created with
+# --no-create-home, so its $HOME (/home/app) was never actually created.

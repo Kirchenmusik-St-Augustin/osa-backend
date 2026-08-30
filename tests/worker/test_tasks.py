@@ -3,6 +3,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 from app.core import mailer
+from app.core.redacted import Redacted
 from app.worker import tasks
 
 
@@ -29,7 +30,9 @@ def test_send_verification_email_task_forwards_email_and_url():
     with patch.object(mailer, "send_verification_email") as mock_send:
         asyncio.run(
             tasks.send_verification_email_task(
-                {}, "max@example.com", "https://example.com/verify?token=abc"
+                {},
+                "max@example.com",
+                Redacted("https://example.com/verify?token=abc"),
             )
         )
     mock_send.assert_called_once_with(
@@ -41,7 +44,9 @@ def test_send_password_reset_email_task_forwards_email_and_url():
     with patch.object(mailer, "send_password_reset_email") as mock_send:
         asyncio.run(
             tasks.send_password_reset_email_task(
-                {}, "max@example.com", "https://example.com/reset?token=abc"
+                {},
+                "max@example.com",
+                Redacted("https://example.com/reset?token=abc"),
             )
         )
     mock_send.assert_called_once_with(

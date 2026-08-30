@@ -8,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.auth_guards import get_verified_user
 from app.api.error_responses import field_errors_to_detail
 from app.core.arq_pool import get_arq_pool
+from app.core.redacted import Redacted
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.profile import ProfileUpdateRequest
@@ -74,7 +75,7 @@ async def update_profile(
     if email_changed and user.email is not None:
         verify_url = auth_service.build_verification_email_url(user)
         await arq_pool.enqueue_job(
-            send_verification_email_task.__name__, user.email, verify_url
+            send_verification_email_task.__name__, user.email, Redacted(verify_url)
         )
 
     return user_service.get_user(db, user.id)
