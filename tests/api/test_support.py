@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import patch
 
 from sqlalchemy.orm import Session
 
@@ -158,24 +157,25 @@ class TestGetContactpersons:
 
 class TestSendMessageToContactperson:
     def test_sends_and_returns_200_for_a_verified_recipient(
-        self, client, make_user, db_session
+        self, client, make_user, db_session, fake_arq_pool
     ):
         headers, _sender = _auth_headers(client, make_user)
         recipient = make_user(email=f"{_unique('kontakt')}@example.test")
 
-        with patch("app.core.mailer.send_user_message_email") as mock_send:
-            response = client.post(
-                "/support/message-to-contactperson",
-                json={"recipient_id": recipient.id, "message": "Bitte um Rückruf."},
-                headers=headers,
-            )
+        response = client.post(
+            "/support/message-to-contactperson",
+            json={"recipient_id": recipient.id, "message": "Bitte um Rückruf."},
+            headers=headers,
+        )
 
         assert response.status_code == 200
-        mock_send.assert_called_once()
-        assert mock_send.call_args[0][0] == [recipient.email]
+        fake_arq_pool.enqueue_job.assert_called_once()
+        args = fake_arq_pool.enqueue_job.call_args.args
+        assert args[0] == "send_user_message_email_task"
+        assert args[1] == [recipient.email]
 
     def test_silent_noop_for_unverified_recipient_still_returns_200(
-        self, client, make_user
+        self, client, make_user, fake_arq_pool
     ):
         # Legacy quirk regression test (see support_service.
         # send_message_to_contactperson's docstring): missing email
@@ -184,30 +184,28 @@ class TestSendMessageToContactperson:
         headers, _sender = _auth_headers(client, make_user)
         recipient = make_user(verified=False)
 
-        with patch("app.core.mailer.send_user_message_email") as mock_send:
-            response = client.post(
-                "/support/message-to-contactperson",
-                json={"recipient_id": recipient.id, "message": "Bitte um Rückruf."},
-                headers=headers,
-            )
+        response = client.post(
+            "/support/message-to-contactperson",
+            json={"recipient_id": recipient.id, "message": "Bitte um Rückruf."},
+            headers=headers,
+        )
 
         assert response.status_code == 200
-        mock_send.assert_not_called()
+        fake_arq_pool.enqueue_job.assert_not_called()
 
     def test_silent_noop_for_nonexistent_recipient_still_returns_200(
-        self, client, make_user
+        self, client, make_user, fake_arq_pool
     ):
         headers, _sender = _auth_headers(client, make_user)
 
-        with patch("app.core.mailer.send_user_message_email") as mock_send:
-            response = client.post(
-                "/support/message-to-contactperson",
-                json={"recipient_id": 0, "message": "Bitte um Rückruf."},
-                headers=headers,
-            )
+        response = client.post(
+            "/support/message-to-contactperson",
+            json={"recipient_id": 0, "message": "Bitte um Rückruf."},
+            headers=headers,
+        )
 
         assert response.status_code == 200
-        mock_send.assert_not_called()
+        fake_arq_pool.enqueue_job.assert_not_called()
 
     def test_rejects_message_shorter_than_three_chars(self, client, make_user):
         headers, _sender = _auth_headers(client, make_user)

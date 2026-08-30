@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.auth_guards import require_permission
 from app.core.config import get_settings
-from app.core.scheduler import get_scheduled_jobs
 from app.db.models.user import User
 from app.schemas.scheduler import (
     BackupTriggerOutput,
     DownsyncTriggerOutput,
     ScheduledJobOutput,
 )
+from app.services import scheduler_service
 from app.services.backup_service import (
     BackupError,
     list_backups,
@@ -44,9 +44,10 @@ _NO_PRODUCTION_BACKUP_DETAIL = "Kein Production-Backup auf Koofr vorhanden."
 def list_scheduled_jobs(
     _current_user: Annotated[User, _VIEW],
 ) -> list[ScheduledJobOutput]:
-    """Pure in-memory introspection of the running scheduler -- no DB
-    session needed."""
-    return [ScheduledJobOutput.model_validate(job) for job in get_scheduled_jobs()]
+    """Pure in-memory computation from the shared cron catalog -- no DB
+    session needed, no dependency on the arq worker container actually
+    being up right now (see scheduler_service's own docstring)."""
+    return scheduler_service.get_scheduled_jobs()
 
 
 @scheduler_router.post("/backup/trigger", status_code=status.HTTP_201_CREATED)

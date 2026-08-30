@@ -1,15 +1,18 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from arq.connections import ArqRedis
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_guards import get_verified_user
-from app.core import mailer
+from app.core.arq_pool import get_arq_pool
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.booking import PerformanceShortOutput
 from app.schemas.support import MessageToContactpersonRequest, RoleWithContactsOutput
 from app.services import support_service
+from app.worker.tasks import send_user_message_email_task
 
 support_router = APIRouter()
 
@@ -35,20 +38,29 @@ def get_contactpersons(
     return support_service.list_roles_with_contacts(db)
 
 
+def _send_message_to_contactperson_sync(
+    db: Session, current_user: User, data: MessageToContactpersonRequest
+) -> tuple[list[str], str, str] | None:
+    return support_service.send_message_to_contactperson(db, current_user, data)
+
+
 @support_router.post("/message-to-contactperson")
-def send_message_to_contactperson(
+async def send_message_to_contactperson(
     data: MessageToContactpersonRequest,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
-    background_tasks: BackgroundTasks,
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> dict[str, str]:
     """Always responds 200 -- 1:1 Legacy's silent no-op for a missing/
     unverified recipient (see support_service.send_message_to_contactperson's
-    docstring)."""
-    result = support_service.send_message_to_contactperson(db, current_user, data)
+    docstring). get_verified_user is declared before arq_pool on purpose --
+    see profile.py's update_profile for why."""
+    result = await run_in_threadpool(
+        _send_message_to_contactperson_sync, db, current_user, data
+    )
     if result is not None:
         to_emails, sender_name, message = result
-        background_tasks.add_task(
-            mailer.send_user_message_email, to_emails, sender_name, message
+        await arq_pool.enqueue_job(
+            send_user_message_email_task.__name__, to_emails, sender_name, message
         )
     return {"status": "ok", "message": "Nachricht wurde versendet."}

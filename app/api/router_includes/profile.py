@@ -1,11 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from arq.connections import ArqRedis
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_guards import get_verified_user
 from app.api.error_responses import field_errors_to_detail
-from app.core import mailer
+from app.core.arq_pool import get_arq_pool
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.profile import ProfileUpdateRequest
@@ -15,6 +17,7 @@ from app.services.profile_service import (
     ProfileValidationError,
     WrongCurrentPasswordError,
 )
+from app.worker.tasks import send_verification_email_task
 
 profile_router = APIRouter()
 
@@ -32,15 +35,26 @@ def get_profile(
     return user_service.get_user(db, current_user.id)
 
 
+def _update_profile_sync(
+    db: Session, current_user: User, data: ProfileUpdateRequest
+) -> tuple[User, bool]:
+    return profile_service.update_profile(db, current_user, data)
+
+
 @profile_router.put("")
-def update_profile(
+async def update_profile(
     data: ProfileUpdateRequest,
-    background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
+    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> UserResponse:
+    """get_verified_user is declared before arq_pool on purpose: FastAPI
+    resolves Depends() in declaration order, and a rejected/unverified
+    session must not pay for creating/reusing the ARQ pool connection."""
     try:
-        user, email_changed = profile_service.update_profile(db, current_user, data)
+        user, email_changed = await run_in_threadpool(
+            _update_profile_sync, db, current_user, data
+        )
     except WrongCurrentPasswordError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -59,8 +73,8 @@ def update_profile(
     # ProfileUpdateRequest.email is a required EmailStr, not Optional.
     if email_changed and user.email is not None:
         verify_url = auth_service.build_verification_email_url(user)
-        background_tasks.add_task(
-            mailer.send_verification_email, user.email, verify_url
+        await arq_pool.enqueue_job(
+            send_verification_email_task.__name__, user.email, verify_url
         )
 
     return user_service.get_user(db, user.id)

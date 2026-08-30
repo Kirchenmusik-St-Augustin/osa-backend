@@ -66,6 +66,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from alembic.config import Config
@@ -77,6 +78,7 @@ from sqlalchemy.orm import Session, selectinload, sessionmaker
 from alembic import command
 from app.api.middleware import request_logging
 from app.core import mailer
+from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings
 from app.core.security import get_password_hash
 from app.db.database import engine, get_db
@@ -158,6 +160,65 @@ def override_get_db() -> Iterator[Session]:
 app.dependency_overrides[get_db] = override_get_db
 
 
+class FakeArqPool:
+    """Stand-in for ArqRedis in every test -- records every enqueue_job()
+    call instead of touching a real Redis/Valkey connection."""
+
+    def __init__(self) -> None:
+        self.enqueue_job = AsyncMock(return_value=None)
+
+
+# Same module-global-instead-of-ContextVar reasoning as _active_session
+# above (TestClient's anyio worker-thread boundary).
+_active_arq_pool: FakeArqPool | None = None
+
+
+async def override_get_arq_pool() -> FakeArqPool:
+    assert _active_arq_pool is not None, "no active fake ARQ pool for this test"
+    return _active_arq_pool
+
+
+app.dependency_overrides[get_arq_pool] = override_get_arq_pool
+
+
+@pytest.fixture(autouse=True)
+def fake_arq_pool() -> Iterator[FakeArqPool]:
+    """Every test gets its own fresh mock pool -- assert against
+    fake_arq_pool.enqueue_job in any test exercising a converted
+    BackgroundTasks call site, e.g.:
+
+        fake_arq_pool.enqueue_job.assert_called_once_with(
+            "send_password_reset_email_task", user.email, ANY
+        )
+
+    If a test makes MULTIPLE requests that should each enqueue a job, call
+    fake_arq_pool.enqueue_job.reset_mock() between them -- the same mock
+    object is reused for every step within one test, so a second
+    assert_called_once() without a reset in between will spuriously fail
+    (it sees the cumulative call count, not just the latest step's)."""
+    global _active_arq_pool  # same per-test pattern as _active_session above
+    _active_arq_pool = FakeArqPool()
+    yield _active_arq_pool
+    _active_arq_pool = None
+
+
+@pytest.fixture(autouse=True)
+def _guard_against_real_arq_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fails loudly, rather than hanging against an unreachable real
+    Redis/Valkey, if any code path bypasses the dependency_overrides above
+    and calls the real pool-creation function directly."""
+
+    def _forbidden(*_args: object, **_kwargs: object) -> None:
+        msg = (
+            "app.core.arq_pool.create_pool() was called for real in a "
+            "test -- every test must go through the fake_arq_pool "
+            "override instead of touching a real Redis/Valkey connection."
+        )
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("app.core.arq_pool.create_pool", _forbidden)
+
+
 class _NonClosingSession:
     """Proxies a Session but no-ops close() -- lets code that opens its own
     `db = SessionLocal(); try: ...; finally: db.close()` (see
@@ -220,12 +281,12 @@ def client():
         base_url="http://testserver",
         headers={"Origin": os.environ["CORS_ORIGINS"]},
     ) as c:
-        # The lifespan startup above already ran start_scheduler(), which
-        # reads get_settings() to decide whether to register backup_koofr --
+        # main.py and app.worker.settings both call get_settings() once at
+        # plain module-import time (the latter to build its cron catalog),
         # caching a Settings snapshot from BEFORE the test body's own
         # monkeypatch.setenv() calls run. Clear it again so the test body
         # always observes its own env changes, not whatever was true at
-        # app-startup time.
+        # import time.
         get_settings.cache_clear()
         yield c
 

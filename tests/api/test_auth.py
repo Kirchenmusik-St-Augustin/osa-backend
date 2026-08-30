@@ -307,47 +307,45 @@ def _registration_payload(**overrides: object) -> dict[str, object]:
 
 
 def test_register_success_auto_logs_in_and_notifies_disponent(
-    client, monkeypatch: pytest.MonkeyPatch
+    client, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
-    with (
-        patch("app.core.mailer.send_new_registration_notice") as mock_notify,
-        patch("app.core.mailer.send_verification_email") as mock_verify,
-    ):
-        response = client.post("/auth/register", json=_registration_payload())
+
+    response = client.post("/auth/register", json=_registration_payload())
 
     assert response.status_code == 200
     body = response.json()
     assert body["access_token"]
     assert "refresh_token" in response.cookies
-    mock_notify.assert_called_once()
-    mock_verify.assert_called_once()
+    enqueued_functions = [
+        call.args[0] for call in fake_arq_pool.enqueue_job.call_args_list
+    ]
+    assert enqueued_functions == [
+        "send_new_registration_notice_task",
+        "send_verification_email_task",
+    ]
 
 
-def test_register_rejects_duplicate_email(client, monkeypatch: pytest.MonkeyPatch):
+def test_register_rejects_duplicate_email(
+    client, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
     payload = _registration_payload()
-    with (
-        patch("app.core.mailer.send_new_registration_notice"),
-        patch("app.core.mailer.send_verification_email"),
-    ):
-        first = client.post("/auth/register", json=payload)
+    first = client.post("/auth/register", json=payload)
     assert first.status_code == 200
+    fake_arq_pool.enqueue_job.reset_mock()
 
-    with (
-        patch("app.core.mailer.send_new_registration_notice"),
-        patch("app.core.mailer.send_verification_email"),
-    ):
-        second = client.post(
-            "/auth/register",
-            json=_registration_payload(
-                surname="Andere", givenname="Person", email=payload["email"].upper()
-            ),
-        )
+    second = client.post(
+        "/auth/register",
+        json=_registration_payload(
+            surname="Andere", givenname="Person", email=payload["email"].upper()
+        ),
+    )
 
     assert second.status_code == 422
     detail = second.json()["detail"]
     assert any(err["loc"] == ["body", "email"] for err in detail)
+    fake_arq_pool.enqueue_job.assert_not_called()
 
 
 def test_register_rejects_weak_password(client):
@@ -422,7 +420,7 @@ def test_verify_email_logs_a_verified_auth_event(client, make_user, db_session):
 
 
 def test_resend_verification_email_sends_for_an_unverified_user(
-    client, make_user, monkeypatch: pytest.MonkeyPatch
+    client, make_user, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
     user = make_user(password="correct-password", verified=False)
@@ -431,19 +429,20 @@ def test_resend_verification_email_sends_for_an_unverified_user(
     )
     access_token = login_response.json()["access_token"]
 
-    with patch("app.core.mailer.send_verification_email") as mock_send:
-        response = client.post(
-            "/auth/resend-verification-email",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+    response = client.post(
+        "/auth/resend-verification-email",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
 
     assert response.status_code == 200
-    mock_send.assert_called_once()
-    assert mock_send.call_args.args[0] == user.email
+    fake_arq_pool.enqueue_job.assert_called_once()
+    args = fake_arq_pool.enqueue_job.call_args.args
+    assert args[0] == "send_verification_email_task"
+    assert args[1] == user.email
 
 
 def test_resend_verification_email_is_a_noop_for_an_already_verified_user(
-    client, make_user
+    client, make_user, fake_arq_pool
 ):
     user = make_user(password="correct-password")  # verified=True by default
     login_response = client.post(
@@ -451,14 +450,13 @@ def test_resend_verification_email_is_a_noop_for_an_already_verified_user(
     )
     access_token = login_response.json()["access_token"]
 
-    with patch("app.core.mailer.send_verification_email") as mock_send:
-        response = client.post(
-            "/auth/resend-verification-email",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+    response = client.post(
+        "/auth/resend-verification-email",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
 
     assert response.status_code == 200
-    mock_send.assert_not_called()
+    fake_arq_pool.enqueue_job.assert_not_called()
 
 
 def test_resend_verification_email_requires_authentication(client):
@@ -516,11 +514,10 @@ def test_unverified_user_can_still_reach_me_logout_and_resend(
     headers = {"Authorization": f"Bearer {access_token}"}
 
     assert client.get("/auth/me", headers=headers).status_code == 200
-    with patch("app.core.mailer.send_verification_email"):
-        assert (
-            client.post("/auth/resend-verification-email", headers=headers).status_code
-            == 200
-        )
+    assert (
+        client.post("/auth/resend-verification-email", headers=headers).status_code
+        == 200
+    )
     assert client.post("/auth/logout", headers=headers).status_code == 200
 
 
@@ -538,7 +535,7 @@ def test_forgot_password_returns_200_for_unknown_email(client):
 
 
 def test_forgot_password_queues_reset_mail_for_known_user(
-    client, make_user, monkeypatch: pytest.MonkeyPatch
+    client, make_user, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv(
         "FRONTEND_RESET_PASSWORD_URL",
@@ -546,12 +543,13 @@ def test_forgot_password_queues_reset_mail_for_known_user(
     )
     user = make_user(email=_com_email())
 
-    with patch("app.core.mailer.send_password_reset_email") as mock_send:
-        response = client.post("/auth/forgot-password", json={"email": user.email})
+    response = client.post("/auth/forgot-password", json={"email": user.email})
 
     assert response.status_code == 200
-    mock_send.assert_called_once()
-    assert mock_send.call_args.args[0] == user.email
+    fake_arq_pool.enqueue_job.assert_called_once()
+    args = fake_arq_pool.enqueue_job.call_args.args
+    assert args[0] == "send_password_reset_email_task"
+    assert args[1] == user.email
 
 
 def test_reset_password_success(client, make_user, db_session):

@@ -1,6 +1,5 @@
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -291,7 +290,7 @@ class TestBillingNoPastLock:
 
 class TestMessageToCast:
     def test_send_message_returns_ok_for_verified_recipient(
-        self, client, make_user, db_session
+        self, client, make_user, db_session, fake_arq_pool
     ):
         headers, _ = _auth_headers(client, make_user, roles=["disponent"])
         instrument_id = _make_instrument(client, make_user)
@@ -302,19 +301,18 @@ class TestMessageToCast:
         recipient.email_verified_at = datetime.now(UTC)
         db_session.commit()
 
-        # The send endpoint fires the actual email via a BackgroundTask,
-        # which BaseHTTPMiddleware/TestClient runs synchronously as part of
-        # the request -- without mocking it out, this test would need a
-        # real SMTP_HOST and silently depended on the dev container's
-        # Mailpit config, breaking in CI (no SMTP_HOST there).
-        with patch("app.core.mailer.send_user_message_email"):
-            response = client.post(
-                f"/performances/{performance_id}/message-to-cast/send",
-                json={"recipient_ids": [recipient.id], "message": "Hallo!"},
-                headers=headers,
-            )
+        response = client.post(
+            f"/performances/{performance_id}/message-to-cast/send",
+            json={"recipient_ids": [recipient.id], "message": "Hallo!"},
+            headers=headers,
+        )
 
         assert response.status_code == 200
+        fake_arq_pool.enqueue_job.assert_called_once()
+        assert (
+            fake_arq_pool.enqueue_job.call_args.args[0]
+            == "send_user_message_email_task"
+        )
 
     def test_send_message_returns_422_when_no_recipient_verified(
         self, client, make_user

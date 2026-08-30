@@ -1257,10 +1257,11 @@ def change_user_request_status(
     draft schema allowed one and was corrected before implementation).
 
     Returns the notification descriptor (or None) for the ROUTER to
-    schedule via `BackgroundTasks.add_task(mailer.send_booked_or_standby_
-    canceled_email, *notification)` -- the mail must go out VOR (before)
-    the mutation is visible to the caller, using the OLD status, exactly
-    like Legacy's Mail::send() call preceding the switch."""
+    enqueue via `arq_pool.enqueue_job(..., notification.disponent_emails,
+    notification.canceling_user_name, notification.entry)` -- the
+    descriptor captures the OLD status before this function's own
+    db.commit() below, exactly like Legacy's Mail::send() call preceding
+    the switch."""
     performance = _get_performance_or_404(db, performance_id)
     _ensure_not_past(performance)
     current = user_booking_status(db, performance, user.id)
