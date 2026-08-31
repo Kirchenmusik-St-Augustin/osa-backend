@@ -63,9 +63,114 @@ jobs:
           languages: python
       - uses: github/codeql-action/analyze@v4
 
+  container-readonly-smoke-test:
+    name: Read-only Rootfs Smoke Test
+    needs: [lint, quality, security]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    # Same osa-backend.container/osa-backend-worker.container restrictions
+    # planned for production (see osa-deploy): a read-only rootfs can't be
+    # exercised by the normal pytest suite (no test runs against an
+    # actually read-only-mounted filesystem), so this is that verification
+    # -- it must gate release-image, not just run alongside it.
+    env:
+      SMOKE_TEST_ENV: >-
+        -e APP_ENVIRONMENT=test -e CORS_ORIGINS=http://localhost
+        -e DATABASE_URL=postgresql://test:test@localhost:5432/test
+        -e SECRET_KEY=ci-read-only-rootfs-smoke-test-dummy-secret-key-not-for-real-use
+        -e VALKEY_HOST=127.0.0.1 -e VALKEY_PORT=6379
+      RUN_RESTRICTIONS: >-
+        --read-only --tmpfs /tmp:mode=1777
+        --security-opt no-new-privileges --cap-drop=all --network host
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build prod image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          target: prod
+          push: false
+          load: true
+          tags: osa-backend:smoke-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run web container under production restrictions
+        run: |
+          docker run -d --name osa-backend-web-smoke $RUN_RESTRICTIONS \
+            $SMOKE_TEST_ENV osa-backend:smoke-test
+
+      - name: Poll web container health endpoint
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8000/ > /dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::Web container never became healthy under a read-only rootfs"
+          docker logs osa-backend-web-smoke
+          exit 1
+
+      - name: Check web container logs for read-only rootfs violations
+        run: |
+          docker logs osa-backend-web-smoke > web-smoke.log 2>&1
+          docker stop osa-backend-web-smoke
+          cat web-smoke.log
+          if grep -qiE "read-only file system|EROFS|permission denied" web-smoke.log; then
+            echo "::error::Web container hit a read-only rootfs violation"
+            exit 1
+          fi
+
+      - name: Run worker container under production restrictions
+        run: |
+          docker run -d --name osa-backend-worker-smoke $RUN_RESTRICTIONS \
+            $SMOKE_TEST_ENV -e SKIP_MIGRATIONS=true \
+            osa-backend:smoke-test arq app.worker.settings.WorkerSettings
+
+      - name: Wait for worker startup log
+        run: |
+          for _ in $(seq 1 30); do
+            docker logs osa-backend-worker-smoke 2>&1 | grep -qE "functions" && exit 0
+            sleep 1
+          done
+          echo "::error::Worker container never logged a successful startup under a read-only rootfs"
+          docker logs osa-backend-worker-smoke
+          exit 1
+
+      - name: Check worker container logs for read-only rootfs violations
+        run: |
+          docker logs osa-backend-worker-smoke > worker-smoke.log 2>&1
+          docker stop osa-backend-worker-smoke
+          cat worker-smoke.log
+          if grep -qiE "read-only file system|EROFS|permission denied" worker-smoke.log; then
+            echo "::error::Worker container hit a read-only rootfs violation"
+            exit 1
+          fi
+
   release-image:
     name: Build & Push Image
-    needs: [lint, quality, security]
+    needs: [lint, quality, security, container-readonly-smoke-test]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:

@@ -28,6 +28,9 @@ from app.worker.scheduled_jobs import (
     purge_old_request_logs_task,
     purge_stale_booking_requests_task,
 )
+from app.worker.scheduled_or_triggered_log_filter import (
+    install_scheduled_or_triggered_log_filter,
+)
 from app.worker.tasks import (
     send_booked_or_standby_canceled_email_task,
     send_new_registration_notice_task,
@@ -71,6 +74,7 @@ async def _on_shutdown(_ctx: dict[str, object]) -> None:
 
 
 setup_logging()
+install_scheduled_or_triggered_log_filter()
 
 _settings = get_settings()
 _active_schedules = [
@@ -97,3 +101,14 @@ class WorkerSettings:
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     timezone = get_app_timezone()
+    # Without this, arq's default (0) cancels an in-flight job the instant
+    # SIGTERM/SIGINT arrives instead of letting it finish -- fatal for a
+    # job mid-pg_dump/pg_restore (backup_koofr, downsync). 300 mirrors
+    # arq's own default job_timeout: a job can never legitimately run
+    # longer than that ceiling anyway, so waiting up to the same duration
+    # for one to finish never delays a shutdown beyond what the job's own
+    # timeout would already allow. Only blocks shutdown while a job is
+    # actually running -- the worker exits immediately otherwise. Keep in
+    # sync with osa-deploy's osa-backend-worker Quadlet
+    # StopTimeout=/TimeoutStopSec=, which are sized off this same value.
+    job_completion_wait: ClassVar[int] = 300

@@ -117,30 +117,53 @@ never at boot.
 
 ## Scheduler
 
-Background jobs run via a single in-process APScheduler instance
-(`app/core/scheduler.py`), started/stopped via `main.py`'s FastAPI
-lifespan. A `pg_try_advisory_lock` guard prevents duplicate registration across
-multiple Gunicorn workers, should `--workers` ever be raised above its
-current `1` (see the `Dockerfile`'s comment on why it hasn't been yet).
+Background jobs run in a dedicated arq worker container
+(`osa-backend-worker`, entry point `arq app.worker.settings.WorkerSettings`),
+separate from the web container -- both cron jobs and on-demand jobs
+(former FastAPI `BackgroundTasks`, e.g. mail dispatch) run there
+exclusively; the web container only enqueues on-demand jobs via
+`enqueue_job()` and never runs a job itself. Every job's schedule/gating
+is defined once in `app/worker/cron_config.py::build_cron_catalog()`,
+shared by the actual arq registration (`app/worker/settings.py`) and the
+admin Scheduler overview (`GET /administrator/scheduler/jobs`) so the two
+can never drift apart.
 
 | Job ID | Schedule | Stage | Purpose |
 |---|---|---|---|
 | `purge_stale_booking_requests` | hourly | all | Deletes stale open booking requests for past performances. |
-| `notify_upcoming_booking_status` | daily 05:00 | all | Sends combined booking-status change mails. |
-| `purge_expired_password_reset_tokens` | weekly, Sun 02:00 | all | Sweeps abandoned password-reset tokens. |
-| `purge_old_request_logs` | daily 23:00 | all | Deletes request-log rows older than 40 days. |
+| `notify_upcoming_booking_status` | daily 05:00 | `production` only | Sends combined booking-status change mails. |
+| `purge_expired_password_reset_tokens` | weekly, Sun 02:00 | `production` only | Sweeps abandoned password-reset tokens. |
+| `purge_old_request_logs` | daily 23:00 | `production` only | Deletes request-log rows older than 40 days. |
 | `backup_koofr` | daily, `BACKUP_HOUR`:`BACKUP_MINUTE` (default 03:00, `APP_TIMEZONE`) | `production` only (+ `BACKUP_ENABLED`) | `pg_dump` snapshot → Koofr WebDAV upload, then deletes backups older than `KOOFR_BACKUP_RETENTION_DAYS`. |
+| `downsync` | daily, one hour after `backup_koofr` (`BACKUP_HOUR + 1`:`BACKUP_MINUTE`) | non-`production` only | Restores this stage's local database from the latest production backup. |
 
-All five jobs run in `APP_TIMEZONE`
-(`AsyncIOScheduler(timezone=get_app_timezone())`, see `app/core/scheduler.py`)
--- fixed 2026-08-13/14, see `app/core/datetime_utils.py::get_app_timezone()`
-for the single shared source every timezone-aware call site (scheduler,
-backup filenames/retention, mail subjects, logging) now resolves through.
+All six jobs run in `APP_TIMEZONE` (`WorkerSettings.timezone =
+get_app_timezone()`, see `app/worker/settings.py`), see
+`app/core/datetime_utils.py::get_app_timezone()` for the single shared
+source every timezone-aware call site (worker, backup filenames/
+retention, mail subjects, logging) resolves through.
 
-`backup_koofr` is the only job gated by environment — it writes into a
-Koofr path shared across every stage (dev/test/qa/production), so a single
-settings toggle alone isn't enough to keep a non-prod process from writing
-there.
+`notify_upcoming_booking_status`, `purge_expired_password_reset_tokens`,
+and `purge_old_request_logs` are scoped to `production` because they
+only matter there. `backup_koofr` and `downsync` are also
+environment-gated, but for a different reason: `backup_koofr` writes
+into a Koofr path shared across every stage, and `downsync` overwrites
+this stage's local database from the latest production backup -- for
+both, the gate is a real safety boundary, not just a relevance filter.
+
+Every job-lifecycle line the worker logs under the `arq.worker` logger
+(start, success, retry, abort, cancelled, failed, max-retries-exceeded)
+gets a `[scheduled]` or `[triggered]` prefix from a small `logging.Filter`
+installed once in `app/worker/settings.py`
+(`app/worker/scheduled_or_triggered_log_filter.py`) — `[scheduled]` for a
+run of one of this worker's own cron jobs, `[triggered]` for any job
+fired on demand via `enqueue_job()` (registration/verification/
+password-reset/notification mails). The manual "Trigger backup now" /
+"Trigger downsync now" admin actions (`POST
+/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) call
+`run_backup()`/`run_restore()` directly and synchronously, bypassing
+`enqueue_job()` entirely — they never go through arq at all, so they
+never appear in the `arq.worker` log, tagged or not.
 
 ## Scripts
 
@@ -314,32 +337,55 @@ werden — nie beim Boot.
 
 ## Scheduler
 
-Hintergrund-Jobs laufen über eine einzige, prozessinterne
-APScheduler-Instanz (`app/core/scheduler.py`), gestartet/gestoppt über
-`main.py`s FastAPI-Lifespan. Ein `pg_try_advisory_lock`-Schutz verhindert Doppel-Registrierung über
-mehrere Gunicorn-Worker hinweg, sollte `--workers` je über den aktuellen
-Wert `1` angehoben werden (siehe den Kommentar dazu im `Dockerfile`).
+Hintergrund-Jobs laufen in einem dedizierten arq-Worker-Container
+(`osa-backend-worker`, Entrypoint `arq app.worker.settings.WorkerSettings`),
+getrennt vom Web-Container — sowohl Cron-Jobs als auch on-demand
+ausgelöste Jobs (frühere FastAPI-`BackgroundTasks`, z.B. Mailversand)
+laufen ausschließlich dort; der Web-Container reiht on-demand-Jobs nur
+per `enqueue_job()` ein und führt selbst keinen Job aus. Zeitplan/Gating
+jedes Jobs ist einmal zentral in `app/worker/cron_config.py::build_cron_catalog()`
+definiert, geteilt von der tatsächlichen arq-Registrierung
+(`app/worker/settings.py`) und der Admin-Scheduler-Übersicht
+(`GET /administrator/scheduler/jobs`), damit beide nie auseinanderlaufen.
 
 | Job-ID | Zeitplan | Stage | Zweck |
 |---|---|---|---|
 | `purge_stale_booking_requests` | stündlich | alle | Löscht veraltete offene Buchungsanfragen zu vergangenen Aufführungen. |
-| `notify_upcoming_booking_status` | täglich 05:00 | alle | Versendet gebündelte Buchungsstatus-Änderungsmails. |
-| `purge_expired_password_reset_tokens` | wöchentlich, So 02:00 | alle | Räumt verwaiste Passwort-Reset-Tokens auf. |
-| `purge_old_request_logs` | täglich 23:00 | alle | Löscht Request-Log-Zeilen älter als 40 Tage. |
+| `notify_upcoming_booking_status` | täglich 05:00 | nur `production` | Versendet gebündelte Buchungsstatus-Änderungsmails. |
+| `purge_expired_password_reset_tokens` | wöchentlich, So 02:00 | nur `production` | Räumt verwaiste Passwort-Reset-Tokens auf. |
+| `purge_old_request_logs` | täglich 23:00 | nur `production` | Löscht Request-Log-Zeilen älter als 40 Tage. |
 | `backup_koofr` | täglich, `BACKUP_HOUR`:`BACKUP_MINUTE` (Default 03:00, `APP_TIMEZONE`) | nur `production` (+ `BACKUP_ENABLED`) | `pg_dump`-Snapshot → Koofr-WebDAV-Upload, löscht danach Backups älter als `KOOFR_BACKUP_RETENTION_DAYS`. |
+| `downsync` | täglich, eine Stunde nach `backup_koofr` (`BACKUP_HOUR + 1`:`BACKUP_MINUTE`) | nur außerhalb `production` | Ersetzt die lokale Datenbank dieser Stage durch das letzte Production-Backup. |
 
-Alle fünf Jobs laufen in `APP_TIMEZONE`
-(`AsyncIOScheduler(timezone=get_app_timezone())`, siehe `app/core/scheduler.py`)
-— gefixt am 13./14.08.2026, siehe `app/core/datetime_utils.py::get_app_timezone()`
-für die eine zentrale Quelle, über die jede zeitzonenbewusste Stelle
-(Scheduler, Backup-Dateinamen/-Retention, Mail-Betreffzeilen, Logging)
-jetzt läuft.
+Alle sechs Jobs laufen in `APP_TIMEZONE` (`WorkerSettings.timezone =
+get_app_timezone()`, siehe `app/worker/settings.py`), siehe
+`app/core/datetime_utils.py::get_app_timezone()` für die eine zentrale
+Quelle, über die jede zeitzonenbewusste Stelle (Worker,
+Backup-Dateinamen/-Retention, Mail-Betreffzeilen, Logging) läuft.
 
-`backup_koofr` ist der einzige Job, der nach Umgebung gated wird — er
-schreibt in einen Koofr-Pfad, der über alle Stages hinweg (Dev/Test/QA/
-Produktion) gemeinsam genutzt wird, ein einzelner Settings-Schalter allein
-reicht daher nicht, um einen Nicht-Prod-Prozess davon fernzuhalten, dort
-hineinzuschreiben.
+`notify_upcoming_booking_status`, `purge_expired_password_reset_tokens`
+und `purge_old_request_logs` sind auf `production` beschränkt, weil sie
+nur dort relevant sind. `backup_koofr` und `downsync` sind ebenfalls
+umgebungsgegatet, aber aus einem anderen Grund: `backup_koofr` schreibt
+in einen über alle Stages geteilten Koofr-Pfad, `downsync` überschreibt
+die lokale Datenbank dieser Stage mit dem letzten Production-Backup —
+bei beiden ist das Gate eine echte Sicherheitsgrenze, kein reiner
+Relevanzfilter.
+
+Jede Job-Lifecycle-Zeile, die der Worker über den `arq.worker`-Logger
+loggt (Start, Erfolg, Retry, Abbruch, Cancelled, Fehlschlag,
+Max-Retries-überschritten), bekommt über einen kleinen, einmalig in
+`app/worker/settings.py` installierten `logging.Filter`
+(`app/worker/scheduled_or_triggered_log_filter.py`) ein `[scheduled]`-
+bzw. `[triggered]`-Präfix — `[scheduled]` für einen Lauf eines der
+eigenen Cron-Jobs dieses Workers, `[triggered]` für jeden on-demand per
+`enqueue_job()` ausgelösten Job (Registrierungs-/Verifizierungs-/
+Passwort-Reset-/Benachrichtigungsmails). Die manuellen Admin-Aktionen
+„Backup jetzt auslösen“ / „Downsync jetzt auslösen“ (`POST
+/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) rufen
+`run_backup()`/`run_restore()` direkt und synchron auf, ohne
+`enqueue_job()` — sie laufen komplett an arq vorbei und erscheinen daher
+nie im `arq.worker`-Log, weder getaggt noch ungetaggt.
 
 ## Skripte
 
