@@ -101,3 +101,14 @@ class WorkerSettings:
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     timezone = get_app_timezone()
+    # Without this, arq's default (0) cancels an in-flight job the instant
+    # SIGTERM/SIGINT arrives instead of letting it finish -- fatal for a
+    # job mid-pg_dump/pg_restore (backup_koofr, downsync). 300 mirrors
+    # arq's own default job_timeout: a job can never legitimately run
+    # longer than that ceiling anyway, so waiting up to the same duration
+    # for one to finish never delays a shutdown beyond what the job's own
+    # timeout would already allow. Only blocks shutdown while a job is
+    # actually running -- the worker exits immediately otherwise. Keep in
+    # sync with osa-deploy's osa-backend-worker Quadlet
+    # StopTimeout=/TimeoutStopSec=, which are sized off this same value.
+    job_completion_wait: ClassVar[int] = 300

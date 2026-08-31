@@ -53,3 +53,11 @@ def test_build_cron_job_maps_schedule_fields_onto_a_real_cronjob():
 
 def test_worker_settings_timezone_matches_app_timezone():
     assert WorkerSettings.timezone == get_app_timezone()
+
+
+def test_job_completion_wait_gives_in_flight_jobs_a_real_shutdown_grace_period():
+    # arq's own default (0) cancels an in-flight job the instant a stop
+    # signal arrives instead of letting it finish -- fatal for a job
+    # mid-pg_dump/pg_restore (backup_koofr, downsync). Guards against a
+    # future refactor silently dropping this back to arq's default.
+    assert WorkerSettings.job_completion_wait > 0

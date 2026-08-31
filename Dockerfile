@@ -1,5 +1,12 @@
 FROM python:3.12-slim AS base
 WORKDIR /app
+# Skip writing .pyc files: this app's runtime root filesystem is read-only
+# in production (see osa-deploy's osa-backend Quadlets), and there's
+# nothing to gain from bytecode-caching an image whose interpreter starts
+# fresh on every deploy anyway. Also avoids a doomed write attempt every
+# time docker-entrypoint.sh's `alembic upgrade head` freshly imports
+# alembic/versions/*.py on container start.
+ENV PYTHONDONTWRITEBYTECODE=1
 # postgresql-client-18: pg_dump/pg_restore/psql, used by
 # app/services/backup_service.py and scripts/backup_db.py/restore_db.py.
 # Shared by dev and prod (both need to run backups/restores). Pinned via
@@ -50,9 +57,15 @@ ENTRYPOINT ["./docker-entrypoint.sh"]
 # exclusively in the dedicated osa-backend-worker container now, see
 # app/worker/settings.py) -- raising this is a plain, independent
 # capacity decision for the web process itself.
+# --graceful-timeout matches --timeout above deliberately: a request can
+# never legitimately run longer than --timeout (120s) without gunicorn
+# already killing that worker as hung during normal operation, so a
+# shutdown's grace period doesn't need to allow any more than that same
+# ceiling (see osa-deploy's osa-backend Quadlet StopTimeout=/TimeoutStopSec=,
+# which are sized off this same value plus a buffer).
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-", \
-     "--no-control-socket"]
+     "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", \
+     "--graceful-timeout", "120", "--access-logfile", "-", "--no-control-socket"]
 # --no-control-socket: this feature (gunicorn >= 25.1.0) is for gunicornc,
 # a CLI tool for runtime worker management -- unused here (Podman/systemd
 # own the container lifecycle instead). Without this flag, gunicorn tries
