@@ -28,6 +28,9 @@ from app.worker.scheduled_jobs import (
     purge_old_request_logs_task,
     purge_stale_booking_requests_task,
 )
+from app.worker.scheduled_or_triggered_log_filter import (
+    install_scheduled_or_triggered_log_filter,
+)
 from app.worker.tasks import (
     send_booked_or_standby_canceled_email_task,
     send_new_registration_notice_task,
@@ -71,6 +74,7 @@ async def _on_shutdown(_ctx: dict[str, object]) -> None:
 
 
 setup_logging()
+install_scheduled_or_triggered_log_filter()
 
 _settings = get_settings()
 _active_schedules = [
