@@ -5,6 +5,7 @@ from datetime import UTC, datetime, time, timedelta
 from sqlalchemy import delete, extract, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.datetime_utils import local_now
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
@@ -811,6 +812,26 @@ def get_available_data(db: Session) -> PerformanceAvailableData:
         .all()
     )
 
+    # Resolve the configured default Ort/Dirigent against the already
+    # loaded (and, for conductors, already-filtered) collections instead of
+    # a fresh query -- this doubles as the existence/validity check: a
+    # default whose row was deleted, or whose Artist lost its conductor
+    # flag, silently falls back to None rather than proposing an ID that
+    # would fail create_performance()'s validation.
+    settings = get_settings()
+    conductor_ids = {a.id for a in conductors}
+    location_ids = {location.id for location in locations}
+    default_conductor_id = (
+        settings.performance_default_conductor_artist_id
+        if settings.performance_default_conductor_artist_id in conductor_ids
+        else None
+    )
+    default_location_id = (
+        settings.performance_default_location_id
+        if settings.performance_default_location_id in location_ids
+        else None
+    )
+
     return PerformanceAvailableData(
         conductors=[
             AvailablePositionOutput(id=a.id, name=label_for(a)) for a in conductors
@@ -824,6 +845,8 @@ def get_available_data(db: Session) -> PerformanceAvailableData:
         propriumelements=[
             AvailablePositionOutput(id=p.id, name=p.name) for p in propriumelements
         ],
+        default_location_id=default_location_id,
+        default_conductor_id=default_conductor_id,
     )
 
 

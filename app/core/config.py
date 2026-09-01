@@ -9,9 +9,10 @@ CORS_ORIGINS, DATABASE_URL, SECRET_KEY.
 
 Tier 2 (optional, defaults applied, no boot-time validation): session/JWT
 lifetimes, mail sender identity, registration/mail-kill-switch tuning,
-Valkey connection details for the arq job queue -- sane defaults (several
-taken straight from Legacy's config/mail.php and config/osa.php) so a
-deployment that never touches these features still boots.
+default Performance location/conductor, Valkey connection details for the
+arq job queue -- sane defaults (several taken straight from Legacy's
+config/mail.php and config/osa.php) so a deployment that never touches
+these features still boots.
 
 Tier 3 (feature-required, no default -- checked at first actual use via
 require_setting(), not at boot): SMTP_HOST/SMTP_PORT, GOOGLE_CLIENT_ID,
@@ -74,6 +75,22 @@ class Settings(BaseSettings):
     # dedicated go.-domain Caddy vhost that actually routes traffic there.
     shorturl_domain: str = Field(
         default="go.hochamt.at", validation_alias="SHORTURL_DOMAIN"
+    )
+    # Tier 2 -- defaults mirror Legacy's config('osa.performance.default.*')
+    # (legacy/config/osa.php), used by PerformanceController::create() to
+    # pre-fill a brand-new Performance's Ort/Dirigent fields. Verified
+    # against production data: locations.id=1 is "Augustinerkirche",
+    # artists.id=95 is TIEFENGRABER, Peter with conductor=true -- stable
+    # since the SQLite->Postgres cutover. A real setting (not a literal) so
+    # a future deployment could repoint it without a code change; see
+    # performance_service.get_available_data()'s existence check for what
+    # happens if the configured row is ever deleted or loses its conductor
+    # flag.
+    performance_default_location_id: int = Field(
+        default=1, validation_alias="PERFORMANCE_DEFAULT_LOCATION_ID"
+    )
+    performance_default_conductor_artist_id: int = Field(
+        default=95, validation_alias="PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID"
     )
 
     # Tier 2 (mail) -- defaults taken from Legacy's config/mail.php /
