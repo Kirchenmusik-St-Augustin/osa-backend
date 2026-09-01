@@ -192,3 +192,8 @@ class PerformanceAvailableData(BaseModel):
     choirjobs: list[AvailablePositionOutput]
     locations: list[PerformanceLocationOutput]
     propriumelements: list[AvailablePositionOutput]
+    # Pre-resolved defaults for a NEW performance's Ort/Dirigent fields
+    # (None if the configured default row was deleted or, for the
+    # conductor, lost its conductor flag -- see get_available_data()).
+    default_location_id: int | None
+    default_conductor_id: int | None

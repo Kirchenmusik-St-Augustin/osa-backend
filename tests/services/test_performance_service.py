@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.datetime_utils import local_now
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
@@ -1171,6 +1172,49 @@ class TestGetAvailableData:
         assert archived_instrument.id not in [item.id for item in result.instruments]
         assert archived_voice.id not in [item.id for item in result.voices]
         assert archived_choirjob.id not in [item.id for item in result.choirjobs]
+
+    def test_default_location_and_conductor_resolve_when_present(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        location = _make_location(db_session)
+        conductor_id = _make_artist(db_session, conductor=True)
+        monkeypatch.setenv("PERFORMANCE_DEFAULT_LOCATION_ID", str(location.id))
+        monkeypatch.setenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", str(conductor_id))
+        get_settings.cache_clear()
+
+        result = performance_service.get_available_data(db_session)
+
+        assert result.default_location_id == location.id
+        assert result.default_conductor_id == conductor_id
+
+    def test_default_ids_resolve_to_none_when_configured_row_missing(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("PERFORMANCE_DEFAULT_LOCATION_ID", "999999999")
+        monkeypatch.setenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", "999999999")
+        get_settings.cache_clear()
+
+        result = performance_service.get_available_data(db_session)
+
+        assert result.default_location_id is None
+        assert result.default_conductor_id is None
+
+    def test_default_conductor_id_none_when_artist_is_not_a_conductor(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A configured default whose Artist row still exists but lost its
+        conductor flag must resolve to None, not a stale ID -- the check
+        runs against the already-filtered conductors list, not a raw
+        existence check."""
+        composer_only_id = _make_artist(db_session, composer=True)
+        monkeypatch.setenv(
+            "PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", str(composer_only_id)
+        )
+        get_settings.cache_clear()
+
+        result = performance_service.get_available_data(db_session)
+
+        assert result.default_conductor_id is None
 
 
 class TestGetSetupActiveFlag:

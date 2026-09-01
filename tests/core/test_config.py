@@ -149,3 +149,23 @@ def test_koofr_backup_settings_can_be_overridden(monkeypatch: pytest.MonkeyPatch
     assert settings.backup_minute == 15
     assert settings.koofr_user == "someone"
     assert settings.koofr_password == "secret"
+
+
+def test_performance_defaults(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("PERFORMANCE_DEFAULT_LOCATION_ID", raising=False)
+    monkeypatch.delenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", raising=False)
+
+    settings = Settings()
+
+    assert settings.performance_default_location_id == 1
+    assert settings.performance_default_conductor_artist_id == 95
+
+
+def test_performance_defaults_can_be_overridden(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("PERFORMANCE_DEFAULT_LOCATION_ID", "2")
+    monkeypatch.setenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", "7")
+
+    settings = Settings()
+
+    assert settings.performance_default_location_id == 2
+    assert settings.performance_default_conductor_artist_id == 7
