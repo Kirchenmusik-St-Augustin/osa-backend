@@ -4,6 +4,7 @@ from sqlalchemy import CheckConstraint, DateTime, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.position_type_enum import position_type_enum
 
 
 class OrdinariumworkPosition(Base):
@@ -14,7 +15,16 @@ class OrdinariumworkPosition(Base):
     here -- confirmed by the real CHECK constraint AND by live data (1677
     rows, zero 'choirjobs'). No standalone controller/routes in Legacy:
     managed entirely through Ordinariumwork's own create/update ("setup"
-    payload), never directly -- same here (see ordinariumwork_service.py)."""
+    payload), never directly -- same here (see ordinariumwork_service.py).
+
+    `position_type` uses the shared 3-value native Postgres ENUM (see
+    app.db.models.position_type_enum), the same type bookings/booking_logs/
+    performance_positions/user_positions use -- but this table's own
+    CHECK constraint below stays in place on top of it. The enum type
+    itself can't express "2 of these 3 values" (Postgres ENUMs have no
+    concept of a per-column subset), so the CHECK remains the only thing
+    excluding 'choirjobs' here, exactly as it did before the enum
+    conversion."""
 
     __tablename__ = "ordinariumwork_positions"
     __table_args__ = (
@@ -24,7 +34,7 @@ class OrdinariumworkPosition(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ordinariumwork_id: Mapped[int]
-    position_type: Mapped[str]
+    position_type: Mapped[str] = mapped_column(position_type_enum)
     position_id: Mapped[int]
     quantity: Mapped[int]
     created_at: Mapped[datetime | None] = mapped_column(DateTime())
