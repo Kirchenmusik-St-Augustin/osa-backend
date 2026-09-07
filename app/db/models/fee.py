@@ -1,23 +1,30 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import CheckConstraint, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 
 
 class Fee(Base):
-    """Mirrors legacy `fees` exactly (Phase 1). A standalone billing-rate
-    lookup table, administered through its own dedicated Legacy controller
-    (`Content/System/FeeController`, not the generic Coreelement mechanism)
-    -- unlike Instrument/Voice/Choirjob/Location/Role/Propriumelement, `fees`
-    has no `order` column, so it deliberately does NOT use
-    CoreelementColumns. Bookings
-    copy a Fee's `amount` into `bookings.fee`/`booking_logs.fee` as a plain
-    integer at booking time -- there is no FK from either table back to
-    `fees.id`, so deleting a Fee never orphans a booking."""
+    """Mirrors legacy `fees` (Phase 1 structural parity), with one
+    additive DB-level hardening constraint layered on top in the
+    Quick-Wins hardening slice (2026-09): `amount >= 0` is already
+    enforced at the Pydantic layer (FeeRequest.amount: Field(ge=0, le=999))
+    but was never backed by the database itself -- any non-API write path
+    had no protection against a negative amount before this.
+
+    A standalone billing-rate lookup table, administered through its own
+    dedicated Legacy controller (`Content/System/FeeController`, not the
+    generic Coreelement mechanism) -- unlike Instrument/Voice/Choirjob/
+    Location/Role/Propriumelement, `fees` has no `order` column, so it
+    deliberately does NOT use CoreelementColumns. Bookings copy a Fee's
+    `amount` into `bookings.fee`/`booking_logs.fee` as a plain integer at
+    booking time -- there is no FK from either table back to `fees.id`, so
+    deleting a Fee never orphans a booking."""
 
     __tablename__ = "fees"
+    __table_args__ = (CheckConstraint("amount >= 0", name="fees_amount_check"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(unique=True)
