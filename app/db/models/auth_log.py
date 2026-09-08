@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import JSON, DateTime
+from sqlalchemy import DateTime
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.json_types import JsonObject
 from app.db.database import Base
 
 
@@ -13,6 +14,10 @@ class AuthLog(Base):
     `user_id` (matches legacy -- a log entry must survive even if the
     referenced user is later deleted). No `created_at`/`updated_at`:
     `fired_at` is the only timestamp legacy ever had for this table.
+    `payload` is a native JSONB column as of this slice (was the generic
+    JSON type, which Postgres renders as `json` rather than `jsonb`) --
+    the service layer already worked with plain Python dicts either way,
+    so this is a pure storage-format tightening with no behavior change.
 
     Event set is deliberately narrower than legacy's 10 Laravel listeners --
     Login/Failed/Lockout/Logout/Verified/PasswordReset are kept (see
@@ -28,4 +33,4 @@ class AuthLog(Base):
     ip_address: Mapped[str | None]
     user_agent: Mapped[str | None]
     email: Mapped[str | None]
-    payload: Mapped[dict[str, Any] | None] = mapped_column(JSON())
+    payload: Mapped[JsonObject | None] = mapped_column(JSONB())

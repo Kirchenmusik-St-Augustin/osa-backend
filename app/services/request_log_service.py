@@ -1,6 +1,5 @@
-import json
 from datetime import UTC, date, datetime
-from typing import cast
+from typing import cast, overload
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +10,7 @@ from app.core.datetime_utils import (
     local_day_bounds_utc,
 )
 from app.core.human_names import label_for_name
+from app.core.json_types import JsonObject, JsonValue
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import RequestLog
 from app.db.models.user import User
@@ -58,15 +58,17 @@ REDACT_KEYS = frozenset(
 _REDACTED_VALUE = "__removed__"
 
 
-def redact(value: object) -> object:
+@overload
+def redact(value: JsonObject) -> JsonObject: ...
+@overload
+def redact(value: JsonValue) -> JsonValue: ...
+def redact(value: JsonValue) -> JsonValue:
     """Recursively masks any dict key matching REDACT_KEYS (case-insensitive),
     at any nesting depth, in both dicts and lists. Returns a new structure --
     never mutates the input."""
     if isinstance(value, dict):
         return {
-            key: _REDACTED_VALUE
-            if isinstance(key, str) and key.lower() in REDACT_KEYS
-            else redact(item)
+            key: _REDACTED_VALUE if key.lower() in REDACT_KEYS else redact(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -111,9 +113,9 @@ def record_request(
     user_agent_string: str | None,
     request_method: str,
     request_path: str,
-    request_input: object,
+    request_input: JsonObject,
     response_status: int,
-    response_content: object,
+    response_content: JsonValue,
     memory_usage: int,
 ) -> None:
     """1:1 port of legacy's `RequestLog::process($request, $response)` --
@@ -133,14 +135,14 @@ def record_request(
     db.add(
         RequestLog(
             client_ip=client_ip,
-            client_ips=json.dumps(client_ips),
+            client_ips=client_ips,
             client_user_agent_id=client_user_agent_id,
             user_id=user_id,
             request_method=request_method,
             request_path=request_path,
-            request_input=json.dumps(redact(request_input)),
+            request_input=redact(request_input),
             response_status=response_status,
-            response_content=json.dumps(redact(response_content)),
+            response_content=redact(response_content),
             memory_usage=memory_usage,
             created_at=now,
             updated_at=now,
@@ -303,17 +305,15 @@ def get(db: Session, request_log_id: int) -> RequestLogShowOutput:
     return RequestLogShowOutput(
         id=row.id,
         client_ip=row.client_ip,
-        client_ips=json.loads(row.client_ips) if row.client_ips else [],
+        client_ips=row.client_ips or [],
         client_user_agent_string=client_user_agent_string,
         user_id=row.user_id,
         user_name=user_name,
         request_method=row.request_method,
         request_path=row.request_path,
-        request_input=json.loads(row.request_input) if row.request_input else None,
+        request_input=row.request_input,
         response_status=row.response_status,
-        response_content=json.loads(row.response_content)
-        if row.response_content
-        else None,
+        response_content=row.response_content,
         memory_usage=row.memory_usage,
         created_at=row.created_at,
     )

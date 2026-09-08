@@ -1,4 +1,3 @@
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -59,9 +58,9 @@ def test_redacts_password_and_access_token_end_to_end(
         .first()
     )
     assert row is not None
-    stored_request = json.loads(row.request_input)
+    stored_request = row.request_input
     assert stored_request["password"] == "__removed__"
-    stored_response = json.loads(row.response_content)
+    stored_response = row.response_content
     assert stored_response["access_token"] == "__removed__"
 
 

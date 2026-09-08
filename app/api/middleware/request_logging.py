@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.api.deps import try_decode_token
+from app.core.json_types import JsonObject, JsonValue
 from app.db.database import SessionLocal
 from app.db.models.user import User
 from app.services import request_log_service
@@ -23,7 +24,7 @@ from app.services import request_log_service
 _SKIP_LOG_HEADER = "x-skip-request-log"
 
 
-async def _extract_request_input(request: Request) -> dict[str, object]:
+async def _extract_request_input(request: Request) -> JsonObject:
     """Best-effort read of the request body as a dict -- mirrors Legacy's
     `$request->all()`, which handles both JSON bodies and form-encoded
     bodies (our own login endpoint uses OAuth2PasswordRequestForm, i.e.
@@ -49,7 +50,7 @@ async def _extract_request_input(request: Request) -> dict[str, object]:
     return {}
 
 
-def _try_parse_json(body: bytes) -> object:
+def _try_parse_json(body: bytes) -> JsonValue:
     # Mirrors Legacy's `json_decode($response->content())` -- returns None
     # for any non-JSON (or empty) response body, same as PHP's json_decode.
     if not body:
@@ -85,9 +86,9 @@ def _write_log_entry(
     auth_header: str | None,
     request_method: str,
     request_path: str,
-    request_input: dict[str, object],
+    request_input: JsonObject,
     response_status: int,
-    response_content: object,
+    response_content: JsonValue,
     memory_usage: int,
     user_agent_string: str | None,
 ) -> None:
