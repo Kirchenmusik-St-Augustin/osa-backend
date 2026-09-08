@@ -1,13 +1,15 @@
 """Tests for the ongoing DB-hardening effort (2026-09): the Quick-Wins
 slice (missing indexes, money >= 0 CHECK constraints, the `order` ->
-`sort_order` DB-level rename) and the enum-hardening slice
+`sort_order` DB-level rename), the enum-hardening slice
 (`booking_type`/`position_type`/scores' `*art`/`inhalt`/`sparte` columns
-converted from varchar+CHECK to native Postgres ENUMs). Schema comes from
-the real Alembic migrations (see conftest.py's session-scoped
-_create_schema fixture) -- these tests verify actual migration output,
-not just model intent."""
+converted from varchar+CHECK to native Postgres ENUMs), and the
+JSONB-conversion slice (request_logs' three JSON-text columns and
+auth_logs.payload converted to native JSONB, sent_emails.attachments
+dropped as dead). Schema comes from the real Alembic migrations (see
+conftest.py's session-scoped _create_schema fixture) -- these tests
+verify actual migration output, not just model intent."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import inspect, text
@@ -22,6 +24,7 @@ from app.db.models.fee import Fee
 from app.db.models.instrument import Instrument
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
 from app.db.models.performance import Performance
+from app.db.models.request_log import RequestLog
 from app.db.models.role import Role
 from app.db.models.score import Score
 
@@ -370,3 +373,65 @@ class TestScoreEnums:
             "soinstr4art",
         ):
             assert not isinstance(columns[column_name]["type"], postgresql.ENUM)
+
+
+class TestRequestLogsJsonb:
+    """request_logs.client_ips/request_input/response_content are native
+    JSONB columns as of this slice (were varchar, holding manually
+    json.dumps()-encoded text) -- see
+    app.services.request_log_service.record_request/get for the
+    (de)serialization this removed."""
+
+    @pytest.mark.parametrize(
+        "column_name", ["client_ips", "request_input", "response_content"]
+    )
+    def test_columns_are_jsonb(self, column_name: str):
+        columns = {c["name"]: c for c in inspect(engine).get_columns("request_logs")}
+        assert isinstance(columns[column_name]["type"], postgresql.JSONB)
+
+    def test_nested_structures_round_trip(self, db_session: Session):
+        entry = RequestLog(
+            client_ip="203.0.113.1",
+            client_ips=["203.0.113.1"],
+            client_user_agent_id=None,
+            user_id=None,
+            request_method="POST",
+            request_path="/schema-hardening-probe",
+            request_input={"nested": {"list": [1, 2, "three"], "flag": True}},
+            response_status=200,
+            response_content=None,
+            memory_usage=1,
+            created_at=datetime(2026, 6, 10, tzinfo=UTC),
+            updated_at=datetime(2026, 6, 10, tzinfo=UTC),
+        )
+        db_session.add(entry)
+        db_session.flush()
+
+        # psycopg2's jsonb typecaster is registered at the connection
+        # level by SQLAlchemy's dialect, so even this raw text() SELECT
+        # (bypassing the ORM's own JSONB type handling) comes back as a
+        # real Python dict, not a string.
+        raw_value = db_session.execute(
+            text("SELECT request_input FROM request_logs WHERE id = :id"),
+            {"id": entry.id},
+        ).scalar_one()
+        assert raw_value == {"nested": {"list": [1, 2, "three"], "flag": True}}
+
+
+class TestAuthLogsPayloadJsonb:
+    """auth_logs.payload is a native JSONB column as of this slice (was
+    the generic sa.JSON() type, which Postgres renders as `json`, not
+    `jsonb`)."""
+
+    def test_column_is_jsonb(self):
+        columns = {c["name"]: c for c in inspect(engine).get_columns("auth_logs")}
+        assert isinstance(columns["payload"]["type"], postgresql.JSONB)
+
+
+class TestSentEmailsAttachmentsDropped:
+    """sent_emails.attachments was verified dead (never read or written
+    anywhere in the backend or frontend) and dropped outright."""
+
+    def test_column_no_longer_exists(self):
+        columns = {c["name"] for c in inspect(engine).get_columns("sent_emails")}
+        assert "attachments" not in columns

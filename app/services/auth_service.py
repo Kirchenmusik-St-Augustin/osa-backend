@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import get_settings, require_setting
 from app.core.datetime_utils import ensure_tz_aware
 from app.core.human_names import normalize_givenname, normalize_surname
+from app.core.json_types import JsonObject
 from app.core.security import (
     ALGORITHM,
     REFRESH_TOKEN_LIFETIME_DAYS,
@@ -52,7 +53,7 @@ def log_auth_event(
     *,
     ip_address: str | None = None,
     user_agent: str | None = None,
-    payload: dict[str, Any] | None = None,
+    payload: JsonObject | None = None,
 ) -> None:
     """1:1 port of Legacy's `AuthLog::log()` (app/Models/AuthLog.php) --
     write-only audit row, keyed by the raw submitted email string, not

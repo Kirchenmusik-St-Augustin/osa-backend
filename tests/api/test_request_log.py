@@ -24,14 +24,14 @@ def _make_entry(
 ) -> RequestLog:
     entry = RequestLog(
         client_ip="127.0.0.1",
-        client_ips="[]",
+        client_ips=[],
         client_user_agent_id=None,
         user_id=user_id,
         request_method="GET",
         request_path=_unique("/some/path"),
-        request_input="{}",
+        request_input={},
         response_status=200,
-        response_content="null",
+        response_content=None,
         memory_usage=1,
         created_at=created_at,
         updated_at=created_at,

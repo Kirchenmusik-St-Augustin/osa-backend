@@ -1,8 +1,10 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.json_types import JsonObject, JsonValue
 from app.db.database import Base
 
 
@@ -12,24 +14,25 @@ class RequestLog(Base):
     `app.api.middleware.request_logging.RequestLoggingMiddleware` for every
     non-excluded request -- 1:1 legacy's `RequestLog::process()`, called
     from `RequestLogging` middleware's `terminate()` hook. `client_ips`/
-    `request_input`/`response_content` hold JSON-encoded text (legacy:
-    Eloquent `cast('array')` over a `text` column) -- (de)serialization is
-    the service layer's job, not the model's, this class only mirrors the
-    raw DB shape. No FK constraints (Phase 1, `client_user_agent_id`/
-    `user_id` are plain ints)."""
+    `request_input`/`response_content` are native JSONB columns (were
+    varchar holding manually json.dumps()-encoded text before this slice)
+    -- SQLAlchemy handles (de)serialization automatically, the service
+    layer works with plain Python objects (list/dict/etc.) end to end.
+    No FK constraints (Phase 1, `client_user_agent_id`/`user_id` are plain
+    ints)."""
 
     __tablename__ = "request_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_ip: Mapped[str]
-    client_ips: Mapped[str | None]
+    client_ips: Mapped[list[str] | None] = mapped_column(JSONB())
     client_user_agent_id: Mapped[int | None]
     user_id: Mapped[int | None]
     request_method: Mapped[str]
     request_path: Mapped[str]
-    request_input: Mapped[str | None]
+    request_input: Mapped[JsonObject | None] = mapped_column(JSONB())
     response_status: Mapped[int]
-    response_content: Mapped[str | None]
+    response_content: Mapped[JsonValue | None] = mapped_column(JSONB())
     memory_usage: Mapped[int]
     created_at: Mapped[datetime | None] = mapped_column(DateTime())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime())

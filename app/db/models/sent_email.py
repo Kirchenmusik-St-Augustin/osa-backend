@@ -24,7 +24,6 @@ class SentEmail(Base):
     subject: Mapped[str | None]
     body: Mapped[str | None]
     headers: Mapped[str | None]
-    attachments: Mapped[str | None]
     mailer: Mapped[str | None]
     created_at: Mapped[datetime | None] = mapped_column(DateTime())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime())

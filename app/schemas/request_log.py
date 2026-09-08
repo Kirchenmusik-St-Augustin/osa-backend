@@ -3,6 +3,7 @@ from datetime import date
 from pydantic import BaseModel
 
 from app.core.datetime_utils import UtcDatetime
+from app.core.json_types import JsonObject, JsonValue
 
 
 class RequestLogUserSummaryOutput(BaseModel):
@@ -54,8 +55,8 @@ class RequestLogShowOutput(BaseModel):
     user_name: str | None
     request_method: str
     request_path: str
-    request_input: object
+    request_input: JsonObject | None
     response_status: int
-    response_content: object
+    response_content: JsonValue | None
     memory_usage: int
     created_at: UtcDatetime

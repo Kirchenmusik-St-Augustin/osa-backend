@@ -1,4 +1,3 @@
-import json
 import uuid
 from datetime import UTC, date, datetime
 
@@ -30,14 +29,14 @@ def _make_entry(
 ) -> RequestLog:
     entry = RequestLog(
         client_ip="127.0.0.1",
-        client_ips="[]",
+        client_ips=[],
         client_user_agent_id=client_user_agent_id,
         user_id=user_id,
         request_method=request_method,
         request_path=request_path or _unique("/some/path"),
-        request_input="{}",
+        request_input={},
         response_status=200,
-        response_content="null",
+        response_content=None,
         memory_usage=1,
         created_at=created_at,
         updated_at=created_at,
@@ -133,13 +132,13 @@ class TestRecordRequest:
             select(RequestLog).where(RequestLog.request_path == request_path)
         ).scalar_one()
         assert row.client_ip == "127.0.0.1"
-        assert json.loads(row.client_ips) == ["127.0.0.1"]
+        assert row.client_ips == ["127.0.0.1"]
         assert row.response_status == 200
-        assert json.loads(row.request_input) == {
+        assert row.request_input == {
             "username": "max@example.test",
             "password": "__removed__",
         }
-        assert json.loads(row.response_content) == {
+        assert row.response_content == {
             "access_token": "__removed__",
             "token_type": "bearer",
         }
@@ -529,17 +528,17 @@ class TestGet:
         assert result.user_id is None
         assert result.user_name is None
 
-    def test_deserializes_json_columns(self, db_session: Session):
+    def test_round_trips_json_columns_through_jsonb(self, db_session: Session):
         entry = RequestLog(
             client_ip="203.0.113.1",
-            client_ips='["203.0.113.1", "198.51.100.1"]',
+            client_ips=["203.0.113.1", "198.51.100.1"],
             client_user_agent_id=None,
             user_id=None,
             request_method="GET",
             request_path="/some/path",
-            request_input='{"foo": "bar"}',
+            request_input={"foo": "bar"},
             response_status=200,
-            response_content='{"baz": 1}',
+            response_content={"baz": 1},
             memory_usage=42,
             created_at=datetime(2026, 6, 10, tzinfo=UTC),
             updated_at=datetime(2026, 6, 10, tzinfo=UTC),
