@@ -1,16 +1,25 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 
 
 class UserRole(Base):
-    """Mirrors legacy `user_roles` (pure pivot table) exactly. No
-    `created_at`/`updated_at` audit-trigger semantics needed -- Phase 2's
-    audit-trail rule ("every table except mapping tables") already carves
-    out junction tables like this one."""
+    """Mirrors legacy `user_roles` (pure pivot table) exactly, including
+    its `created_at`/`updated_at` columns -- Phase 1's structural-parity
+    transfer gave every legacy table these two columns regardless of
+    whether it was a junction table, and this one is no exception
+    (confirmed present in the real legacy schema). The TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09) therefore treats this table
+    the same as every other created_at/updated_at pair in the schema, not
+    as a mapping-table exemption: the columns already exist and hold
+    genuinely-UTC data, so excluding them here would mean dropping live
+    columns, which is out of scope for a timestamp-hardening slice.
+    `created_at` is populated by the database's own DEFAULT now(),
+    `updated_at` by the shared set_updated_at() BEFORE UPDATE trigger --
+    neither is assigned from Python anymore."""
 
     __tablename__ = "user_roles"
     __table_args__ = (UniqueConstraint("user_id", "role_id"),)
@@ -18,5 +27,9 @@ class UserRole(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"))
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

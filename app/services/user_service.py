@@ -306,11 +306,8 @@ def _sync_roles_if_administrator(
         if user_role.role_id not in desired_ids:
             db.delete(user_role)
 
-    now = datetime.now(UTC)
     for role_id in desired_ids - existing_ids:
-        db.add(
-            UserRole(user_id=user_id, role_id=role_id, created_at=now, updated_at=now)
-        )
+        db.add(UserRole(user_id=user_id, role_id=role_id))
 
 
 def _sync_positions(db: Session, user_id: int, data: UserRequest) -> None:
@@ -330,15 +327,12 @@ def create_user(db: Session, data: UserRequest, current_user: User) -> UserRespo
     if errors:
         raise UserValidationError(errors)
 
-    now = datetime.now(UTC)
     user = User(
         surname=normalize_surname(data.surname),
         givenname=normalize_givenname(data.givenname),
         email=data.email,
         phone=data.phone,
         auth_locked=data.auth_locked,
-        created_at=now,
-        updated_at=now,
     )
     db.add(user)
     db.flush()
@@ -376,7 +370,6 @@ def update_user(
     user.email = data.email
     user.phone = data.phone
     user.auth_locked = data.auth_locked
-    user.updated_at = datetime.now(UTC)
 
     _apply_administrator_grant(
         user, desired=data.administrator, current_user=current_user

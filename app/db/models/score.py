@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum
+from sqlalchemy import DateTime, Enum, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -64,7 +64,13 @@ class Score(Base):
     `inhalt`/`sparte`/the 12 `*art` columns are native Postgres ENUMs as
     of the enum-hardening slice (2026-09), replacing what used to be 14
     CheckConstraints -- `Mapped[str]` is unchanged, every existing string
-    comparison/lookup on these columns keeps working."""
+    comparison/lookup on these columns keeps working.
+
+    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    the database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
+    Python anymore."""
 
     __tablename__ = "scores"
 
@@ -178,5 +184,9 @@ class Score(Base):
     bemerkung: Mapped[str | None] = mapped_column()
     zusatznoten: Mapped[str | None] = mapped_column()
 
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

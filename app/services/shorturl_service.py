@@ -93,13 +93,10 @@ def create_shorturl(db: Session, data: ShorturlRequest) -> ShorturlResponse:
     if errors:
         raise ShorturlValidationError(errors)
 
-    now = datetime.now(UTC)
     shorturl = Shorturl(
         path=path,
         target=ensure_scheme(data.target),
         counter=0,
-        created_at=now,
-        updated_at=now,
     )
     db.add(shorturl)
     db.commit()
@@ -117,7 +114,6 @@ def update_shorturl(
 
     shorturl.path = path
     shorturl.target = ensure_scheme(data.target)
-    shorturl.updated_at = datetime.now(UTC)
     db.commit()
     return _to_response(shorturl)
 

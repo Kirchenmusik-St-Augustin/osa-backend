@@ -375,16 +375,23 @@ def user_booking_status_batch(
             result[user_id] = BookingStatusOutput(
                 status=4 if booking.order < quantity else 3,
                 position=PositionRefOutput(id=booking.position_id, name=name),
-                at=booking.updated_at,
+                # updated_at is NULL until the row's first real UPDATE
+                # (the set_updated_at() trigger never fires on a row that
+                # was only ever inserted, never modified in place -- see
+                # _save_cast_item's delete+recreate pattern) -- created_at
+                # is the meaningful fallback, same value updated_at always
+                # held here before the audit-trigger hardening slice.
+                at=booking.updated_at or booking.created_at,
             )
             continue
 
         booking_request = requests_by_user.get(user_id)
         if booking_request is not None:
+            at = booking_request.updated_at or booking_request.created_at
             result[user_id] = (
-                BookingStatusOutput(status=5, at=booking_request.updated_at)
+                BookingStatusOutput(status=5, at=at)
                 if booking_request.notbooked_at is not None
-                else BookingStatusOutput(status=2, at=booking_request.updated_at)
+                else BookingStatusOutput(status=2, at=at)
             )
             continue
 
@@ -528,15 +535,18 @@ def _resolve_calendar_status(
         return BookingStatusOutput(
             status=4 if booking.order < quantity else 3,
             position=PositionRefOutput(id=booking.position_id, name=name),
-            at=booking.updated_at,
+            # See user_booking_status_batch's identical fallback above --
+            # updated_at is NULL on a row that was only ever inserted.
+            at=booking.updated_at or booking.created_at,
         )
 
     booking_request = requests_by_performance.get(performance_id)
     if booking_request is not None:
+        at = booking_request.updated_at or booking_request.created_at
         return (
-            BookingStatusOutput(status=5, at=booking_request.updated_at)
+            BookingStatusOutput(status=5, at=at)
             if booking_request.notbooked_at is not None
-            else BookingStatusOutput(status=2, at=booking_request.updated_at)
+            else BookingStatusOutput(status=2, at=at)
         )
 
     return BookingStatusOutput(status=1)
@@ -714,7 +724,21 @@ def _popular_for_position(
     position_id: int,
 ) -> PopularItemOutput:
     rows = db.execute(
-        select(Booking.user_id, Booking.updated_at, Performance.schedule)
+        # Booking.id, not created_at/updated_at: a Booking row is always
+        # deleted and recreated by _save_cast_item's diff engine, never
+        # updated in place, so the set_updated_at() trigger never fires
+        # on it (updated_at stays NULL for every row). created_at would
+        # work in principle, but Postgres' now() (the DEFAULT behind it)
+        # is transaction-constant, not statement-constant -- every
+        # Booking row inserted within the same transaction gets the
+        # identical created_at value, which loses "who was booked most
+        # recently" whenever several bookings happen close together (a
+        # single Cast-page save iterates multiple positions in one
+        # transaction). The auto-increment id is a strictly monotonic,
+        # timestamp-independent stand-in for insertion order and is never
+        # NULL, so it sorts "most recently booked" correctly regardless
+        # of how many bookings landed in the same transaction.
+        select(Booking.id, Booking.user_id, Performance.schedule)
         .join(Performance, Performance.id == Booking.performance_id)
         .where(
             Booking.performance_id.in_(performance_ids),
@@ -741,14 +765,7 @@ def _popular_for_position(
 
     seen: set[int] = set()
     recent: list[PopularRecentUserOutput] = []
-    # Naive datetime.min, deliberately without tzinfo: our DateTime columns
-    # round-trip every value as naive regardless of how it was written
-    # (see app.core.datetime_utils.ensure_tz_aware for the same round-trip
-    # caveat elsewhere) -- a tz-aware fallback would raise on comparison
-    # against the real (naive) `updated_at` values instead of just sorting
-    # last.
-    epoch = datetime.min  # noqa: DTZ901
-    for row in sorted(rows, key=lambda r: r.updated_at or epoch, reverse=True):
+    for row in sorted(rows, key=lambda r: r.id, reverse=True):
         if row.user_id in seen or row.user_id not in users_by_id:
             continue
         seen.add(row.user_id)
@@ -843,7 +860,6 @@ def _booking_log(
     position_id: int,
     fee: int,
 ) -> None:
-    now = datetime.now(UTC)
     db.add(
         BookingLog(
             performance_id=performance_id,
@@ -852,8 +868,6 @@ def _booking_log(
             position_type=position_type,
             position_id=position_id,
             fee=fee,
-            created_at=now,
-            updated_at=now,
         )
     )
 
@@ -969,7 +983,6 @@ def _save_cast_item(
 
     # recreate from scratch -- order becomes the array index
     _delete_position_bookings()
-    now = datetime.now(UTC)
     for order, (user_id, fee) in enumerate(new_cast):
         # Enforce UNIQUE(performance_id, user_id) app-side: moving someone
         # to a new position auto-unbooks them from wherever else they
@@ -987,8 +1000,6 @@ def _save_cast_item(
                 position_id=position_id,
                 fee=fee,
                 order=order,
-                created_at=now,
-                updated_at=now,
             )
         )
     # Flush (not commit) so the NEXT position processed in the same
@@ -1216,13 +1227,10 @@ def _request_booking(db: Session, performance_id: int, user_id: int) -> None:
     ).scalar_one_or_none()
     if existing is not None:
         raise BookingRequestAlreadyExistsError
-    now = datetime.now(UTC)
     db.add(
         BookingRequest(
             performance_id=performance_id,
             user_id=user_id,
-            created_at=now,
-            updated_at=now,
         )
     )
 

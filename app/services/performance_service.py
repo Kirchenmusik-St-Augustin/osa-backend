@@ -270,12 +270,10 @@ def _sync_positions(
     for key in removed_keys:
         db.delete(existing_by_key[key])
 
-    now = datetime.now(UTC)
     for (position_type, position_id), quantity in desired.items():
         existing_position = existing_by_key.get((position_type, position_id))
         if existing_position is not None:
             existing_position.quantity = quantity
-            existing_position.updated_at = now
         else:
             db.add(
                 PerformancePosition(
@@ -283,8 +281,6 @@ def _sync_positions(
                     position_type=position_type,
                     position_id=position_id,
                     quantity=quantity,
-                    created_at=now,
-                    updated_at=now,
                 )
             )
     return removed_keys, old_quantities
@@ -309,20 +305,16 @@ def _sync_proprium(db: Session, performance_id: int, data: PerformanceRequest) -
         if element_id not in desired:
             db.delete(row)
 
-    now = datetime.now(UTC)
     for element_id, propriumwork_id in desired.items():
         row = existing_by_element.get(element_id)
         if row is not None:
             row.propriumwork_id = propriumwork_id
-            row.updated_at = now
         else:
             db.add(
                 PerformanceProprium(
                     performance_id=performance_id,
                     propriumelement_id=element_id,
                     propriumwork_id=propriumwork_id,
-                    created_at=now,
-                    updated_at=now,
                 )
             )
 
@@ -351,7 +343,6 @@ def _sync_rehearsals(
                 schedule=schedule,
                 comment=rehearsal.comment,
                 created_at=now,
-                updated_at=now,
             )
         )
 
@@ -855,7 +846,6 @@ def create_performance(db: Session, data: PerformanceRequest) -> PerformanceResp
     if errors:
         raise PerformanceValidationError(errors)
 
-    now = datetime.now(UTC)
     performance = Performance(
         schedule=data.schedule,
         location_id=data.location_id,
@@ -867,8 +857,6 @@ def create_performance(db: Session, data: PerformanceRequest) -> PerformanceResp
         voice_defaultfee=data.voice_defaultfee,
         extracost_amount=data.extracost_amount,
         extracost_description=data.extracost_description,
-        created_at=now,
-        updated_at=now,
     )
     db.add(performance)
     db.flush()
@@ -898,7 +886,6 @@ def update_performance(
     performance.voice_defaultfee = data.voice_defaultfee
     performance.extracost_amount = data.extracost_amount
     performance.extracost_description = data.extracost_description
-    performance.updated_at = datetime.now(UTC)
     removed_keys, old_quantities = _sync_positions(db, performance_id, data)
     _sync_proprium(db, performance_id, data)
     _sync_rehearsals(db, performance_id, data)

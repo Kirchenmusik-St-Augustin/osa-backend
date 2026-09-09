@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -85,6 +83,5 @@ def update_profile(
     user.email = data.email
     if email_changed:
         user.email_verified_at = None
-    user.updated_at = datetime.now(UTC)
     db.commit()
     return user, email_changed

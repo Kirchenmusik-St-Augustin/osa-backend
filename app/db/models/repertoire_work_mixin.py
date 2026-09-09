@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -14,7 +14,11 @@ class RepertoireWorkColumns:
     has zero FK constraints anywhere (Legacy enforces referential
     integrity purely at the application level), so the structural 1:1
     transfer keeps that exactly, per the project's structural-parity
-    mandate."""
+    mandate.
+
+    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09) -- same server_default/
+    trigger split as CoreelementColumns above."""
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
@@ -22,5 +26,9 @@ class RepertoireWorkColumns:
     demanding: Mapped[bool] = mapped_column(default=False)
     artist_id: Mapped[int]
     duration: Mapped[int | None]
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

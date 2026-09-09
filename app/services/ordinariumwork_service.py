@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -159,12 +158,10 @@ def _sync_positions(
         if key not in desired:
             db.delete(position)
 
-    now = datetime.now(UTC)
     for (position_type, position_id), quantity in desired.items():
         existing_position = existing_by_key.get((position_type, position_id))
         if existing_position is not None:
             existing_position.quantity = quantity
-            existing_position.updated_at = now
         else:
             db.add(
                 OrdinariumworkPosition(
@@ -172,8 +169,6 @@ def _sync_positions(
                     position_type=position_type,
                     position_id=position_id,
                     quantity=quantity,
-                    created_at=now,
-                    updated_at=now,
                 )
             )
 
@@ -250,15 +245,12 @@ def create_ordinariumwork(
     if errors:
         raise OrdinariumworkValidationError(errors)
 
-    now = datetime.now(UTC)
     ordinariumwork = Ordinariumwork(
         name=data.name,
         description=data.description,
         artist_id=data.artist_id,
         duration=data.duration,
         demanding=data.demanding,
-        created_at=now,
-        updated_at=now,
     )
     db.add(ordinariumwork)
     db.flush()
@@ -280,7 +272,6 @@ def update_ordinariumwork(
     ordinariumwork.artist_id = data.artist_id
     ordinariumwork.duration = data.duration
     ordinariumwork.demanding = data.demanding
-    ordinariumwork.updated_at = datetime.now(UTC)
     _sync_positions(db, ordinariumwork_id, data)
     db.commit()
     return _to_response(db, ordinariumwork)

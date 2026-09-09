@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,11 @@ class RequestLog(Base):
     -- SQLAlchemy handles (de)serialization automatically, the service
     layer works with plain Python objects (list/dict/etc.) end to end.
     No FK constraints (Phase 1, `client_user_agent_id`/`user_id` are plain
-    ints)."""
+    ints). `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ
+    + audit-trigger hardening slice (2026-09): `created_at` is populated
+    by the database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
+    Python anymore."""
 
     __tablename__ = "request_logs"
 
@@ -34,5 +38,9 @@ class RequestLog(Base):
     response_status: Mapped[int]
     response_content: Mapped[JsonValue | None] = mapped_column(JSONB())
     memory_usage: Mapped[int]
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

@@ -1,6 +1,5 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Literal, cast
 
 from sqlalchemy import func, select
@@ -302,12 +301,9 @@ def create_coreelement(
     # exactly, including its NULL-on-empty-table quirk (PHP coerces
     # null + 1 to 1, not 0, for the very first row of a type).
     existing_max = db.execute(select(func.max(config.model.order))).scalar_one()
-    now = datetime.now(UTC)
     obj = config.model(
         name=data.name.strip(),
         order=(existing_max or 0) + 1,
-        created_at=now,
-        updated_at=now,
     )
     for spec in config.extra_fields:
         setattr(obj, spec.name, getattr(data, spec.name).strip())
@@ -343,7 +339,6 @@ def update_coreelement(
         # an update must never silently reset an archived element back to
         # active just because the caller didn't send the field.
         cast("_ActiveCoreelementModel", obj).active = data.active
-    obj.updated_at = datetime.now(UTC)
     db.commit()
     return obj
 
