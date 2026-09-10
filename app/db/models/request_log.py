@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, func
+from sqlalchemy import DateTime, FetchedValue, ForeignKey, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,20 +18,26 @@ class RequestLog(Base):
     varchar holding manually json.dumps()-encoded text before this slice)
     -- SQLAlchemy handles (de)serialization automatically, the service
     layer works with plain Python objects (list/dict/etc.) end to end.
-    No FK constraints (Phase 1, `client_user_agent_id`/`user_id` are plain
-    ints). `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ
-    + audit-trigger hardening slice (2026-09): `created_at` is populated
-    by the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    `client_user_agent_id`/`user_id` are nullable, ON DELETE SET NULL
+    foreign keys as of the FK-hardening slice (2026-09): an anonymous or
+    since-deleted client/user never blocks or removes this table's own
+    audit trail entries. `created_at`/`updated_at` are TIMESTAMPTZ as of
+    the TIMESTAMPTZ + audit-trigger hardening slice (2026-09): `created_at`
+    is populated by the database's own DEFAULT now(), `updated_at` by the
+    shared set_updated_at() BEFORE UPDATE trigger -- neither is assigned
+    from Python anymore."""
 
     __tablename__ = "request_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_ip: Mapped[str]
     client_ips: Mapped[list[str] | None] = mapped_column(JSONB())
-    client_user_agent_id: Mapped[int | None]
-    user_id: Mapped[int | None]
+    client_user_agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("client_user_agents.id", ondelete="SET NULL")
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
     request_method: Mapped[str]
     request_path: Mapped[str]
     request_input: Mapped[JsonObject | None] = mapped_column(JSONB())

@@ -311,6 +311,35 @@ class TestLatestUnnotifiedEntries:
         assert result[(first_performance_id, user.id)] is first_log
         assert result[(second_performance_id, user.id)] is second_log
 
+    def test_entries_with_null_performance_id_or_user_id_are_skipped(self):
+        """performance_id/user_id are nullable (ON DELETE SET NULL) as of
+        the FK-hardening slice -- a log entry whose Performance or User was
+        since deleted must not crash the grouping, and must not be
+        notify-worthy (there's no one left to notify). Built in-memory,
+        no DB round-trip needed for this pure-function guard."""
+        orphaned_performance = BookingLog(
+            performance_id=None,
+            user_id=1,
+            booking_type="book",
+            position_type="instruments",
+            position_id=1,
+            fee=0,
+        )
+        orphaned_user = BookingLog(
+            performance_id=1,
+            user_id=None,
+            booking_type="book",
+            position_type="instruments",
+            position_id=1,
+            fee=0,
+        )
+
+        result = booking_jobs._latest_unnotified_entries(
+            [orphaned_performance, orphaned_user]
+        )
+
+        assert result == {}
+
 
 class TestNotifyUpcomingBookingStatus:
     def test_sends_one_mail_per_user_and_marks_notified(

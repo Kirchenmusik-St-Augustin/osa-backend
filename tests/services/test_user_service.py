@@ -5,11 +5,14 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
+from app.db.models.artist import Artist
 from app.db.models.booking import Booking
 from app.db.models.booking_request import BookingRequest
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
+from app.db.models.location import Location
 from app.db.models.oauth2_binding import Oauth2Binding
+from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.role import Role
 from app.db.models.user import User
@@ -85,15 +88,25 @@ def _make_role(db_session: Session) -> Role:
 
 
 def _make_performance(db_session: Session, *, schedule: datetime) -> Performance:
-    # No FK constraints on location_id/ordinariumwork_id in Phase 1 (see
-    # app.db.models.performance.Performance docstring) -- arbitrary ints are
-    # fine, this test only needs a real `id` + `schedule` to join Bookings
-    # against.
+    # location_id/ordinariumwork_id are ON DELETE RESTRICT foreign keys
+    # (see app.db.models.performance.Performance docstring) -- a real
+    # Location/Ordinariumwork row is required, not just an arbitrary int.
     now = datetime.now(UTC)
+    artist = Artist(surname=_unique("Komponist"), givenname="Given", composer=True)
+    location = Location(
+        name=_unique("Ort"), order=0, address="Adresse 1", color="000000"
+    )
+    db_session.add_all([artist, location])
+    db_session.flush()
+    ordinariumwork = Ordinariumwork(
+        name=_unique("Werk"), artist_id=artist.id, created_at=now, updated_at=now
+    )
+    db_session.add(ordinariumwork)
+    db_session.flush()
     performance = Performance(
         schedule=schedule,
-        location_id=1,
-        ordinariumwork_id=1,
+        location_id=location.id,
+        ordinariumwork_id=ordinariumwork.id,
         created_at=now,
         updated_at=now,
     )

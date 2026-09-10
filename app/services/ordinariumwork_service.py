@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models.artist import Artist
@@ -348,13 +348,11 @@ def _ordinariumwork_has_dependencies(db: Session, ordinariumwork_id: int) -> boo
 
 
 def delete_ordinariumwork(db: Session, ordinariumwork_id: int) -> None:
+    """Deleting the row alone is enough: `ordinariumwork_positions.
+    ordinariumwork_id` is an ON DELETE CASCADE foreign key, so the
+    database removes this Ordinariumwork's position rows on its own."""
     ordinariumwork = _get_or_404(db, ordinariumwork_id)
     if _ordinariumwork_has_dependencies(db, ordinariumwork_id):
         raise OrdinariumworkInUseError
-    db.execute(
-        delete(OrdinariumworkPosition).where(
-            OrdinariumworkPosition.ordinariumwork_id == ordinariumwork_id
-        )
-    )
     db.delete(ordinariumwork)
     db.commit()

@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, FetchedValue, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    FetchedValue,
+    ForeignKey,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -30,7 +37,11 @@ class OrdinariumworkPosition(Base):
     audit-trigger hardening slice (2026-09): `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    Python anymore. `ordinariumwork_id` is an ON DELETE CASCADE foreign key
+    as of the FK-hardening slice (2026-09): ordinariumwork_service.
+    delete_ordinariumwork() already deletes this table's own rows before
+    deleting their Ordinariumwork, CASCADE moves that cleanup to the
+    database."""
 
     __tablename__ = "ordinariumwork_positions"
     __table_args__ = (
@@ -39,7 +50,9 @@ class OrdinariumworkPosition(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ordinariumwork_id: Mapped[int]
+    ordinariumwork_id: Mapped[int] = mapped_column(
+        ForeignKey("ordinariumworks.id", ondelete="CASCADE")
+    )
     position_type: Mapped[str] = mapped_column(position_type_enum)
     position_id: Mapped[int]
     quantity: Mapped[int]

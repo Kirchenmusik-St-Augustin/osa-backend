@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -8,9 +8,9 @@ from app.db.database import Base
 
 class Oauth2Binding(Base):
     """Mirrors legacy `oauth2_bindings` exactly (Phase 1 -- no renames, no
-    schema changes). `local_id` intentionally has no FK constraint even
-    though it references `users.id` in practice -- the real schema dump
-    has none, and Phase 1 promises structural fidelity, warts included.
+    schema changes). `local_id` is an ON DELETE CASCADE foreign key into
+    `users.id` as of the FK-hardening slice (2026-09) -- an OAuth2 binding
+    has no meaning independent of the local user it authenticates.
 
     `bound_at`/`lastuse_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09) -- stay Python-managed via
@@ -25,6 +25,6 @@ class Oauth2Binding(Base):
     provider: Mapped[str]
     remote_id: Mapped[str]
     remote_name: Mapped[str]
-    local_id: Mapped[int]
+    local_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     lastuse_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

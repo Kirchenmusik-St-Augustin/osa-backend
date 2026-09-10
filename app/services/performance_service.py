@@ -926,24 +926,13 @@ def _has_bookings_or_requests(db: Session, performance_id: int) -> bool:
 
 
 def delete_performance(db: Session, performance_id: int) -> None:
+    """Deleting the row alone is enough: `performance_positions`/
+    `performance_proprium`/`performance_rehearsals`.performance_id are all
+    ON DELETE CASCADE foreign keys, so the database removes this
+    Performance's position/proprium/rehearsal rows on its own."""
     performance = _get_or_404(db, performance_id)
     _ensure_not_past(performance)
     if _has_bookings_or_requests(db, performance_id):
         raise PerformanceInUseError
-    db.execute(
-        delete(PerformancePosition).where(
-            PerformancePosition.performance_id == performance_id
-        )
-    )
-    db.execute(
-        delete(PerformanceProprium).where(
-            PerformanceProprium.performance_id == performance_id
-        )
-    )
-    db.execute(
-        delete(PerformanceRehearsal).where(
-            PerformanceRehearsal.performance_id == performance_id
-        )
-    )
     db.delete(performance)
     db.commit()

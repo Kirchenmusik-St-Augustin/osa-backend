@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, FetchedValue, Index, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum,
+    FetchedValue,
+    ForeignKey,
+    Index,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -44,10 +52,13 @@ class BookingLog(Base):
     cast-change produces a new row). `notified_at` is set by the scheduled
     `notify_upcoming_booking_status` job once a user has been emailed about
     this transition (see booking_jobs.py, a port of Legacy's
-    `BookingLog::checkNotificationForUpcomingPerformances()`). Never cleaned
-    up on Performance deletion -- Legacy has no FK/cleanup path either,
-    historical log rows are meant to outlive the Performance they
-    describe."""
+    `BookingLog::checkNotificationForUpcomingPerformances()`).
+
+    `performance_id`/`user_id` are nullable, ON DELETE SET NULL foreign
+    keys as of the FK-hardening slice (2026-09): a deleted Performance or
+    User does not remove or block deletion of its historical booking_log
+    rows -- they survive as orphaned (NULL-referencing) audit entries,
+    matching this table's append-only nature."""
 
     __tablename__ = "booking_logs"
     __table_args__ = (
@@ -61,8 +72,12 @@ class BookingLog(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int]
-    user_id: Mapped[int]
+    performance_id: Mapped[int | None] = mapped_column(
+        ForeignKey("performances.id", ondelete="SET NULL")
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
     booking_type: Mapped[str] = mapped_column(booking_type_enum)
     position_type: Mapped[str] = mapped_column(position_type_enum)
     position_id: Mapped[int]
