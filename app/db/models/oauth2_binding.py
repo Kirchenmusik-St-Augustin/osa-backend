@@ -10,7 +10,13 @@ class Oauth2Binding(Base):
     """Mirrors legacy `oauth2_bindings` exactly (Phase 1 -- no renames, no
     schema changes). `local_id` intentionally has no FK constraint even
     though it references `users.id` in practice -- the real schema dump
-    has none, and Phase 1 promises structural fidelity, warts included."""
+    has none, and Phase 1 promises structural fidelity, warts included.
+
+    `bound_at`/`lastuse_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09) -- stay Python-managed via
+    datetime.now(UTC) (this table has no created_at/updated_at pair, so
+    no server_default/trigger applies here), only their storage type
+    changed."""
 
     __tablename__ = "oauth2_bindings"
     __table_args__ = (UniqueConstraint("provider", "remote_id"),)
@@ -20,5 +26,5 @@ class Oauth2Binding(Base):
     remote_id: Mapped[str]
     remote_name: Mapped[str]
     local_id: Mapped[int]
-    bound_at: Mapped[datetime] = mapped_column(DateTime())
-    lastuse_at: Mapped[datetime] = mapped_column(DateTime())
+    bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    lastuse_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

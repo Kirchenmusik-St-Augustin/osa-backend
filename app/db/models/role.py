@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -19,7 +19,13 @@ class Role(Base):
     mapped_column's explicit column-name argument (same alias pattern as
     SentEmail.mail_from, see sent_email.py). Five rows exist in practice:
     planner, disponent, billing, scores, shorturls -- `administrator` is a
-    separate boolean flag on `users`, not a role row."""
+    separate boolean flag on `users`, not a role row.
+
+    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    the database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
+    Python anymore."""
 
     __tablename__ = "roles"
 
@@ -28,8 +34,12 @@ class Role(Base):
     label: Mapped[str] = mapped_column(unique=True)
     description: Mapped[str | None]
     order: Mapped[int] = mapped_column("sort_order", default=0)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )
 
     # Back-reference to User.roles -- added for Schritt 7's "Meine
     # Ansprechpersonen" (support_service.list_roles_with_contacts()), which

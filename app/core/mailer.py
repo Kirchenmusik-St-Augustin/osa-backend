@@ -168,7 +168,6 @@ def _log_sent_email(
     try:
         db = SessionLocal()
         try:
-            now = datetime.now(UTC)
             db.add(
                 SentEmail(
                     mail_from=settings.smtp_from_email,
@@ -178,8 +177,6 @@ def _log_sent_email(
                     body=html_body,
                     headers=template_key,
                     mailer="smtp",
-                    created_at=now,
-                    updated_at=now,
                 )
             )
             db.commit()

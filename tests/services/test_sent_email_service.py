@@ -37,30 +37,31 @@ def _make_sent_email(
 
 
 class TestListForMonth:
-    def test_filters_and_sorts_by_updated_at_not_created_at(self, db_session: Session):
-        # Legacy's SentEmail::ofMonth() filters/orders by updated_at -- a
-        # row created in a different month than it was last updated must
-        # still show up (and sort) by updated_at.
-        marker = _unique("UpdatedAtQuirk")
-        older_update = _make_sent_email(
+    def test_filters_and_sorts_by_created_at_not_updated_at(self, db_session: Session):
+        # As of the audit-trigger hardening slice (2026-09), updated_at no
+        # longer gets a value on insert (a real UPDATE never happens for
+        # this write-once table) -- a row updated_at-stamped into a
+        # different month than it was created must still show up (and
+        # sort) by created_at, the only column reliably populated.
+        older = _make_sent_email(
             db_session,
-            created_at=datetime(2020, 1, 1, tzinfo=UTC),
-            updated_at=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
-            subject=f"{marker}-alt",
+            created_at=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+            updated_at=datetime(2020, 1, 1, tzinfo=UTC),
+            subject=_unique("CreatedAtQuirk-alt"),
         )
-        newer_update = _make_sent_email(
+        newer = _make_sent_email(
             db_session,
-            created_at=datetime(2020, 1, 1, tzinfo=UTC),
-            updated_at=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
-            subject=f"{marker}-neu",
+            created_at=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            updated_at=datetime(2020, 1, 1, tzinfo=UTC),
+            subject=_unique("CreatedAtQuirk-neu"),
         )
 
         result = sent_email_service.list_for_month(db_session, 2026, 3)
         ids = [item.id for item in result]
 
-        assert older_update.id in ids
-        assert newer_update.id in ids
-        assert ids.index(newer_update.id) < ids.index(older_update.id)
+        assert older.id in ids
+        assert newer.id in ids
+        assert ids.index(newer.id) < ids.index(older.id)
 
     def test_excludes_a_different_month(self, db_session: Session):
         marker = _unique("AndererMonat")
@@ -74,21 +75,21 @@ class TestListForMonth:
         result = sent_email_service.list_for_month(db_session, 2026, 5)
         assert marker not in [item.subject for item in result]
 
-    def test_short_output_uses_updated_at_as_its_datetime_field(
+    def test_short_output_uses_created_at_as_its_datetime_field(
         self, db_session: Session
     ):
         marker = _unique("KurzDatum")
-        updated_at = datetime(2026, 6, 15, 9, 30, tzinfo=UTC)
+        created_at = datetime(2026, 6, 15, 9, 30, tzinfo=UTC)
         email = _make_sent_email(
             db_session,
-            created_at=datetime(2026, 1, 1, tzinfo=UTC),
-            updated_at=updated_at,
+            created_at=created_at,
+            updated_at=datetime(2020, 1, 1, tzinfo=UTC),
             subject=marker,
         )
 
         result = sent_email_service.list_for_month(db_session, 2026, 6)
         entry = next(item for item in result if item.id == email.id)
-        assert entry.datetime.replace(tzinfo=UTC) == updated_at
+        assert entry.datetime.replace(tzinfo=UTC) == created_at
 
 
 class TestGet:

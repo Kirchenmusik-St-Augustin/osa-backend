@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Index
+from sqlalchemy import CheckConstraint, DateTime, FetchedValue, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -29,7 +29,15 @@ class Performance(Base):
     `voice_defaultfee` are NOT the fee actually paid to a booked musician
     (chosen per-booking on the Cast page, Schritt 6) -- they're
     placeholder billing rates used only to price still-unfilled slots in
-    the Abrechnung."""
+    the Abrechnung.
+
+    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    the database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
+    Python anymore. `schedule` deliberately stays a naive TIMESTAMP: it's
+    user-entered local wall-clock time in Settings.app_timezone, not a
+    UTC instant (see app.core.datetime_utils module docstring)."""
 
     __tablename__ = "performances"
     __table_args__ = (
@@ -61,5 +69,9 @@ class Performance(Base):
     voice_defaultfee: Mapped[int] = mapped_column(default=110)
     extracost_amount: Mapped[int | None]
     extracost_description: Mapped[str | None]
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

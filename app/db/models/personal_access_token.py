@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index
+from sqlalchemy import DateTime, FetchedValue, Index, func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,7 +27,15 @@ class PersonalAccessToken(Base):
     callers keep reading/writing/querying meaningful names while the
     underlying row stays legacy-shaped. Integer PK, not UUID: kept as part
     of the structural 1:1 transfer -- UUID PKs are part of the not-yet-
-    started full schema redesign."""
+    started full schema redesign.
+
+    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    the database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
+    Python anymore. `last_used_at`/`expires_at` are also TIMESTAMPTZ now
+    (same slice) but stay Python-managed -- only their storage type
+    changed."""
 
     __tablename__ = "personal_access_tokens"
     __table_args__ = (
@@ -45,11 +53,15 @@ class PersonalAccessToken(Base):
     name: Mapped[str]  # e.g. "session"
     token: Mapped[str]  # JWT-ID (jti)
     abilities: Mapped[str | None]  # repurposed: refresh token hash
-    last_used_at: Mapped[datetime | None] = mapped_column(DateTime())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # refresh token expiry
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime())
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )
 
     @hybrid_property
     def user_id(self) -> int:

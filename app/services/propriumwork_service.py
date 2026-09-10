@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -143,15 +142,12 @@ def create_propriumwork(db: Session, data: PropriumworkRequest) -> PropriumworkR
     if errors:
         raise PropriumworkValidationError(errors)
 
-    now = datetime.now(UTC)
     propriumwork = Propriumwork(
         name=data.name,
         description=data.description,
         artist_id=data.artist_id,
         duration=data.duration,
         demanding=data.demanding,
-        created_at=now,
-        updated_at=now,
     )
     db.add(propriumwork)
     db.commit()
@@ -171,7 +167,6 @@ def update_propriumwork(
     propriumwork.artist_id = data.artist_id
     propriumwork.duration = data.duration
     propriumwork.demanding = data.demanding
-    propriumwork.updated_at = datetime.now(UTC)
     db.commit()
     return _to_response(db, propriumwork)
 

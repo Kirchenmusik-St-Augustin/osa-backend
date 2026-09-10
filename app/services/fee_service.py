@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -61,10 +59,7 @@ def create_fee(db: Session, data: FeeRequest) -> FeeResponse:
     if errors:
         raise FeeValidationError(errors)
 
-    now = datetime.now(UTC)
-    fee = Fee(
-        name=data.name.strip(), amount=data.amount, created_at=now, updated_at=now
-    )
+    fee = Fee(name=data.name.strip(), amount=data.amount)
     db.add(fee)
     db.commit()
     return _to_response(fee)
@@ -78,7 +73,6 @@ def update_fee(db: Session, fee_id: int, data: FeeRequest) -> FeeResponse:
 
     fee.name = data.name.strip()
     fee.amount = data.amount
-    fee.updated_at = datetime.now(UTC)
     db.commit()
     return _to_response(fee)
 

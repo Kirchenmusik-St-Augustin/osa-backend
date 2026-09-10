@@ -2,17 +2,21 @@
 slice (missing indexes, money >= 0 CHECK constraints, the `order` ->
 `sort_order` DB-level rename), the enum-hardening slice
 (`booking_type`/`position_type`/scores' `*art`/`inhalt`/`sparte` columns
-converted from varchar+CHECK to native Postgres ENUMs), and the
+converted from varchar+CHECK to native Postgres ENUMs), the
 JSONB-conversion slice (request_logs' three JSON-text columns and
 auth_logs.payload converted to native JSONB, sent_emails.attachments
-dropped as dead). Schema comes from the real Alembic migrations (see
-conftest.py's session-scoped _create_schema fixture) -- these tests
-verify actual migration output, not just model intent."""
+dropped as dead), and the TIMESTAMPTZ + audit-trigger slice (every
+genuinely-UTC DateTime column converted to TIMESTAMPTZ, a shared Postgres
+trigger function now maintains `updated_at` on every table that has one).
+Schema comes from the real Alembic migrations (see conftest.py's
+session-scoped _create_schema fixture) -- these tests verify actual
+migration output, not just model intent."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
@@ -27,6 +31,8 @@ from app.db.models.performance import Performance
 from app.db.models.request_log import RequestLog
 from app.db.models.role import Role
 from app.db.models.score import Score
+from app.db.models.user import User
+from app.db.models.user_role import UserRole
 
 
 class TestMissingIndexes:
@@ -435,3 +441,137 @@ class TestSentEmailsAttachmentsDropped:
     def test_column_no_longer_exists(self):
         columns = {c["name"] for c in inspect(engine).get_columns("sent_emails")}
         assert "attachments" not in columns
+
+
+class TestTimestampsAreTimestamptz:
+    """Every genuinely-UTC DateTime column is TIMESTAMPTZ as of this
+    slice -- introspection only. Covers one column per structural
+    category (mixin-based, individually-declared, created_at-only,
+    NOT NULL business-event column) rather than all 66, matching this
+    file's existing "representative, not exhaustive" style."""
+
+    @pytest.mark.parametrize(
+        ("table_name", "column_name"),
+        [
+            ("instruments", "created_at"),  # via CoreelementColumns mixin
+            ("instruments", "updated_at"),
+            ("fees", "created_at"),  # individually declared
+            ("fees", "updated_at"),
+            ("password_reset_tokens", "created_at"),  # created_at-only
+            ("oauth2_bindings", "bound_at"),  # NOT NULL business-event column
+            ("users", "deleted_at"),  # nullable business-event column
+            ("user_roles", "created_at"),  # junction table, still gets it
+            ("user_roles", "updated_at"),
+        ],
+    )
+    def test_column_is_timestamptz(self, table_name: str, column_name: str):
+        columns = {c["name"]: c for c in inspect(engine).get_columns(table_name)}
+        column_type = columns[column_name]["type"]
+        assert isinstance(column_type, postgresql.TIMESTAMP)
+        assert column_type.timezone is True
+
+    @pytest.mark.parametrize(
+        ("table_name", "column_name"),
+        [("performances", "schedule"), ("performance_rehearsals", "schedule")],
+    )
+    def test_schedule_columns_stay_naive_timestamp(
+        self, table_name: str, column_name: str
+    ):
+        # The two deliberate exclusions -- naive local wall-clock time in
+        # Settings.app_timezone, not UTC (see app.core.datetime_utils
+        # module docstring).
+        columns = {c["name"]: c for c in inspect(engine).get_columns(table_name)}
+        column_type = columns[column_name]["type"]
+        assert isinstance(column_type, postgresql.TIMESTAMP)
+        assert column_type.timezone is False
+
+
+class TestUpdatedAtTrigger:
+    """set_updated_at() BEFORE UPDATE trigger, covering three tables from
+    different structural categories: instruments (mixin-based),
+    ordinariumwork_positions (individually declared), user_roles
+    (junction table -- the one CLAUDE.md's literal wording would
+    otherwise have excluded, see the model docstring)."""
+
+    def test_trigger_exists_on_representative_tables(self, db_session: Session):
+        for table_name in ("instruments", "ordinariumwork_positions", "user_roles"):
+            rows = db_session.execute(
+                text(
+                    "SELECT trigger_name FROM information_schema.triggers "
+                    "WHERE event_object_table = :table_name "
+                    "AND trigger_name = 'set_updated_at'"
+                ),
+                {"table_name": table_name},
+            ).all()
+            assert len(rows) == 1, f"missing trigger on {table_name}"
+
+    def test_updated_at_is_null_immediately_after_insert(self, db_session: Session):
+        # server_onupdate=FetchedValue() is not a server_default -- only
+        # created_at gets DEFAULT now(). updated_at deliberately stays
+        # NULL until the row's first real UPDATE fires the trigger; a
+        # fresh row no longer gets updated_at == created_at for free.
+        instrument = Instrument(name="Trigger-Test-Fresh-Instrument", order=0)
+        db_session.add(instrument)
+        db_session.flush()
+        db_session.expire(instrument)
+        assert instrument.created_at is not None
+        assert instrument.updated_at is None
+
+    def test_bare_update_advances_updated_at(self, db_session: Session):
+        old_updated_at = datetime(2020, 1, 1, tzinfo=UTC)
+        instrument = Instrument(
+            name="Trigger-Test-Instrument",
+            order=0,
+            created_at=old_updated_at,
+            updated_at=old_updated_at,
+        )
+        db_session.add(instrument)
+        db_session.flush()
+
+        instrument.order = 5  # never touches .updated_at in Python
+        db_session.flush()
+        db_session.expire(instrument)
+
+        assert instrument.updated_at is not None
+        assert instrument.updated_at > old_updated_at
+
+    def test_ordinariumwork_position_bare_update_advances_updated_at(
+        self, db_session: Session
+    ):
+        old_updated_at = datetime(2020, 1, 1, tzinfo=UTC)
+        position = OrdinariumworkPosition(
+            ordinariumwork_id=1,
+            position_type="instruments",
+            position_id=1,
+            quantity=1,
+            created_at=old_updated_at,
+            updated_at=old_updated_at,
+        )
+        db_session.add(position)
+        db_session.flush()
+
+        position.quantity = 2  # never touches .updated_at in Python
+        db_session.flush()
+        db_session.expire(position)
+
+        assert position.updated_at is not None
+        assert position.updated_at > old_updated_at
+
+    def test_user_role_bare_update_advances_updated_at(
+        self, db_session: Session, make_user: Callable[..., User]
+    ):
+        old_updated_at = datetime(2020, 1, 1, tzinfo=UTC)
+        user = make_user(roles=["disponent"])
+        user_role = db_session.execute(
+            select(UserRole).where(UserRole.user_id == user.id)
+        ).scalar_one()
+        user_role.created_at = old_updated_at
+        user_role.updated_at = old_updated_at
+        db_session.flush()
+
+        user_role.role_id = user_role.role_id  # trivial no-op UPDATE
+        db_session.flush()
+        db_session.expire(user_role)
+
+        assert user_role.updated_at is not None
+        assert user_role.updated_at > old_updated_at

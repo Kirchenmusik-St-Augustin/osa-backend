@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Index, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    FetchedValue,
+    Index,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -29,6 +36,11 @@ class Booking(Base):
       (2026-09), replacing its former CHECK constraint -- `Mapped[str]`
       is unchanged, every existing string comparison/dict-dispatch on
       this column keeps working.
+    - `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+      audit-trigger hardening slice (2026-09): `created_at` is populated
+      by the database's own DEFAULT now(), `updated_at` by the shared
+      set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
+      Python anymore.
 
     One row per user actually cast into a Performance's Instrument/Voice/
     Choirjob position, `order` is the position within that position's cast
@@ -59,5 +71,9 @@ class Booking(Base):
     position_id: Mapped[int]
     order: Mapped[int] = mapped_column("sort_order", default=0)
     fee: Mapped[int]
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -103,7 +101,10 @@ def _to_response(score: Score) -> ScoreResponse:
     return ScoreResponse(
         id=score.id,
         created_at=score.created_at,
-        updated_at=score.updated_at,
+        # updated_at is NULL until the row's first real UPDATE (the
+        # set_updated_at() trigger doesn't fire on insert) -- created_at
+        # is the meaningful fallback for a freshly created score.
+        updated_at=score.updated_at or score.created_at,
         fields=_fields_dict(score),
     )
 
@@ -214,8 +215,7 @@ def create_score(db: Session, data: ScoreRequest) -> ScoreResponse:
     if errors:
         raise ScoreValidationError(errors)
 
-    now = datetime.now(UTC)
-    score = Score(created_at=now, updated_at=now)
+    score = Score()
     _apply_fields(score, data)
     db.add(score)
     db.commit()
@@ -229,6 +229,5 @@ def update_score(db: Session, score_id: int, data: ScoreRequest) -> ScoreRespons
         raise ScoreValidationError(errors)
 
     _apply_fields(score, data)
-    score.updated_at = datetime.now(UTC)
     db.commit()
     return _to_response(score)

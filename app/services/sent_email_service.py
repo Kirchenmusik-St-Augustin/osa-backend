@@ -10,28 +10,34 @@ class SentEmailNotFoundError(Exception):
 
 
 def list_for_month(db: Session, year: int, month: int) -> list[SentEmailShortOutput]:
-    """1:1 Legacy's `SentEmail::ofMonth()` -- filters/sorts by `updated_at`
-    (not `created_at`), same real-indexed-query technique as
+    """Filters/sorts by `created_at`, same real-indexed-query technique as
     performance_service.list_performances_for_month()'s year/month
-    extract() match."""
+    extract() match. Legacy's `SentEmail::ofMonth()` used `updated_at`
+    instead -- harmless there since Laravel stamps both columns
+    identically on create() and a sent-email row is never updated
+    afterwards, so the two were always equal. As of the audit-trigger
+    hardening slice (2026-09), `updated_at` no longer gets a value on
+    insert (only a real UPDATE fires the set_updated_at() trigger, which
+    never happens for this write-once table) -- created_at is the only
+    column guaranteed to hold this row's timestamp."""
     emails = (
         db.execute(
             select(SentEmail)
             .where(
-                extract("year", SentEmail.updated_at) == year,
-                extract("month", SentEmail.updated_at) == month,
+                extract("year", SentEmail.created_at) == year,
+                extract("month", SentEmail.created_at) == month,
             )
-            .order_by(SentEmail.updated_at.desc())
+            .order_by(SentEmail.created_at.desc())
         )
         .scalars()
         .all()
     )
     return [
         SentEmailShortOutput(
-            id=email.id, datetime=email.updated_at, to=email.to, subject=email.subject
+            id=email.id, datetime=email.created_at, to=email.to, subject=email.subject
         )
         for email in emails
-        if email.updated_at is not None
+        if email.created_at is not None
     ]
 
 

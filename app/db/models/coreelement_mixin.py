@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -23,10 +23,20 @@ class CoreelementColumns:
     (same alias pattern as SentEmail.mail_from, see sent_email.py) --
     every existing `.order`/`order=`/`order_by(<Model>.order)` call site
     across coreelement_service.py/performance_service.py/user_service.py/
-    booking_service.py is untouched."""
+    booking_service.py is untouched.
+
+    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
+    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    the database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger registered on every table built
+    on this mixin -- neither is ever assigned from Python anymore."""
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(unique=True)
     order: Mapped[int] = mapped_column("sort_order", default=0)
-    created_at: Mapped[datetime | None] = mapped_column(DateTime())
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime())
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

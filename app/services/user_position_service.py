@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -72,13 +70,10 @@ def create_user_position(
     """Dev/test/fixture-seeding helper -- there is deliberately no router
     endpoint for this in Schritt 6, the admin UI to assign these lands with
     Schritt 7 (User-/System-Verwaltung)."""
-    now = datetime.now(UTC)
     user_position = UserPosition(
         user_id=user_id,
         position_type=position_type,
         position_id=position_id,
-        created_at=now,
-        updated_at=now,
     )
     db.add(user_position)
     db.commit()
@@ -110,14 +105,11 @@ def sync_user_positions(
         if (position.position_type, position.position_id) not in desired_keys:
             db.delete(position)
 
-    now = datetime.now(UTC)
     for position_type, position_id in desired_keys - existing_keys:
         db.add(
             UserPosition(
                 user_id=user_id,
                 position_type=position_type,
                 position_id=position_id,
-                created_at=now,
-                updated_at=now,
             )
         )

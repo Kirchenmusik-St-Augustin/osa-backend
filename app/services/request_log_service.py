@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from typing import cast, overload
 
 from sqlalchemy import select
@@ -128,10 +128,6 @@ def record_request(
         if user_agent_string
         else None
     )
-    # created_at/updated_at are genuine UTC audit columns (like
-    # sent_emails'), not naive-Vienna business timestamps -- see
-    # app.core.datetime_utils module docstring for the distinction.
-    now = datetime.now(UTC)
     db.add(
         RequestLog(
             client_ip=client_ip,
@@ -144,8 +140,6 @@ def record_request(
             response_status=response_status,
             response_content=redact(response_content),
             memory_usage=memory_usage,
-            created_at=now,
-            updated_at=now,
         )
     )
     db.commit()

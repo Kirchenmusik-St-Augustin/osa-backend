@@ -165,8 +165,6 @@ def create_user_session(db: Session, user: User) -> tuple[str, str, str]:
             token=session_id,
             refresh_token_hash=hash_refresh_secret(refresh_secret),
             last_used_at=now,
-            created_at=now,
-            updated_at=now,
         )
     )
     user.auth_lastlogin = now
