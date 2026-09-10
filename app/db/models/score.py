@@ -1,9 +1,60 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, FetchedValue, func
+from sqlalchemy import CheckConstraint, DateTime, Enum, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+
+# Every numeric column below is a physical count (how many copies/parts/
+# instrument-headcount slots the archive card lists) -- negative counts
+# are never meaningful. All 42 are already validated `Field(ge=0, ...)`
+# at the Pydantic layer (app/schemas/score.py); these CHECK constraints
+# close the same "validated at the API, never enforced in the database"
+# gap the money-column CHECKs closed for fees/bookings/performances.
+_COUNT_CHECKS: tuple[str, ...] = (
+    "geboren",
+    "gestorben",
+    "jahr",
+    "part1anz",
+    "part2anz",
+    "klausz1anz",
+    "klausz2anz",
+    "chorpart1anz",
+    "chorpart2anz",
+    "stsopranz",
+    "staltanz",
+    "sttenanz",
+    "stbassanz",
+    "orgelanz",
+    "violine1",
+    "violine2",
+    "viola",
+    "cello",
+    "contrabass",
+    "floete1",
+    "floete2",
+    "floete3",
+    "oboe1",
+    "oboe2",
+    "klarinette1",
+    "klarinette2",
+    "fagott1",
+    "fagott2",
+    "kontrafagott",
+    "trombalt",
+    "trombten",
+    "trombbass",
+    "corno1",
+    "corno2",
+    "trompete1",
+    "trompete2",
+    "trompete3",
+    "pauke",
+    "soinstr1anz",
+    "soinstr2anz",
+    "soinstr3anz",
+    "soinstr4anz",
+)
 
 # Shared by all 12 "Original/Kopie/Original-Kopie" condition columns below
 # -- native Postgres ENUM as of the enum-hardening slice (2026-09),
@@ -72,9 +123,30 @@ class Score(Base):
     audit-trigger hardening slice (2026-09): `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    Python anymore.
+
+    Deliberately still a single flat table, not normalized into child
+    tables for the holdings groups (part1/part2/klausz1/klausz2/
+    chorpart1/chorpart2/stsopr/stalt/stten/stbass/orgel/orch) or the
+    instrumentation headcounts (violine1..pauke): every one of those is a
+    fixed, decades-stable slot on the physical archive card this table
+    mirrors, not a variable-length list of independent entities -- the
+    kind of repeating group 3NF actually targets. Every read/write already
+    treats the whole card as one atomic unit (see score_service.py's
+    _apply_fields/_fields_dict), and score_fields.py's tuple-driven
+    config means no per-field business logic is duplicated 94 times
+    despite the flat column count -- normalizing would only add joins on
+    every access with no relational benefit. This table also has zero
+    foreign keys in either direction (confirmed against the live schema)
+    and stays that way by design: the instrumentation headcounts
+    deliberately do NOT reference the shared instruments table other
+    domains use, keeping this table fully self-contained."""
 
     __tablename__ = "scores"
+    __table_args__ = tuple(
+        CheckConstraint(f"{column} >= 0", name=f"scores_{column}_check")
+        for column in _COUNT_CHECKS
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
