@@ -4,6 +4,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     FetchedValue,
+    ForeignKey,
     Index,
     UniqueConstraint,
     func,
@@ -41,6 +42,11 @@ class Booking(Base):
       by the database's own DEFAULT now(), `updated_at` by the shared
       set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
       Python anymore.
+    - `performance_id`/`user_id` are ON DELETE RESTRICT foreign keys as of
+      the FK-hardening slice (2026-09): performance_service.
+      _has_bookings_or_requests() and user_service._is_deletable() already
+      block deleting a Performance or User with existing bookings, RESTRICT
+      enforces that same rule at the database level.
 
     One row per user actually cast into a Performance's Instrument/Voice/
     Choirjob position, `order` is the position within that position's cast
@@ -65,8 +71,10 @@ class Booking(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int]
-    user_id: Mapped[int]
+    performance_id: Mapped[int] = mapped_column(
+        ForeignKey("performances.id", ondelete="RESTRICT")
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     position_type: Mapped[str] = mapped_column(position_type_enum)
     position_id: Mapped[int]
     order: Mapped[int] = mapped_column("sort_order", default=0)

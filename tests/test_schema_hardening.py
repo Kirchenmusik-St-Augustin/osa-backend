@@ -22,10 +22,13 @@ from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.database import engine
+from app.db.models.artist import Artist
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.fee import Fee
 from app.db.models.instrument import Instrument
+from app.db.models.location import Location
+from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
 from app.db.models.performance import Performance
 from app.db.models.request_log import RequestLog
@@ -33,6 +36,37 @@ from app.db.models.role import Role
 from app.db.models.score import Score
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
+
+
+def _make_ordinariumwork(db_session: Session) -> Ordinariumwork:
+    """FK-hardening slice (2026-09): ordinariumwork_positions.
+    ordinariumwork_id/performances.ordinariumwork_id/bookings.
+    performance_id-via-Performance now require a real parent row, an
+    arbitrary int id no longer round-trips."""
+    artist = Artist(surname="Schema-Hardening-Artist", givenname="Given", composer=True)
+    db_session.add(artist)
+    db_session.flush()
+    ordinariumwork = Ordinariumwork(name="Schema-Hardening-Werk", artist_id=artist.id)
+    db_session.add(ordinariumwork)
+    db_session.flush()
+    return ordinariumwork
+
+
+def _make_performance(db_session: Session) -> Performance:
+    ordinariumwork = _make_ordinariumwork(db_session)
+    location = Location(
+        name="Schema-Hardening-Ort", order=0, address="Adresse 1", color="000000"
+    )
+    db_session.add(location)
+    db_session.flush()
+    performance = Performance(
+        schedule=datetime(2099, 1, 1, 12, 0, 0),  # noqa: DTZ001 -- naive on purpose
+        location_id=location.id,
+        ordinariumwork_id=ordinariumwork.id,
+    )
+    db_session.add(performance)
+    db_session.flush()
+    return performance
 
 
 class TestMissingIndexes:
@@ -106,14 +140,7 @@ class TestMoneyCheckConstraints:
     def test_null_performance_extracost_amount_is_still_allowed(
         self, db_session: Session
     ):
-        performance = Performance(
-            schedule=datetime(2027, 1, 2, 12, 0),  # noqa: DTZ001 -- naive on purpose
-            location_id=1,
-            ordinariumwork_id=1,
-            extracost_amount=None,
-        )
-        db_session.add(performance)
-        db_session.flush()  # must not raise
+        performance = _make_performance(db_session)
         assert performance.extracost_amount is None
 
 
@@ -198,11 +225,16 @@ class TestBookingTypeEnum:
 
     @pytest.mark.parametrize("booking_type", ["book", "unbook"])
     def test_valid_booking_type_values_roundtrip(
-        self, db_session: Session, booking_type: str
+        self,
+        db_session: Session,
+        make_user: Callable[..., User],
+        booking_type: str,
     ):
+        performance = _make_performance(db_session)
+        user = make_user()
         log = BookingLog(
-            performance_id=1,
-            user_id=1,
+            performance_id=performance.id,
+            user_id=user.id,
             booking_type=booking_type,
             position_type="instruments",
             position_id=1,
@@ -262,9 +294,10 @@ class TestPositionTypeEnum:
     def test_ordinariumwork_position_still_accepts_its_two_allowed_values(
         self, db_session: Session, position_type: str
     ):
+        ordinariumwork = _make_ordinariumwork(db_session)
         db_session.add(
             OrdinariumworkPosition(
-                ordinariumwork_id=1,
+                ordinariumwork_id=ordinariumwork.id,
                 position_type=position_type,
                 position_id=1,
                 quantity=1,
@@ -274,11 +307,16 @@ class TestPositionTypeEnum:
 
     @pytest.mark.parametrize("position_type", ["instruments", "voices", "choirjobs"])
     def test_valid_position_type_values_roundtrip(
-        self, db_session: Session, position_type: str
+        self,
+        db_session: Session,
+        make_user: Callable[..., User],
+        position_type: str,
     ):
+        performance = _make_performance(db_session)
+        user = make_user()
         booking = Booking(
-            performance_id=1,
-            user_id=1,
+            performance_id=performance.id,
+            user_id=user.id,
             position_type=position_type,
             position_id=1,
             fee=0,
@@ -539,8 +577,9 @@ class TestUpdatedAtTrigger:
         self, db_session: Session
     ):
         old_updated_at = datetime(2020, 1, 1, tzinfo=UTC)
+        ordinariumwork = _make_ordinariumwork(db_session)
         position = OrdinariumworkPosition(
-            ordinariumwork_id=1,
+            ordinariumwork_id=ordinariumwork.id,
             position_type="instruments",
             position_id=1,
             quantity=1,

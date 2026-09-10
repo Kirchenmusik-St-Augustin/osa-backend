@@ -54,7 +54,14 @@ def _latest_unnotified_entries(
     Keyed by (performance_id, user_id) -- a single user can have
     notify-worthy transitions on SEVERAL upcoming performances at once, all
     of which must survive into one combined mail (see
-    notify_upcoming_booking_status)."""
+    notify_upcoming_booking_status).
+
+    `performance_id`/`user_id` are nullable (ON DELETE SET NULL, see
+    app.db.models.booking_log), but every row this function sees was
+    already filtered by the caller against a list of currently-existing
+    Performance ids -- a NULL performance_id can never satisfy that
+    membership test, so the guard below is a type-narrowing measure, not a
+    behavior change."""
     # Naive datetime.min, deliberately without tzinfo -- our DateTime
     # columns round-trip every value as naive regardless of how it was
     # written (see booking_service._popular_for_position for the same
@@ -63,6 +70,8 @@ def _latest_unnotified_entries(
 
     by_performance_user: dict[tuple[int, int], list[BookingLog]] = {}
     for log in logs:
+        if log.performance_id is None or log.user_id is None:
+            continue
         by_performance_user.setdefault((log.performance_id, log.user_id), []).append(
             log
         )
@@ -114,11 +123,14 @@ def notify_upcoming_booking_status() -> None:
             return
 
         # One notify-worthy entry PER (performance, user) pair, then
-        # grouped by user for a single combined mail.
+        # grouped by user for a single combined mail. performance_id is
+        # carried alongside each entry (from the already-narrowed tuple
+        # key, see _latest_unnotified_entries) instead of re-reading
+        # entry.performance_id, which is `int | None` on the model itself.
         per_performance_user_entry = _latest_unnotified_entries(logs)
-        entries_by_user: dict[int, list[BookingLog]] = {}
-        for (_performance_id, user_id), entry in per_performance_user_entry.items():
-            entries_by_user.setdefault(user_id, []).append(entry)
+        entries_by_user: dict[int, list[tuple[int, BookingLog]]] = {}
+        for (performance_id, user_id), entry in per_performance_user_entry.items():
+            entries_by_user.setdefault(user_id, []).append((performance_id, entry))
 
         if not entries_by_user:
             return
@@ -136,39 +148,37 @@ def notify_upcoming_booking_status() -> None:
                 db, performance_id
             )
             for performance_id in {
-                entry.performance_id
-                for entries in entries_by_user.values()
-                for entry in entries
+                performance_id
+                for pairs in entries_by_user.values()
+                for performance_id, _entry in pairs
             }
         }
 
         now = datetime.now(UTC)
-        for user_id, entries in entries_by_user.items():
+        for user_id, pairs in entries_by_user.items():
             user = users_by_id.get(user_id)
             if user is None or user.email is None or user.email_verified_at is None:
                 continue
             mail_entries = [
                 mailer.BookingStatusMailEntry(
                     ordinariumwork_artist_name=performance_details[
-                        entry.performance_id
+                        performance_id
                     ].ordinariumwork_artist_name,
                     ordinariumwork_name=performance_details[
-                        entry.performance_id
+                        performance_id
                     ].ordinariumwork_name,
-                    schedule=performance_details[entry.performance_id].schedule,
-                    location_name=performance_details[
-                        entry.performance_id
-                    ].location.name,
+                    schedule=performance_details[performance_id].schedule,
+                    location_name=performance_details[performance_id].location.name,
                     location_address=performance_details[
-                        entry.performance_id
+                        performance_id
                     ].location.address,
                     user_name=f"{user.surname}, {user.givenname}",
                     booked=entry.booking_type == "book",
                 )
-                for entry in entries
+                for performance_id, entry in pairs
             ]
             mailer.send_booking_status_email(user.email, mail_entries)
-            for entry in entries:
+            for _performance_id, entry in pairs:
                 entry.notified_at = now
         db.commit()
     finally:

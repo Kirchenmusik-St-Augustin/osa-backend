@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -109,6 +110,27 @@ async def _request_validation_error_handler(
     )
 
 
+async def _integrity_error_handler(
+    _request: Request, exc: IntegrityError
+) -> JSONResponse:
+    """Safety net for FK/UNIQUE/CHECK constraint violations that reach the
+    database without already having been rejected by a service-layer check
+    (e.g. a race between a dependency check and the delete/insert
+    statement) -- logs the actual constraint detail server-side, never
+    leaks it verbatim to the client."""
+    logger.warning("IntegrityError: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "detail": (
+                "Die Änderung verletzt eine Datenbank-Constraint, z. B. "
+                "eine Referenz auf einen nicht existierenden oder noch "
+                "verwendeten Datensatz."
+            )
+        },
+    )
+
+
 async def _unhandled_exception_handler(
     _request: Request, exc: Exception
 ) -> JSONResponse:
@@ -122,6 +144,7 @@ async def _unhandled_exception_handler(
 
 app.add_exception_handler(ValidationError, _validation_error_handler)
 app.add_exception_handler(RequestValidationError, _request_validation_error_handler)
+app.add_exception_handler(IntegrityError, _integrity_error_handler)
 app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 app.state.limiter = limiter

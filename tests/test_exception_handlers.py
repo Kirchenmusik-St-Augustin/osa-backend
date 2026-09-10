@@ -12,8 +12,10 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError, field_validator
+from sqlalchemy.exc import IntegrityError
 
 from main import (
+    _integrity_error_handler,
     _request_validation_error_handler,
     _translate_validation_error,
     _unhandled_exception_handler,
@@ -43,6 +45,7 @@ def _make_test_app() -> FastAPI:
     test_app.add_exception_handler(
         RequestValidationError, _request_validation_error_handler
     )
+    test_app.add_exception_handler(IntegrityError, _integrity_error_handler)
     test_app.add_exception_handler(Exception, _unhandled_exception_handler)
 
     @test_app.get("/raise-validation-error")
@@ -53,6 +56,11 @@ def _make_test_app() -> FastAPI:
     def _raise_unhandled() -> None:
         message = "boom"
         raise RuntimeError(message)
+
+    @test_app.get("/raise-integrity-error")
+    def _raise_integrity_error() -> None:
+        statement = "INSERT ..."
+        raise IntegrityError(statement, {}, Exception("orig"))
 
     @test_app.post("/strict-body")
     def _strict_body(body: _StrictModel) -> dict[str, str]:
@@ -79,6 +87,14 @@ def test_unhandled_exception_handler_returns_generic_500():
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Ein unerwarteter Fehler ist aufgetreten."}
+
+
+def test_integrity_error_handler_returns_409_with_detail():
+    client = TestClient(_make_test_app(), raise_server_exceptions=False)
+    response = client.get("/raise-integrity-error")
+
+    assert response.status_code == 409
+    assert "detail" in response.json()
 
 
 def test_request_validation_error_translates_missing_field_to_german():

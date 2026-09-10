@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, FetchedValue, Index, func
+from sqlalchemy import CheckConstraint, DateTime, FetchedValue, ForeignKey, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -23,9 +23,12 @@ class Performance(Base):
     `artist_id` here is the CONDUCTOR (Dirigent), not a composer -- a
     separate, nullable reference into the same `artists` table used by
     Ordinariumwork/Propriumwork's composer `artist_id`. `location_id`/
-    `ordinariumwork_id`/`artist_id` are plain ints, not ForeignKeys, per
-    Phase 1's no-FK structural parity (see repertoire_work_mixin.py for
-    the same reasoning). `choirjob_defaultfee`/`instrument_defaultfee`/
+    `ordinariumwork_id`/`artist_id` are ON DELETE RESTRICT foreign keys as
+    of the FK-hardening slice (2026-09): coreelement_service.
+    _location_has_dependent_performances(), ordinariumwork_service.
+    _ordinariumwork_has_dependencies(), and artist_service.
+    _artist_has_dependencies() already block deleting any of the three
+    while referenced here. `choirjob_defaultfee`/`instrument_defaultfee`/
     `voice_defaultfee` are NOT the fee actually paid to a booked musician
     (chosen per-booking on the Cast page, Schritt 6) -- they're
     placeholder billing rates used only to price still-unfilled slots in
@@ -60,9 +63,15 @@ class Performance(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     schedule: Mapped[datetime] = mapped_column(DateTime())
-    location_id: Mapped[int]
-    ordinariumwork_id: Mapped[int]
-    artist_id: Mapped[int | None]
+    location_id: Mapped[int] = mapped_column(
+        ForeignKey("locations.id", ondelete="RESTRICT")
+    )
+    ordinariumwork_id: Mapped[int] = mapped_column(
+        ForeignKey("ordinariumworks.id", ondelete="RESTRICT")
+    )
+    artist_id: Mapped[int | None] = mapped_column(
+        ForeignKey("artists.id", ondelete="RESTRICT")
+    )
     description: Mapped[str | None]
     choirjob_defaultfee: Mapped[int] = mapped_column(default=35)
     instrument_defaultfee: Mapped[int] = mapped_column(default=60)

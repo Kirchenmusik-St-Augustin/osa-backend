@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, UniqueConstraint, func
+from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -18,13 +18,19 @@ class PerformanceRehearsal(Base):
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
     Python anymore. `schedule` deliberately stays a naive TIMESTAMP: it's
     user-entered local wall-clock time in Settings.app_timezone, not a
-    UTC instant (see app.core.datetime_utils module docstring)."""
+    UTC instant (see app.core.datetime_utils module docstring).
+    `performance_id` is an ON DELETE CASCADE foreign key as of the
+    FK-hardening slice (2026-09): performance_service.delete_performance()
+    already deletes this table's own rows before deleting their
+    Performance, CASCADE moves that cleanup to the database."""
 
     __tablename__ = "performance_rehearsals"
     __table_args__ = (UniqueConstraint("performance_id", "schedule"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int]
+    performance_id: Mapped[int] = mapped_column(
+        ForeignKey("performances.id", ondelete="CASCADE")
+    )
     schedule: Mapped[datetime] = mapped_column(DateTime())
     comment: Mapped[str | None]
     created_at: Mapped[datetime | None] = mapped_column(
