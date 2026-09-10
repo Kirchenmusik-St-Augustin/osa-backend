@@ -146,6 +146,38 @@ class TestMoneyCheckConstraints:
         assert performance.extracost_amount is None
 
 
+class TestScoreCountChecks:
+    """Three representative columns across the three distinct groups the
+    42 new CHECK constraints span (Werk metadata, holdings-quantity
+    counters, instrumentation headcounts), not all 42 -- Score has zero
+    FK constraints (see Score's own docstring), so no dependent rows are
+    needed for any of these."""
+
+    def test_negative_jahr_is_rejected(self, db_session: Session):
+        db_session.add(Score(jahr=-1))
+        with pytest.raises(IntegrityError, match="violates check constraint"):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_negative_holdings_count_is_rejected(self, db_session: Session):
+        db_session.add(Score(part1anz=-1))
+        with pytest.raises(IntegrityError, match="violates check constraint"):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_negative_instrument_headcount_is_rejected(self, db_session: Session):
+        db_session.add(Score(violine1=-1))
+        with pytest.raises(IntegrityError, match="violates check constraint"):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_null_jahr_is_still_allowed(self, db_session: Session):
+        score = Score(jahr=None)
+        db_session.add(score)
+        db_session.flush()  # must not raise
+        assert score.jahr is None
+
+
 class TestOrderToSortOrderRename:
     """Confirms both sides of the alias: the DB column is physically named
     `sort_order` (checked via SQLAlchemy's inspector -- the same
