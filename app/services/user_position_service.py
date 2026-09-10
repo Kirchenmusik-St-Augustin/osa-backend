@@ -1,8 +1,21 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.db.models.user_position import UserPosition
-from app.services.position_types import POSITION_TYPES, PositionType
+from app.services.position_types import (
+    POSITION_TYPES,
+    PositionType,
+    position_key,
+    position_kwargs,
+)
+
+# UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
+# identical _BOOKING_POSITION_COLUMNS for the full rationale.
+_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+    "instruments": UserPosition.instrument_id,
+    "voices": UserPosition.voice_id,
+    "choirjobs": UserPosition.choirjob_id,
+}
 
 
 def get_position_ids_for_user(
@@ -13,12 +26,9 @@ def get_position_ids_for_user(
     result: dict[PositionType, set[int]] = {
         position_type: set() for position_type in POSITION_TYPES
     }
-    rows = db.execute(
-        select(UserPosition.position_type, UserPosition.position_id).where(
-            UserPosition.user_id == user_id
-        )
-    ).all()
-    for position_type, position_id in rows:
+    rows = db.execute(select(UserPosition).where(UserPosition.user_id == user_id))
+    for user_position in rows.scalars():
+        position_type, position_id = position_key(user_position)
         result[position_type].add(position_id)
     return result
 
@@ -37,13 +47,19 @@ def get_qualified_user_ids_batch(
     for position_type, position_ids in keys.items():
         if not position_ids:
             continue
+        position_column = _USER_POSITION_COLUMNS[position_type]
         rows = db.execute(
-            select(UserPosition.position_id, UserPosition.user_id).where(
-                UserPosition.position_type == position_type,
-                UserPosition.position_id.in_(position_ids),
+            select(position_column, UserPosition.user_id).where(
+                position_column.in_(position_ids)
             )
         ).all()
         for position_id, user_id in rows:
+            # position_id is statically `int | None` (it's the same
+            # InstrumentedAttribute used in the WHERE clause above), but
+            # the `.in_(position_ids)` filter guarantees non-NULL at
+            # runtime for every returned row.
+            if position_id is None:
+                continue
             result[(position_type, position_id)].add(user_id)
     return result
 
@@ -71,9 +87,7 @@ def create_user_position(
     endpoint for this in Schritt 6, the admin UI to assign these lands with
     Schritt 7 (User-/System-Verwaltung)."""
     user_position = UserPosition(
-        user_id=user_id,
-        position_type=position_type,
-        position_id=position_id,
+        user_id=user_id, **position_kwargs(position_type, position_id)
     )
     db.add(user_position)
     db.commit()
@@ -94,22 +108,19 @@ def sync_user_positions(
         .scalars()
         .all()
     )
-    existing_keys = {(p.position_type, p.position_id) for p in existing}
-    desired_keys = {
+    existing_by_key = {position_key(p): p for p in existing}
+    existing_keys: set[tuple[PositionType, int]] = set(existing_by_key)
+    desired_keys: set[tuple[PositionType, int]] = {
         (position_type, position_id)
         for position_type, position_ids in desired.items()
         for position_id in position_ids
     }
 
-    for position in existing:
-        if (position.position_type, position.position_id) not in desired_keys:
+    for key, position in existing_by_key.items():
+        if key not in desired_keys:
             db.delete(position)
 
     for position_type, position_id in desired_keys - existing_keys:
         db.add(
-            UserPosition(
-                user_id=user_id,
-                position_type=position_type,
-                position_id=position_id,
-            )
+            UserPosition(user_id=user_id, **position_kwargs(position_type, position_id))
         )

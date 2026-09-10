@@ -102,8 +102,7 @@ class TestGetMyRequestsAndBookings:
             Booking(
                 performance_id=performance.id,
                 user_id=user.id,
-                position_type="instruments",
-                position_id=instrument.id,
+                instrument_id=instrument.id,
                 fee=80,
                 order=0,
                 created_at=now,

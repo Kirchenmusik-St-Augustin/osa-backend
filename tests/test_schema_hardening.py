@@ -25,6 +25,7 @@ from app.db.database import engine
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
+from app.db.models.choirjob import Choirjob
 from app.db.models.fee import Fee
 from app.db.models.instrument import Instrument
 from app.db.models.location import Location
@@ -36,6 +37,7 @@ from app.db.models.role import Role
 from app.db.models.score import Score
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
+from app.db.models.voice import Voice
 
 
 def _make_ordinariumwork(db_session: Session) -> Ordinariumwork:
@@ -208,14 +210,16 @@ class TestBookingTypeEnum:
     invalid enum literal (DataError), not a CHECK violation
     (IntegrityError)."""
 
-    def test_invalid_booking_type_is_rejected(self, db_session: Session):
+    def test_invalid_booking_type_is_rejected(
+        self, db_session: Session, make_instrument: Callable[..., Instrument]
+    ):
+        instrument = make_instrument()
         db_session.add(
             BookingLog(
                 performance_id=1,
                 user_id=1,
                 booking_type="bogus",
-                position_type="instruments",
-                position_id=1,
+                instrument_id=instrument.id,
                 fee=0,
             )
         )
@@ -228,16 +232,17 @@ class TestBookingTypeEnum:
         self,
         db_session: Session,
         make_user: Callable[..., User],
+        make_instrument: Callable[..., Instrument],
         booking_type: str,
     ):
         performance = _make_performance(db_session)
         user = make_user()
+        instrument = make_instrument()
         log = BookingLog(
             performance_id=performance.id,
             user_id=user.id,
             booking_type=booking_type,
-            position_type="instruments",
-            position_id=1,
+            instrument_id=instrument.id,
             fee=0,
         )
         db_session.add(log)
@@ -256,95 +261,154 @@ class TestBookingTypeEnum:
         assert set(column_type.enums) == {"book", "unbook"}
 
 
-class TestPositionTypeEnum:
-    """position_type is a single native Postgres ENUM shared across all
-    five tables that carry it. ordinariumwork_positions alone keeps its
-    own narrower 2-value CHECK on top of the shared 3-value enum --
-    'choirjobs' is a perfectly valid ENUM member but must still be
-    rejected there."""
+class TestPositionExclusiveColumns:
+    """The old position_type (native enum) + position_id (plain int, no
+    FK) pair is replaced by three mutually-exclusive nullable foreign keys
+    -- instrument_id/voice_id/choirjob_id, see
+    app.db.models.position_columns_mixin.PositionColumns -- as of the
+    polymorphy-redesign slice (2026-09), enforced by a
+    `num_nonnulls(...) = 1` CHECK constraint per table.
+    ordinariumwork_positions structurally excludes choirjobs (it has no
+    choirjob_id column at all, unlike the other four tables' three)."""
 
-    def test_invalid_position_type_is_rejected(self, db_session: Session):
-        db_session.add(
-            Booking(
-                performance_id=1,
-                user_id=1,
-                position_type="bogus",
-                position_id=1,
-                fee=0,
-            )
-        )
-        with pytest.raises(DataError, match="invalid input value for enum"):
+    def test_zero_of_three_set_is_rejected(
+        self, db_session: Session, make_user: Callable[..., User]
+    ):
+        performance = _make_performance(db_session)
+        user = make_user()
+        db_session.add(Booking(performance_id=performance.id, user_id=user.id, fee=0))
+        with pytest.raises(IntegrityError, match="violates check constraint"):
             db_session.flush()
         db_session.rollback()
 
-    def test_ordinariumwork_position_still_rejects_choirjobs(self, db_session: Session):
+    def test_two_of_three_set_is_rejected(
+        self,
+        db_session: Session,
+        make_user: Callable[..., User],
+        make_instrument: Callable[..., Instrument],
+        make_voice: Callable[..., Voice],
+    ):
+        performance = _make_performance(db_session)
+        user = make_user()
+        instrument = make_instrument()
+        voice = make_voice()
         db_session.add(
-            OrdinariumworkPosition(
-                ordinariumwork_id=1,
-                position_type="choirjobs",
-                position_id=1,
-                quantity=1,
+            Booking(
+                performance_id=performance.id,
+                user_id=user.id,
+                instrument_id=instrument.id,
+                voice_id=voice.id,
+                fee=0,
             )
         )
         with pytest.raises(IntegrityError, match="violates check constraint"):
             db_session.flush()
         db_session.rollback()
 
-    @pytest.mark.parametrize("position_type", ["instruments", "voices"])
-    def test_ordinariumwork_position_still_accepts_its_two_allowed_values(
-        self, db_session: Session, position_type: str
-    ):
-        ordinariumwork = _make_ordinariumwork(db_session)
-        db_session.add(
-            OrdinariumworkPosition(
-                ordinariumwork_id=ordinariumwork.id,
-                position_type=position_type,
-                position_id=1,
-                quantity=1,
-            )
-        )
-        db_session.flush()  # must not raise
-
-    @pytest.mark.parametrize("position_type", ["instruments", "voices", "choirjobs"])
-    def test_valid_position_type_values_roundtrip(
+    @pytest.mark.parametrize("column", ["instrument_id", "voice_id", "choirjob_id"])
+    def test_exactly_one_set_roundtrips(
         self,
         db_session: Session,
         make_user: Callable[..., User],
-        position_type: str,
+        make_instrument: Callable[..., Instrument],
+        make_voice: Callable[..., Voice],
+        make_choirjob: Callable[..., Choirjob],
+        column: str,
     ):
         performance = _make_performance(db_session)
         user = make_user()
+        make_target = {
+            "instrument_id": make_instrument,
+            "voice_id": make_voice,
+            "choirjob_id": make_choirjob,
+        }[column]
+        target_id = make_target().id
         booking = Booking(
             performance_id=performance.id,
             user_id=user.id,
-            position_type=position_type,
-            position_id=1,
             fee=0,
+            **{column: target_id},
         )
         db_session.add(booking)
         db_session.flush()
         raw_value = db_session.execute(
-            text("SELECT position_type FROM bookings WHERE id = :id"),
+            text(f"SELECT {column} FROM bookings WHERE id = :id"),  # noqa: S608
             {"id": booking.id},
         ).scalar_one()
-        assert raw_value == position_type
+        assert raw_value == target_id
+
+    @pytest.mark.parametrize("column", ["instrument_id", "voice_id", "choirjob_id"])
+    def test_fk_violation_when_target_does_not_exist(
+        self, db_session: Session, make_user: Callable[..., User], column: str
+    ):
+        performance = _make_performance(db_session)
+        user = make_user()
+        db_session.add(
+            Booking(
+                performance_id=performance.id,
+                user_id=user.id,
+                fee=0,
+                **{column: 999_999_999},
+            )
+        )
+        with pytest.raises(IntegrityError, match="foreign key constraint"):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_ordinariumwork_position_zero_of_two_set_is_rejected(
+        self, db_session: Session
+    ):
+        ordinariumwork = _make_ordinariumwork(db_session)
+        db_session.add(
+            OrdinariumworkPosition(ordinariumwork_id=ordinariumwork.id, quantity=1)
+        )
+        with pytest.raises(IntegrityError, match="violates check constraint"):
+            db_session.flush()
+        db_session.rollback()
+
+    @pytest.mark.parametrize("column", ["instrument_id", "voice_id"])
+    def test_ordinariumwork_position_accepts_its_two_allowed_columns(
+        self,
+        db_session: Session,
+        make_instrument: Callable[..., Instrument],
+        make_voice: Callable[..., Voice],
+        column: str,
+    ):
+        ordinariumwork = _make_ordinariumwork(db_session)
+        make_target = {"instrument_id": make_instrument, "voice_id": make_voice}[column]
+        target_id = make_target().id
+        db_session.add(
+            OrdinariumworkPosition(
+                ordinariumwork_id=ordinariumwork.id,
+                quantity=1,
+                **{column: target_id},
+            )
+        )
+        db_session.flush()  # must not raise
 
     @pytest.mark.parametrize(
         "table_name",
         [
             "bookings",
             "booking_logs",
-            "ordinariumwork_positions",
             "performance_positions",
             "user_positions",
         ],
     )
-    def test_position_type_column_uses_the_shared_enum_type(self, table_name: str):
-        columns = {c["name"]: c for c in inspect(engine).get_columns(table_name)}
-        column_type = columns["position_type"]["type"]
-        assert isinstance(column_type, postgresql.ENUM)
-        assert column_type.name == "position_type"
-        assert set(column_type.enums) == {"instruments", "voices", "choirjobs"}
+    def test_three_way_tables_have_no_position_type_column_left(self, table_name: str):
+        columns = {c["name"] for c in inspect(engine).get_columns(table_name)}
+        assert "position_type" not in columns
+        assert "position_id" not in columns
+        assert {"instrument_id", "voice_id", "choirjob_id"} <= columns
+
+    def test_ordinariumwork_positions_has_no_choirjob_id_column(self) -> None:
+        columns = {
+            c["name"] for c in inspect(engine).get_columns("ordinariumwork_positions")
+        }
+        assert "position_type" not in columns
+        assert "position_id" not in columns
+        assert "choirjob_id" not in columns
+        assert {"instrument_id", "voice_id"} <= columns
 
 
 class TestScoreEnums:
@@ -574,14 +638,14 @@ class TestUpdatedAtTrigger:
         assert instrument.updated_at > old_updated_at
 
     def test_ordinariumwork_position_bare_update_advances_updated_at(
-        self, db_session: Session
+        self, db_session: Session, make_instrument: Callable[..., Instrument]
     ):
         old_updated_at = datetime(2020, 1, 1, tzinfo=UTC)
         ordinariumwork = _make_ordinariumwork(db_session)
+        instrument = make_instrument()
         position = OrdinariumworkPosition(
             ordinariumwork_id=ordinariumwork.id,
-            position_type="instruments",
-            position_id=1,
+            instrument_id=instrument.id,
             quantity=1,
             created_at=old_updated_at,
             updated_at=old_updated_at,

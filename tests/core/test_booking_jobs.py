@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.datetime_utils import local_now
 from app.db.models.booking_log import BookingLog
 from app.db.models.booking_request import BookingRequest
+from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
@@ -27,6 +28,13 @@ def _unique_schedule() -> datetime:
     days_ahead = next(_schedule_counter)
     base = local_now() + timedelta(days=days_ahead)
     return base.replace(minute=0, second=0, microsecond=0)
+
+
+def _make_instrument(db_session: Session) -> Instrument:
+    instrument = Instrument(name=_unique("Instrument"), order=0)
+    db_session.add(instrument)
+    db_session.commit()
+    return instrument
 
 
 def _make_location(db_session: Session) -> Location:
@@ -122,12 +130,12 @@ def _make_log(
     created_at: datetime | None = None,
 ) -> BookingLog:
     now = created_at or datetime.now(UTC)
+    instrument = _make_instrument(db_session)
     log = BookingLog(
         performance_id=performance_id,
         user_id=user_id,
         booking_type=booking_type,
-        position_type="instruments",
-        position_id=1,
+        instrument_id=instrument.id,
         fee=80,
         notified_at=notified_at,
         created_at=now,
@@ -321,16 +329,14 @@ class TestLatestUnnotifiedEntries:
             performance_id=None,
             user_id=1,
             booking_type="book",
-            position_type="instruments",
-            position_id=1,
+            instrument_id=1,
             fee=0,
         )
         orphaned_user = BookingLog(
             performance_id=1,
             user_id=None,
             booking_type="book",
-            position_type="instruments",
-            position_id=1,
+            instrument_id=1,
             fee=0,
         )
 

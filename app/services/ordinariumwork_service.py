@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -33,12 +34,42 @@ _NAME_LENGTH_ERROR = (
 )
 
 # Legacy's Relation::morphMap restricts Ordinariumwork positions to these
-# two types (the DB CHECK constraint on ordinariumwork_positions.position_type
-# excludes 'choirjobs' -- confirmed by 1677 live rows, zero choirjobs).
-_POSITION_MODELS: dict[str, type[Instrument | Voice]] = {
+# two types (OrdinariumworkPosition structurally excludes 'choirjobs' --
+# it has no choirjob_id column at all, confirmed by 1677 live rows, zero
+# choirjobs, before this table even had that column to exclude). Narrower
+# than app.services.position_types.PositionType (3-way), so kept local
+# rather than importing/reusing that shared alias.
+OrdinariumworkPositionType = Literal["instruments", "voices"]
+
+_POSITION_MODELS: dict[OrdinariumworkPositionType, type[Instrument | Voice]] = {
     "instruments": Instrument,
     "voices": Voice,
 }
+
+_POSITION_COLUMN_NAMES: dict[OrdinariumworkPositionType, str] = {
+    "instruments": "instrument_id",
+    "voices": "voice_id",
+}
+
+
+def _position_kwargs(
+    position_type: OrdinariumworkPositionType, position_id: int
+) -> dict[str, int]:
+    """2-type counterpart of app.services.position_types.position_kwargs()
+    for OrdinariumworkPosition's own instrument_id/voice_id-only shape."""
+    return {_POSITION_COLUMN_NAMES[position_type]: position_id}
+
+
+def _position_key(
+    row: OrdinariumworkPosition,
+) -> tuple[OrdinariumworkPositionType, int]:
+    """2-type counterpart of app.services.position_types.position_key()."""
+    if row.instrument_id is not None:
+        return "instruments", row.instrument_id
+    if row.voice_id is not None:
+        return "voices", row.voice_id
+    msg = "position row has neither instrument_id nor voice_id set"
+    raise ValueError(msg)
 
 
 class OrdinariumworkNotFoundError(Exception):
@@ -72,7 +103,9 @@ def _get_or_404(db: Session, ordinariumwork_id: int) -> Ordinariumwork:
 
 
 def _validate_positions(
-    db: Session, items: list[OrdinariumworkPositionInput], position_type: str
+    db: Session,
+    items: list[OrdinariumworkPositionInput],
+    position_type: OrdinariumworkPositionType,
 ) -> list[tuple[str, str]]:
     model = _POSITION_MODELS[position_type]
     errors: list[tuple[str, str]] = []
@@ -146,9 +179,9 @@ def _sync_positions(
         .scalars()
         .all()
     )
-    existing_by_key = {(p.position_type, p.position_id): p for p in existing}
+    existing_by_key = {_position_key(p): p for p in existing}
 
-    desired: dict[tuple[str, int], int] = {}
+    desired: dict[tuple[OrdinariumworkPositionType, int], int] = {}
     for item in data.setup.instruments:
         desired[("instruments", item.id)] = item.quantity
     for item in data.setup.voices:
@@ -166,9 +199,8 @@ def _sync_positions(
             db.add(
                 OrdinariumworkPosition(
                     ordinariumwork_id=ordinariumwork_id,
-                    position_type=position_type,
-                    position_id=position_id,
                     quantity=quantity,
+                    **_position_kwargs(position_type, position_id),
                 )
             )
 
@@ -303,6 +335,8 @@ def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
         .all()
     )
 
+    quantity_by_key = {_position_key(p): p.quantity for p in positions}
+
     instruments_out: list[OrdinariumworkPositionOutput] = []
     voices_out: list[OrdinariumworkPositionOutput] = []
     for position_type, model, bucket in (
@@ -310,9 +344,9 @@ def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
         ("voices", Voice, voices_out),
     ):
         quantity_by_id = {
-            p.position_id: p.quantity
-            for p in positions
-            if p.position_type == position_type
+            item_id: quantity
+            for (item_type, item_id), quantity in quantity_by_key.items()
+            if item_type == position_type
         }
         if not quantity_by_id:
             continue

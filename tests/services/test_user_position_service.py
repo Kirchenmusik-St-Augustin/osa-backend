@@ -1,21 +1,7 @@
-import itertools
-
 import pytest
 from sqlalchemy.orm import Session
 
 from app.services import user_position_service
-
-# tests/conftest.py's shared test DB has no per-test rollback -- small
-# fixed position_ids like 1/2/3 collide with residue left by other tests in
-# this same file (or a prior run), since position_id has no FK to a real
-# instruments/voices/choirjobs row in Phase 1. A monotonically increasing,
-# module-life-of-process-unique counter keeps every test's rows disjoint
-# (1:1 the `_unique()` name pattern used elsewhere, just for ints).
-_id_counter = itertools.count(900_000)
-
-
-def _unique_id() -> int:
-    return next(_id_counter)
 
 
 class TestGetPositionIdsForUser:
@@ -26,12 +12,14 @@ class TestGetPositionIdsForUser:
         result = user_position_service.get_position_ids_for_user(db_session, user.id)
         assert result == {"instruments": set(), "voices": set(), "choirjobs": set()}
 
-    def test_groups_qualifications_by_type(self, db_session: Session, make_user):
+    def test_groups_qualifications_by_type(
+        self, db_session: Session, make_user, make_instrument, make_voice
+    ):
         user = make_user()
         instrument_a, instrument_b, voice = (
-            _unique_id(),
-            _unique_id(),
-            _unique_id(),
+            make_instrument().id,
+            make_instrument().id,
+            make_voice().id,
         )
         user_position_service.create_user_position(
             db_session,
@@ -55,10 +43,12 @@ class TestGetPositionIdsForUser:
 
 
 class TestGetQualifiedUserIdsBatch:
-    def test_groups_users_by_type_and_position(self, db_session: Session, make_user):
+    def test_groups_users_by_type_and_position(
+        self, db_session: Session, make_user, make_instrument, make_voice
+    ):
         first = make_user()
         second = make_user()
-        instrument_id, voice_id = _unique_id(), _unique_id()
+        instrument_id, voice_id = make_instrument().id, make_voice().id
         user_position_service.create_user_position(
             db_session,
             user_id=first.id,
@@ -94,10 +84,10 @@ class TestGetQualifiedUserIdsBatch:
         assert result == {}
 
     def test_runs_at_most_one_query_per_nonempty_type(
-        self, db_session: Session, make_user, count_queries
+        self, db_session: Session, make_user, make_instrument, count_queries
     ):
         user = make_user()
-        ids = {_unique_id(), _unique_id(), _unique_id()}
+        ids = {make_instrument().id, make_instrument().id, make_instrument().id}
         for position_id in ids:
             user_position_service.create_user_position(
                 db_session,

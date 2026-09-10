@@ -39,7 +39,12 @@ from app.schemas.performance import (
 )
 from app.services.artist_service import label_for
 from app.services.coreelement_service import list_coreelements
-from app.services.position_types import POSITION_MODELS, PositionType
+from app.services.position_types import (
+    POSITION_MODELS,
+    PositionType,
+    position_key,
+    position_kwargs,
+)
 
 _SCHEDULE_TOO_EARLY = "Aufführungs-Datum muss frühestens morgen sein."
 _REHEARSAL_TOO_EARLY = "Proben-Datum muss frühestens morgen sein."
@@ -234,7 +239,7 @@ def _validate(
 
 def _sync_positions(
     db: Session, performance_id: int, data: PerformanceRequest
-) -> tuple[set[tuple[str, int]], dict[tuple[str, int], int]]:
+) -> tuple[set[tuple[PositionType, int]], dict[tuple[PositionType, int], int]]:
     """Returns (removed_keys, old_quantities) for
     booking_service.reconcile_setup_change (Schritt 6 plan A.5b) --
     old_quantities covers only positions
@@ -253,12 +258,12 @@ def _sync_positions(
         .scalars()
         .all()
     )
-    existing_by_key = {(p.position_type, p.position_id): p for p in existing}
+    existing_by_key = {position_key(p): p for p in existing}
     old_quantities = {
         key: position.quantity for key, position in existing_by_key.items()
     }
 
-    desired: dict[tuple[str, int], int] = {}
+    desired: dict[tuple[PositionType, int], int] = {}
     for item in data.setup.instruments:
         desired[("instruments", item.id)] = item.quantity
     for item in data.setup.voices:
@@ -278,9 +283,8 @@ def _sync_positions(
             db.add(
                 PerformancePosition(
                     performance_id=performance_id,
-                    position_type=position_type,
-                    position_id=position_id,
                     quantity=quantity,
+                    **position_kwargs(position_type, position_id),
                 )
             )
     return removed_keys, old_quantities
@@ -387,6 +391,8 @@ def get_setup(db: Session, performance_id: int) -> PerformanceSetupOutput:
         .all()
     )
 
+    quantity_by_key = {position_key(p): p.quantity for p in positions}
+
     instruments_out: list[PerformancePositionOutput] = []
     voices_out: list[PerformancePositionOutput] = []
     choirjobs_out: list[PerformancePositionOutput] = []
@@ -396,9 +402,9 @@ def get_setup(db: Session, performance_id: int) -> PerformanceSetupOutput:
         ("choirjobs", Choirjob, choirjobs_out),
     ):
         quantity_by_id = {
-            p.position_id: p.quantity
-            for p in positions
-            if p.position_type == position_type
+            item_id: quantity
+            for (item_type, item_id), quantity in quantity_by_key.items()
+            if item_type == position_type
         }
         if not quantity_by_id:
             continue

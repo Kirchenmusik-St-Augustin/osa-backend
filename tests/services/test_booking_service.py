@@ -184,6 +184,13 @@ def _move_to_past(db_session: Session, performance_id: int) -> None:
     db_session.commit()
 
 
+_POSITION_COLUMN_NAMES = {
+    "instruments": "instrument_id",
+    "voices": "voice_id",
+    "choirjobs": "choirjob_id",
+}
+
+
 def _make_booking(
     db_session: Session,
     performance_id: int,
@@ -198,12 +205,11 @@ def _make_booking(
     booking = Booking(
         performance_id=performance_id,
         user_id=user_id,
-        position_type=position_type,
-        position_id=position_id,
         fee=fee,
         order=order,
         created_at=now,
         updated_at=now,
+        **{_POSITION_COLUMN_NAMES[position_type]: position_id},
     )
     db_session.add(booking)
     db_session.commit()
@@ -587,7 +593,7 @@ class TestSaveCastItem:
             .all()
         )
         assert len(bookings) == 1
-        assert bookings[0].position_type == "voices"
+        assert bookings[0].voice_id == voice.id
 
     def test_cast_none_purges_and_logs_unbook_for_each(
         self, db_session: Session, make_user
