@@ -82,9 +82,12 @@ from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings
 from app.core.security import get_password_hash
 from app.db.database import engine, get_db
+from app.db.models.choirjob import Choirjob
+from app.db.models.instrument import Instrument
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
+from app.db.models.voice import Voice
 from app.services import booking_jobs, housekeeping_jobs
 from main import app
 
@@ -343,6 +346,57 @@ def make_user(db_session: Session) -> Callable[..., User]:
         return result.scalar_one()
 
     return _make_user
+
+
+@pytest.fixture
+def make_instrument(db_session: Session) -> Callable[..., Instrument]:
+    """Factory fixture: creates a persisted Instrument (unique name per
+    call unless overridden) -- since the polymorphy-redesign slice
+    (2026-09), bookings/booking_logs/performance_positions/
+    ordinariumwork_positions/user_positions' instrument_id is a real
+    foreign key, so any test row referencing one needs a backing Instrument
+    to actually exist."""
+
+    def _make_instrument(*, name: str | None = None, order: int = 0) -> Instrument:
+        instrument = Instrument(
+            name=name or f"Test-Instrument-{uuid.uuid4().hex[:8]}", order=order
+        )
+        db_session.add(instrument)
+        db_session.flush()
+        return instrument
+
+    return _make_instrument
+
+
+@pytest.fixture
+def make_voice(db_session: Session) -> Callable[..., Voice]:
+    """Factory fixture: creates a persisted Voice -- see make_instrument's
+    docstring for why a real backing row is required now."""
+
+    def _make_voice(*, name: str | None = None, order: int = 0) -> Voice:
+        voice = Voice(name=name or f"Test-Voice-{uuid.uuid4().hex[:8]}", order=order)
+        db_session.add(voice)
+        db_session.flush()
+        return voice
+
+    return _make_voice
+
+
+@pytest.fixture
+def make_choirjob(db_session: Session) -> Callable[..., Choirjob]:
+    """Factory fixture: creates a persisted Choirjob -- see
+    make_instrument's docstring for why a real backing row is required
+    now."""
+
+    def _make_choirjob(*, name: str | None = None, order: int = 0) -> Choirjob:
+        choirjob = Choirjob(
+            name=name or f"Test-Choirjob-{uuid.uuid4().hex[:8]}", order=order
+        )
+        db_session.add(choirjob)
+        db_session.flush()
+        return choirjob
+
+    return _make_choirjob
 
 
 class QueryCounter:

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.db.models.user import User
 from app.db.models.user_position import UserPosition
@@ -10,6 +10,14 @@ from app.schemas.performance import PositionRefOutput
 from app.schemas.userdirectory import UserDirectoryAbilitiesOutput
 from app.services import coreelement_service
 from app.services.position_types import PositionType
+
+# UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
+# identical _BOOKING_POSITION_COLUMNS for the full rationale.
+_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+    "instruments": UserPosition.instrument_id,
+    "voices": UserPosition.voice_id,
+    "choirjobs": UserPosition.choirjob_id,
+}
 
 
 def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
@@ -57,8 +65,7 @@ def list_users_for_position(
         select(User)
         .join(UserPosition, UserPosition.user_id == User.id)
         .where(
-            UserPosition.position_type == position_type,
-            UserPosition.position_id == position_id,
+            _USER_POSITION_COLUMNS[position_type] == position_id,
             User.deleted_at.is_(None),
         )
         .order_by(User.surname, User.givenname)

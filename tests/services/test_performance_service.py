@@ -817,8 +817,7 @@ class TestUpdatePerformance:
                 Booking(
                     performance_id=created.id,
                     user_id=regular_user.id,
-                    position_type="instruments",
-                    position_id=kept_instrument.id,
+                    instrument_id=kept_instrument.id,
                     fee=80,
                     order=0,
                     created_at=now,
@@ -827,8 +826,7 @@ class TestUpdatePerformance:
                 Booking(
                     performance_id=created.id,
                     user_id=standby_user.id,
-                    position_type="instruments",
-                    position_id=kept_instrument.id,
+                    instrument_id=kept_instrument.id,
                     fee=80,
                     order=1,
                     created_at=now,
@@ -837,8 +835,7 @@ class TestUpdatePerformance:
                 Booking(
                     performance_id=created.id,
                     user_id=removed_user.id,
-                    position_type="instruments",
-                    position_id=removed_instrument.id,
+                    instrument_id=removed_instrument.id,
                     fee=80,
                     order=0,
                     created_at=now,
@@ -1038,8 +1035,7 @@ class TestDeletePerformance:
             Booking(
                 performance_id=created.id,
                 user_id=user.id,
-                position_type="instruments",
-                position_id=instrument.id,
+                instrument_id=instrument.id,
                 fee=80,
                 order=0,
                 created_at=now,
@@ -1102,8 +1098,7 @@ class TestGetFormData:
             Booking(
                 performance_id=created.id,
                 user_id=user.id,
-                position_type="instruments",
-                position_id=instrument.id,
+                instrument_id=instrument.id,
                 fee=80,
                 order=0,
                 created_at=now,

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import Literal
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.core import mailer
 from app.core.datetime_utils import local_now
@@ -62,11 +62,28 @@ from app.services.performance_service import (
     PerformanceInPastError,
     PerformanceNotFoundError,
 )
-from app.services.position_types import POSITION_MODELS, POSITION_TYPES, PositionType
+from app.services.position_types import (
+    POSITION_MODELS,
+    POSITION_TYPES,
+    PositionType,
+    position_key,
+    position_kwargs,
+)
 from app.services.user_position_service import (
     get_qualified_user_ids_batch,
     is_bookable,
 )
+
+# Booking's own WHERE-clause dispatch table: which FK column on Booking
+# corresponds to a given position_type -- the counterpart to
+# position_kwargs()/position_key() (construction/key-extraction) for the
+# query-filter use case, which needs the actual InstrumentedAttribute, not
+# just a column name string.
+_BOOKING_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+    "instruments": Booking.instrument_id,
+    "voices": Booking.voice_id,
+    "choirjobs": Booking.choirjob_id,
+}
 
 # (user_id, fee) -- the internal exchange shape saveCastItem's diff engine
 # works with, decoupled from the CastMemberInput/-Output Pydantic schemas
@@ -165,20 +182,26 @@ def _primary_voice_by_user(db: Session, user_ids: set[int]) -> dict[int, Voice]:
     UserPosition query + one Voice query, regardless of how many user_ids
     come in. A user CAN hold multiple `voices`-type UserPosition rows (no
     DB constraint prevents it -- UserPosition's only unique constraint is
-    the full (user_id, position_type, position_id) triple); the
+    the full (user_id, instrument_id, voice_id, choirjob_id) tuple); the
     lowest-`order` one wins, matching performance_service.get_setup()'s own
     `.order_by(Voice.order, Voice.id)` canonical-ordering idiom."""
     if not user_ids:
         return {}
     voice_ids_by_user: dict[int, set[int]] = {}
     rows = db.execute(
-        select(UserPosition.user_id, UserPosition.position_id).where(
+        select(UserPosition.user_id, UserPosition.voice_id).where(
             UserPosition.user_id.in_(user_ids),
-            UserPosition.position_type == "voices",
+            UserPosition.voice_id.is_not(None),
         )
     ).all()
-    for user_id, position_id in rows:
-        voice_ids_by_user.setdefault(user_id, set()).add(position_id)
+    for user_id, voice_id in rows:
+        # voice_id is statically `int | None` (the WHERE clause's
+        # `is_not(None)` is a runtime-only guarantee, not one the type
+        # checker can see through) -- narrow explicitly rather than lean on
+        # a redundant-in-practice branch never actually taken.
+        if voice_id is None:
+            continue
+        voice_ids_by_user.setdefault(user_id, set()).add(voice_id)
     if not voice_ids_by_user:
         return {}
 
@@ -219,19 +242,14 @@ def _display_name(user: User | None) -> str:
 
 
 def _position_names_batch(
-    db: Session, keys: set[tuple[str, int]]
-) -> dict[tuple[str, int], str]:
-    """Keyed by plain `str`, not the `PositionType` Literal -- these keys
-    originate from `Booking.position_type`, a `Mapped[str]` column (the
-    Literal only exists at the Python type level for values we construct
-    ourselves, not for values read back from the DB; the CHECK constraint
-    enforces the invariant at the DB layer instead)."""
-    result: dict[tuple[str, int], str] = {}
-    ids_by_type: dict[str, set[int]] = {}
+    db: Session, keys: set[tuple[PositionType, int]]
+) -> dict[tuple[PositionType, int], str]:
+    result: dict[tuple[PositionType, int], str] = {}
+    ids_by_type: dict[PositionType, set[int]] = {}
     for position_type, position_id in keys:
         ids_by_type.setdefault(position_type, set()).add(position_id)
     for position_type, ids in ids_by_type.items():
-        model = POSITION_MODELS[cast("PositionType", position_type)]
+        model = POSITION_MODELS[position_type]
         rows = db.execute(select(model.id, model.name).where(model.id.in_(ids))).all()
         for item_id, name in rows:
             result[(position_type, item_id)] = name
@@ -240,7 +258,7 @@ def _position_names_batch(
 
 def _quantities_for_performance(
     db: Session, performance_id: int
-) -> dict[tuple[str, int], int]:
+) -> dict[tuple[PositionType, int], int]:
     rows = (
         db.execute(
             select(PerformancePosition).where(
@@ -250,7 +268,7 @@ def _quantities_for_performance(
         .scalars()
         .all()
     )
-    return {(row.position_type, row.position_id): row.quantity for row in rows}
+    return {position_key(row): row.quantity for row in rows}
 
 
 def _to_short_output(
@@ -317,20 +335,18 @@ def user_booking_status_batch(
 
     setup_ids = _setup_position_ids(performance_service.get_setup(db, performance.id))
 
-    user_position_rows = db.execute(
-        select(
-            UserPosition.user_id, UserPosition.position_type, UserPosition.position_id
-        ).where(UserPosition.user_id.in_(user_ids))
-    ).all()
+    user_positions = (
+        db.execute(select(UserPosition).where(UserPosition.user_id.in_(user_ids)))
+        .scalars()
+        .all()
+    )
     user_position_ids: dict[int, dict[PositionType, set[int]]] = {
         user_id: {position_type: set() for position_type in POSITION_TYPES}
         for user_id in user_ids
     }
-    for user_id, position_type, position_id in user_position_rows:
-        # cast(): position_type is Mapped[str] on UserPosition (a DB CHECK
-        # constraint enforces the invariant, not the Python type) -- see
-        # _position_names_batch's docstring for the same reasoning.
-        user_position_ids[user_id][cast("PositionType", position_type)].add(position_id)
+    for user_position in user_positions:
+        position_type, position_id = position_key(user_position)
+        user_position_ids[user_position.user_id][position_type].add(position_id)
 
     bookings = (
         db.execute(
@@ -357,7 +373,7 @@ def user_booking_status_batch(
 
     quantity_by_key = _quantities_for_performance(db, performance.id)
     name_by_key = _position_names_batch(
-        db, {(booking.position_type, booking.position_id) for booking in bookings}
+        db, {position_key(booking) for booking in bookings}
     )
 
     result: dict[int, BookingStatusOutput] = {}
@@ -368,13 +384,12 @@ def user_booking_status_batch(
 
         booking = bookings_by_user.get(user_id)
         if booking is not None:
-            quantity = quantity_by_key.get(
-                (booking.position_type, booking.position_id), 0
-            )
-            name = name_by_key.get((booking.position_type, booking.position_id), "")
+            booking_key = position_key(booking)
+            quantity = quantity_by_key.get(booking_key, 0)
+            name = name_by_key.get(booking_key, "")
             result[user_id] = BookingStatusOutput(
                 status=4 if booking.order < quantity else 3,
-                position=PositionRefOutput(id=booking.position_id, name=name),
+                position=PositionRefOutput(id=booking_key[1], name=name),
                 # updated_at is NULL until the row's first real UPDATE
                 # (the set_updated_at() trigger never fires on a row that
                 # was only ever inserted, never modified in place -- see
@@ -447,27 +462,25 @@ def user_booking_status_for_performances(
         performance_id: {position_type: set() for position_type in POSITION_TYPES}
         for performance_id in eligible_ids
     }
-    quantity_by_performance: dict[int, dict[tuple[str, int], int]] = {
+    quantity_by_performance: dict[int, dict[tuple[PositionType, int], int]] = {
         performance_id: {} for performance_id in eligible_ids
     }
     for row in setup_rows:
-        setup_ids_by_performance[row.performance_id][
-            cast("PositionType", row.position_type)
-        ].add(row.position_id)
-        quantity_by_performance[row.performance_id][
-            (row.position_type, row.position_id)
-        ] = row.quantity
+        row_key = position_key(row)
+        setup_ids_by_performance[row.performance_id][row_key[0]].add(row_key[1])
+        quantity_by_performance[row.performance_id][row_key] = row.quantity
 
-    user_position_rows = db.execute(
-        select(UserPosition.position_type, UserPosition.position_id).where(
-            UserPosition.user_id == user_id
-        )
-    ).all()
+    user_positions = (
+        db.execute(select(UserPosition).where(UserPosition.user_id == user_id))
+        .scalars()
+        .all()
+    )
     user_position_ids: dict[PositionType, set[int]] = {
         position_type: set() for position_type in POSITION_TYPES
     }
-    for position_type, position_id in user_position_rows:
-        user_position_ids[cast("PositionType", position_type)].add(position_id)
+    for user_position in user_positions:
+        position_type, position_id = position_key(user_position)
+        user_position_ids[position_type].add(position_id)
 
     bookings = (
         db.execute(
@@ -493,7 +506,7 @@ def user_booking_status_for_performances(
     requests_by_performance = {request.performance_id: request for request in requests}
 
     name_by_key = _position_names_batch(
-        db, {(booking.position_type, booking.position_id) for booking in bookings}
+        db, {position_key(booking) for booking in bookings}
     )
 
     for performance_id in eligible_ids:
@@ -515,10 +528,10 @@ def _resolve_calendar_status(
     *,
     user_position_ids: dict[PositionType, set[int]],
     setup_ids_by_performance: dict[int, dict[PositionType, set[int]]],
-    quantity_by_performance: dict[int, dict[tuple[str, int], int]],
+    quantity_by_performance: dict[int, dict[tuple[PositionType, int], int]],
     bookings_by_performance: dict[int, Booking],
     requests_by_performance: dict[int, BookingRequest],
-    name_by_key: dict[tuple[str, int], str],
+    name_by_key: dict[tuple[PositionType, int], str],
 ) -> BookingStatusOutput:
     """Pure per-row decision extracted from user_booking_status_for_
     performances() -- same branching as user_booking_status_batch()'s inline
@@ -528,13 +541,12 @@ def _resolve_calendar_status(
 
     booking = bookings_by_performance.get(performance_id)
     if booking is not None:
-        quantity = quantity_by_performance[performance_id].get(
-            (booking.position_type, booking.position_id), 0
-        )
-        name = name_by_key.get((booking.position_type, booking.position_id), "")
+        booking_key = position_key(booking)
+        quantity = quantity_by_performance[performance_id].get(booking_key, 0)
+        name = name_by_key.get(booking_key, "")
         return BookingStatusOutput(
             status=4 if booking.order < quantity else 3,
-            position=PositionRefOutput(id=booking.position_id, name=name),
+            position=PositionRefOutput(id=booking_key[1], name=name),
             # See user_booking_status_batch's identical fallback above --
             # updated_at is NULL on a row that was only ever inserted.
             at=booking.updated_at or booking.created_at,
@@ -562,19 +574,21 @@ def _get_cast_form_data(
         db.execute(
             select(Booking)
             .where(Booking.performance_id == performance.id)
-            .order_by(Booking.position_type, Booking.position_id, Booking.order)
+            # Grouping order is re-derived by the Python dict-bucketing
+            # below regardless of row adjacency -- only the per-key `.order`
+            # sub-ordering is actually load-bearing (it determines cast vs.
+            # standby membership once bucketed).
+            .order_by(Booking.order)
         )
         .scalars()
         .all()
     )
-    bookings_by_position: dict[tuple[str, int], list[Booking]] = {}
+    bookings_by_position: dict[tuple[PositionType, int], list[Booking]] = {}
     for booking in bookings:
-        bookings_by_position.setdefault(
-            (booking.position_type, booking.position_id), []
-        ).append(booking)
+        bookings_by_position.setdefault(position_key(booking), []).append(booking)
     users_by_id = _users_by_id(db, {booking.user_id for booking in bookings})
     primary_voice_by_user = _primary_voice_by_user(
-        db, {b.user_id for b in bookings if b.position_type == "choirjobs"}
+        db, {b.user_id for b in bookings if b.choirjob_id is not None}
     )
 
     sections: dict[PositionType, list[CastSetupItemOutput]] = {
@@ -742,8 +756,7 @@ def _popular_for_position(
         .join(Performance, Performance.id == Booking.performance_id)
         .where(
             Booking.performance_id.in_(performance_ids),
-            Booking.position_type == position_type,
-            Booking.position_id == position_id,
+            _BOOKING_POSITION_COLUMNS[position_type] == position_id,
         )
     ).all()
     if not rows:
@@ -865,9 +878,8 @@ def _booking_log(
             performance_id=performance_id,
             user_id=user_id,
             booking_type=booking_type,
-            position_type=position_type,
-            position_id=position_id,
             fee=fee,
+            **position_kwargs(position_type, position_id),
         )
     )
 
@@ -924,13 +936,13 @@ def _save_cast_item(
     engine behind every cast mutation (Schritt 6 plan's "Exakte
     Legacy-Business-Logik" section specifies the algorithm this mirrors
     line for line)."""
+    position_column = _BOOKING_POSITION_COLUMNS[position_type]
     old_bookings = (
         db.execute(
             select(Booking)
             .where(
                 Booking.performance_id == performance_id,
-                Booking.position_type == position_type,
-                Booking.position_id == position_id,
+                position_column == position_id,
             )
             .order_by(Booking.order)
         )
@@ -945,8 +957,7 @@ def _save_cast_item(
         db.execute(
             delete(Booking).where(
                 Booking.performance_id == performance_id,
-                Booking.position_type == position_type,
-                Booking.position_id == position_id,
+                position_column == position_id,
             )
         )
 
@@ -996,10 +1007,9 @@ def _save_cast_item(
             Booking(
                 performance_id=performance_id,
                 user_id=user_id,
-                position_type=position_type,
-                position_id=position_id,
                 fee=fee,
                 order=order,
+                **position_kwargs(position_type, position_id),
             )
         )
     # Flush (not commit) so the NEXT position processed in the same
@@ -1091,22 +1101,19 @@ def save_cast(db: Session, performance_id: int, data: CastSaveRequest) -> CastFo
 def reconcile_setup_change(
     db: Session,
     performance_id: int,
-    removed_keys: set[tuple[str, int]],
-    old_quantities: dict[tuple[str, int], int],
+    removed_keys: set[tuple[PositionType, int]],
+    old_quantities: dict[tuple[PositionType, int], int],
 ) -> None:
     """Port of Performance::setup()'s cast-reconciliation step, called from
     performance_service.update_performance() right after `_sync_positions`
     (Schritt 6 plan A.5b) -- purges bookings on removed positions, then
-    re-evaluates promote/demote on
-    every remaining position against its OLD quantity. `removed_keys`/
-    `old_quantities` are `str`-keyed (not the `PositionType` Literal) since
-    they originate from `PerformancePosition.position_type`, a DB column
-    (see _position_names_batch's docstring for the same reasoning)."""
+    re-evaluates promote/demote on every remaining position against its OLD
+    quantity."""
     for position_type, position_id in removed_keys:
         _save_cast_item(
             db,
             performance_id,
-            cast("PositionType", position_type),
+            position_type,
             position_id,
             new_cast=None,
             old_quantity=None,
@@ -1193,13 +1200,13 @@ def cancel_auth_user_booking(db: Session, performance_id: int, user_id: int) -> 
     if booking is None:
         return
 
+    position_type, position_id = position_key(booking)
     remaining = (
         db.execute(
             select(Booking)
             .where(
                 Booking.performance_id == performance_id,
-                Booking.position_type == booking.position_type,
-                Booking.position_id == booking.position_id,
+                _BOOKING_POSITION_COLUMNS[position_type] == position_id,
                 Booking.id != booking.id,
             )
             .order_by(Booking.order)
@@ -1211,8 +1218,8 @@ def cancel_auth_user_booking(db: Session, performance_id: int, user_id: int) -> 
     _save_cast_item(
         db,
         performance_id,
-        cast("PositionType", booking.position_type),
-        booking.position_id,
+        position_type,
+        position_id,
         new_cast=entries,
         old_quantity=None,
     )

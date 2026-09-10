@@ -9,8 +9,10 @@ from app.db.database import Base
 # -- native Postgres ENUM as of the enum-hardening slice (2026-09),
 # replacing what used to be an identical CheckConstraint string duplicated
 # 12 times. Deliberately bare string literals, not a bound Python
-# enum.Enum class -- see app.db.models.position_type_enum's docstring for
-# why (avoids the values_callable footgun). soinstr1art..soinstr4art
+# enum.Enum class: binding a real Python Enum class here would silently
+# reintroduce SQLAlchemy's classic values_callable footgun (by default
+# `sa.Enum(SomeEnum)` sends each member's NAME to Postgres, not its
+# `.value`, unless `values_callable=...` is also supplied). soinstr1art..soinstr4art
 # deliberately do NOT use this type: despite the "art" name, they have no
 # CheckConstraint even before this slice (confirmed free-text fields, see
 # app.services.score_fields) and stay plain varchar.

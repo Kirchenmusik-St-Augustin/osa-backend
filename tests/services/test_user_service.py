@@ -117,11 +117,11 @@ def _make_performance(db_session: Session, *, schedule: datetime) -> Performance
 
 def _make_booking(db_session: Session, *, performance_id: int, user_id: int) -> Booking:
     now = datetime.now(UTC)
+    instrument = _make_instrument(db_session)
     booking = Booking(
         performance_id=performance_id,
         user_id=user_id,
-        position_type="instruments",
-        position_id=1,
+        instrument_id=instrument.id,
         fee=80,
         order=0,
         created_at=now,

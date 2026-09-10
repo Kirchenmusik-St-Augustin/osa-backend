@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
@@ -17,8 +17,25 @@ from app.db.models.role import Role
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
+from app.services.position_types import PositionType
 
 CoreelementModel = Instrument | Voice | Choirjob | Location | Propriumelement | Role
+
+# Which of PerformancePosition's three FK columns / OrdinariumworkPosition's
+# two FK columns corresponds to a given position_type -- OrdinariumworkPosition
+# structurally has no choirjob_id column at all (see its own model docstring),
+# so it is a 2-entry table, not 3.
+_PERFORMANCE_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+    "instruments": PerformancePosition.instrument_id,
+    "voices": PerformancePosition.voice_id,
+    "choirjobs": PerformancePosition.choirjob_id,
+}
+_ORDINARIUMWORK_POSITION_COLUMNS: dict[
+    Literal["instruments", "voices"], InstrumentedAttribute[int | None]
+] = {
+    "instruments": OrdinariumworkPosition.instrument_id,
+    "voices": OrdinariumworkPosition.voice_id,
+}
 # The subset of CoreelementModel that actually has an `active` column --
 # narrows config.model back down wherever has_active_field guards the
 # access at runtime (Location/Propriumelement/Role don't have this
@@ -77,34 +94,31 @@ def _role_has_dependent_users(db: Session, role: CoreelementModel) -> bool:
 
 
 def _make_position_dependency_check(
-    position_type: str,
+    position_type: PositionType,
 ) -> Callable[[Session, CoreelementModel], bool]:
     """Instrument/Voice/Choirjob can be referenced by an Ordinariumwork's
     Positions setup (Schritt 4 -- choirjobs never actually match here,
-    excluded by ordinariumwork_positions' own CHECK constraint, so that
-    query is simply always empty for position_type='choirjobs') AND/OR a
-    Performance's Positions setup (Schritt 5, all three types). Legacy's
-    own Instrument/Voice/Choirjob $dependencies also list `users`
+    OrdinariumworkPosition has no choirjob_id column at all, so that check
+    is skipped entirely for position_type='choirjobs' rather than issuing a
+    query that could only ever return zero) AND/OR a Performance's
+    Positions setup (Schritt 5, all three types). Legacy's own
+    Instrument/Voice/Choirjob $dependencies also list `users`
     (user_positions) -- that table doesn't exist in osa-backend yet (User
     domain, a later Schritt), deferred the same way this check itself was
     deferred before Schritt 4/5 landed."""
 
     def _check(db: Session, item: CoreelementModel) -> bool:
-        ordinariumwork_count = db.execute(
-            select(func.count())
-            .select_from(OrdinariumworkPosition)
-            .where(
-                OrdinariumworkPosition.position_type == position_type,
-                OrdinariumworkPosition.position_id == item.id,
-            )
-        ).scalar_one()
+        ordinariumwork_count = 0
+        if position_type != "choirjobs":
+            ordinariumwork_count = db.execute(
+                select(func.count())
+                .select_from(OrdinariumworkPosition)
+                .where(_ORDINARIUMWORK_POSITION_COLUMNS[position_type] == item.id)
+            ).scalar_one()
         performance_count = db.execute(
             select(func.count())
             .select_from(PerformancePosition)
-            .where(
-                PerformancePosition.position_type == position_type,
-                PerformancePosition.position_id == item.id,
-            )
+            .where(_PERFORMANCE_POSITION_COLUMNS[position_type] == item.id)
         ).scalar_one()
         return ordinariumwork_count > 0 or performance_count > 0
 

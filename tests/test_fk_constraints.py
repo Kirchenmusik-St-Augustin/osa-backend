@@ -1,17 +1,19 @@
-"""Tests for the FK-hardening slice (2026-09): every non-polymorphic `*_id`
-column across the schema got a real `ForeignKey` with an explicit
-`ondelete=` (RESTRICT/CASCADE/SET NULL, see the model docstrings for the
-per-column reasoning) -- previously these were plain integers with no DB
-constraint at all. These tests exercise the database constraint directly
-(raw SQL DELETEs, bypassing the service layer's own dependency checks
-entirely) to verify the constraint itself, not the service-level guard
-that already existed for most of these tables. Schema comes from the real
-Alembic migrations (see conftest.py's session-scoped _create_schema
-fixture), same as tests/test_schema_hardening.py.
-
-Polymorphic `position_type`/`position_id` and `personal_access_tokens.
-tokenable_type`/`tokenable_id` stay out of scope here -- untouched by this
-slice, reserved for a future polymorphy-redesign slice."""
+"""Tests for the FK-hardening slice (2026-09) and the polymorphy-redesign
+slice that completes it (2026-09): every non-polymorphic `*_id` column
+across the schema got a real `ForeignKey` with an explicit `ondelete=`
+(RESTRICT/CASCADE/SET NULL, see the model docstrings for the per-column
+reasoning) -- previously these were plain integers with no DB constraint
+at all. The polymorphy-redesign slice closes the last gap the FK-hardening
+slice deliberately left open: `position_type`/`position_id` (replaced by
+`instrument_id`/`voice_id`/`choirjob_id`, see
+app.db.models.position_columns_mixin.PositionColumns) and
+`personal_access_tokens.tokenable_type`/`tokenable_id` (replaced by a real
+`user_id` foreign key). These tests exercise the database constraint
+directly (raw SQL DELETEs, bypassing the service layer's own dependency
+checks entirely) to verify the constraint itself, not the service-level
+guard that already existed for most of these tables. Schema comes from the
+real Alembic migrations (see conftest.py's session-scoped _create_schema
+fixture), same as tests/test_schema_hardening.py."""
 
 import uuid
 from collections.abc import Callable
@@ -23,8 +25,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models.artist import Artist
+from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.client_user_agent import ClientUserAgent
+from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
@@ -32,6 +36,7 @@ from app.db.models.performance import Performance
 from app.db.models.performance_position import PerformancePosition
 from app.db.models.performance_proprium import PerformanceProprium
 from app.db.models.performance_rehearsal import PerformanceRehearsal
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.propriumwork import Propriumwork
 from app.db.models.request_log import RequestLog
@@ -39,6 +44,7 @@ from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_position import UserPosition
 from app.db.models.user_role import UserRole
+from app.db.models.voice import Voice
 
 
 def _unique(base: str) -> str:
@@ -82,6 +88,20 @@ def _make_propriumwork(db_session: Session) -> Propriumwork:
     db_session.add(work)
     db_session.flush()
     return work
+
+
+def _make_instrument(db_session: Session) -> Instrument:
+    instrument = Instrument(name=_unique("Instrument"), order=0)
+    db_session.add(instrument)
+    db_session.flush()
+    return instrument
+
+
+def _make_voice(db_session: Session) -> Voice:
+    voice = Voice(name=_unique("Stimme"), order=0)
+    db_session.add(voice)
+    db_session.flush()
+    return voice
 
 
 def _make_performance(db_session: Session) -> Performance:
@@ -153,11 +173,11 @@ class TestCascadeForeignKeys:
     ):
         ordinariumwork = _make_ordinariumwork(db_session)
         ordinariumwork_id = ordinariumwork.id
+        instrument = _make_instrument(db_session)
         db_session.add(
             OrdinariumworkPosition(
                 ordinariumwork_id=ordinariumwork_id,
-                position_type="instruments",
-                position_id=1,
+                instrument_id=instrument.id,
                 quantity=1,
             )
         )
@@ -190,12 +210,12 @@ class TestCascadeForeignKeys:
         performance_id = performance.id
         propriumelement = _make_propriumelement(db_session)
         propriumwork = _make_propriumwork(db_session)
+        instrument = _make_instrument(db_session)
         db_session.add_all(
             [
                 PerformancePosition(
                     performance_id=performance_id,
-                    position_type="instruments",
-                    position_id=1,
+                    instrument_id=instrument.id,
                     quantity=1,
                 ),
                 PerformanceProprium(
@@ -252,9 +272,8 @@ class TestCascadeForeignKeys:
     ):
         user = make_user()
         user_id = user.id
-        db_session.add(
-            UserPosition(user_id=user_id, position_type="instruments", position_id=1)
-        )
+        instrument = _make_instrument(db_session)
+        db_session.add(UserPosition(user_id=user_id, instrument_id=instrument.id))
         db_session.flush()
 
         db_session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -269,6 +288,80 @@ class TestCascadeForeignKeys:
         )
         assert remaining == []
 
+    def test_deleting_a_user_cascades_to_their_personal_access_tokens(
+        self, db_session: Session, make_user: Callable[..., User]
+    ):
+        user = make_user()
+        user_id = user.id
+        db_session.add(
+            PersonalAccessToken(user_id=user_id, name="session", token=_unique("token"))
+        )
+        db_session.flush()
+
+        db_session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+        db_session.commit()
+
+        remaining = (
+            db_session.execute(
+                select(PersonalAccessToken).where(
+                    PersonalAccessToken.user_id == user_id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert remaining == []
+
+
+class TestPositionForeignKeys:
+    """Two representative columns, not all eleven instrument_id/voice_id/
+    choirjob_id FKs across the five polymorphic tables -- Booking.
+    instrument_id (RESTRICT) and UserPosition.voice_id (RESTRICT), covering
+    both a three-way table and its distinct model."""
+
+    def test_deleting_an_instrument_still_booked_is_rejected(
+        self, db_session: Session, make_user: Callable[..., User]
+    ):
+        performance = _make_performance(db_session)
+        user = make_user()
+        instrument = _make_instrument(db_session)
+        db_session.add(
+            PerformancePosition(
+                performance_id=performance.id, instrument_id=instrument.id, quantity=1
+            )
+        )
+        db_session.flush()
+        db_session.add(
+            Booking(
+                performance_id=performance.id,
+                user_id=user.id,
+                instrument_id=instrument.id,
+                order=0,
+                fee=0,
+            )
+        )
+        db_session.flush()
+
+        with pytest.raises(IntegrityError, match="foreign key constraint"):
+            db_session.execute(
+                text("DELETE FROM instruments WHERE id = :id"), {"id": instrument.id}
+            )
+        db_session.rollback()
+
+    def test_deleting_a_voice_still_qualifying_a_user_is_rejected(
+        self, db_session: Session, make_user: Callable[..., User]
+    ):
+        user = make_user()
+        voice = _make_voice(db_session)
+        db_session.add(UserPosition(user_id=user.id, voice_id=voice.id))
+        db_session.flush()
+
+        with pytest.raises(IntegrityError, match="foreign key constraint"):
+            db_session.execute(
+                text("DELETE FROM voices WHERE id = :id"), {"id": voice.id}
+            )
+        db_session.rollback()
+
 
 class TestSetNullForeignKeys:
     def test_deleting_a_performance_nulls_out_booking_log_performance_id(
@@ -276,12 +369,12 @@ class TestSetNullForeignKeys:
     ):
         performance = _make_performance(db_session)
         user = make_user()
+        instrument = _make_instrument(db_session)
         log = BookingLog(
             performance_id=performance.id,
             user_id=user.id,
             booking_type="book",
-            position_type="instruments",
-            position_id=1,
+            instrument_id=instrument.id,
             fee=0,
         )
         db_session.add(log)
@@ -301,12 +394,12 @@ class TestSetNullForeignKeys:
     ):
         performance = _make_performance(db_session)
         user = make_user()
+        instrument = _make_instrument(db_session)
         log = BookingLog(
             performance_id=performance.id,
             user_id=user.id,
             booking_type="book",
-            position_type="instruments",
-            position_id=1,
+            instrument_id=instrument.id,
             fee=0,
         )
         db_session.add(log)

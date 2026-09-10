@@ -332,7 +332,7 @@ class TestRequestsAndBookings:
         assert response.status_code == 404
 
     def test_includes_past_performances_unlike_the_selfadmin_endpoint(
-        self, client, make_user, db_session
+        self, client, make_user, make_instrument, db_session
     ):
         # Legacy's System::UserController::requestsAndBookings() calls the
         # bare `$user->requestsAndBookings()` ($upcomingOnly defaults to
@@ -341,13 +341,13 @@ class TestRequestsAndBookings:
         headers = _auth_headers(client, make_user)
         target = make_user()
         performance = _make_past_performance(db_session)
+        instrument = make_instrument()
         now = datetime.now(UTC)
         db_session.add(
             Booking(
                 performance_id=performance.id,
                 user_id=target.id,
-                position_type="instruments",
-                position_id=1,
+                instrument_id=instrument.id,
                 fee=80,
                 order=0,
                 created_at=now,

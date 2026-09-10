@@ -11,7 +11,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
-from app.db.models.position_type_enum import position_type_enum
 
 
 class OrdinariumworkPosition(Base):
@@ -24,14 +23,14 @@ class OrdinariumworkPosition(Base):
     managed entirely through Ordinariumwork's own create/update ("setup"
     payload), never directly -- same here (see ordinariumwork_service.py).
 
-    `position_type` uses the shared 3-value native Postgres ENUM (see
-    app.db.models.position_type_enum), the same type bookings/booking_logs/
-    performance_positions/user_positions use -- but this table's own
-    CHECK constraint below stays in place on top of it. The enum type
-    itself can't express "2 of these 3 values" (Postgres ENUMs have no
-    concept of a per-column subset), so the CHECK remains the only thing
-    excluding 'choirjobs' here, exactly as it did before the enum
-    conversion.
+    As of the polymorphy-redesign slice (2026-09), `position_type`/
+    `position_id` are replaced by two mutually-exclusive nullable foreign
+    keys, `instrument_id`/`voice_id` -- deliberately NOT the shared
+    PositionColumns mixin (see app.db.models.position_columns_mixin), which
+    also carries a `choirjob_id` column: this table's exclusion of
+    choirjobs is now structural (the column doesn't exist at all) rather
+    than CHECK-based, strictly stronger than the old
+    `position_type IN ('instruments', 'voices')` CHECK it replaces.
 
     `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09): `created_at` is populated by
@@ -45,16 +44,29 @@ class OrdinariumworkPosition(Base):
 
     __tablename__ = "ordinariumwork_positions"
     __table_args__ = (
-        UniqueConstraint("ordinariumwork_id", "position_type", "position_id"),
-        CheckConstraint("position_type IN ('instruments', 'voices')"),
+        UniqueConstraint(
+            "ordinariumwork_id",
+            "instrument_id",
+            "voice_id",
+            name="ordinariumwork_positions_position_unique",
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "num_nonnulls(instrument_id, voice_id) = 1",
+            name="ordinariumwork_positions_position_exactly_one_check",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ordinariumwork_id: Mapped[int] = mapped_column(
         ForeignKey("ordinariumworks.id", ondelete="CASCADE")
     )
-    position_type: Mapped[str] = mapped_column(position_type_enum)
-    position_id: Mapped[int]
+    instrument_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instruments.id", ondelete="RESTRICT")
+    )
+    voice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("voices.id", ondelete="RESTRICT")
+    )
     quantity: Mapped[int]
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
