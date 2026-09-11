@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, FetchedValue, ForeignKey, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class Performance(Base):
@@ -61,15 +63,15 @@ class Performance(Base):
         Index("performances_schedule_index", "schedule"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     schedule: Mapped[datetime] = mapped_column(DateTime())
-    location_id: Mapped[int] = mapped_column(
+    location_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("locations.id", ondelete="RESTRICT")
     )
-    ordinariumwork_id: Mapped[int] = mapped_column(
+    ordinariumwork_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("ordinariumworks.id", ondelete="RESTRICT")
     )
-    artist_id: Mapped[int | None] = mapped_column(
+    artist_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("artists.id", ondelete="RESTRICT")
     )
     description: Mapped[str | None]

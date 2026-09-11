@@ -131,27 +131,36 @@ class InvalidVerificationTokenError(Exception):
     """Token is malformed, expired, or was tampered with."""
 
 
-def create_email_verification_token(user_id: int, email: str) -> str:
+def create_email_verification_token(user_id: uuid.UUID, email: str) -> str:
     """Mirrors Legacy's Laravel Signed URL for email verification 1:1
     (Illuminate\\Auth\\Notifications\\VerifyEmail): payload is
     {user_id, sha1(email)}. sha1 here is only a cheap "has the email
     changed since" fingerprint, not a security boundary -- tamper
     protection comes from itsdangerous' HMAC signature around the whole
-    payload, not from sha1's collision resistance."""
+    payload, not from sha1's collision resistance. user_id is serialized
+    explicitly via str() -- itsdangerous encodes the payload as plain JSON
+    internally, with no native UUID support."""
     email_hash = hashlib.sha1(email.encode(), usedforsecurity=False).hexdigest()
     return _email_verification_serializer.dumps(
-        {"user_id": user_id, "email_hash": email_hash}
+        {"user_id": str(user_id), "email_hash": email_hash}
     )
 
 
 def decode_email_verification_token(
     token: str, max_age_seconds: int
-) -> tuple[int, str]:
+) -> tuple[uuid.UUID, str]:
     try:
         payload = _email_verification_serializer.loads(token, max_age=max_age_seconds)
     except (BadSignature, SignatureExpired):
         raise InvalidVerificationTokenError from None
-    return payload["user_id"], payload["email_hash"]
+    # A token issued before the primary-key migration carries a plain
+    # integer user_id string, which is not parseable as a UUID -- treated
+    # the same as any other invalid link rather than crashing.
+    try:
+        user_id = uuid.UUID(payload["user_id"])
+    except ValueError:
+        raise InvalidVerificationTokenError from None
+    return user_id, payload["email_hash"]
 
 
 def hash_email_for_verification(email: str) -> str:

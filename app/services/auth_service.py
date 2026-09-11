@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NoReturn
 from urllib.parse import urlencode
@@ -544,7 +545,9 @@ def link_google_account(
     return user
 
 
-def unlink_oauth_binding(db: Session, binding_id: int, current_user_id: int) -> None:
+def unlink_oauth_binding(
+    db: Session, binding_id: uuid.UUID, current_user_id: uuid.UUID
+) -> None:
     """IDOR-fixed replacement for Legacy's `oauth2disconnect($id)` (which
     looked up `Oauth2Binding::find($id)` with NO ownership check -- any
     logged-in user could delete anyone else's Google link by iterating

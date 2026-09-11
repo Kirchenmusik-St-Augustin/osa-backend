@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -11,6 +12,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class OrdinariumworkPosition(Base):
@@ -57,14 +59,14 @@ class OrdinariumworkPosition(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    ordinariumwork_id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = uuid_pk()
+    ordinariumwork_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("ordinariumworks.id", ondelete="CASCADE")
     )
-    instrument_id: Mapped[int | None] = mapped_column(
+    instrument_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("instruments.id", ondelete="RESTRICT")
     )
-    voice_id: Mapped[int | None] = mapped_column(
+    voice_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voices.id", ondelete="RESTRICT")
     )
     quantity: Mapped[int]

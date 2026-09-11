@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -51,7 +52,7 @@ def search_scores(
 
 @score_router.get("/{score_id}")
 def get_score(
-    score_id: int,
+    score_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> ScoreResponse:
@@ -80,7 +81,7 @@ def create_score(
 
 @score_router.put("/{score_id}")
 def update_score(
-    score_id: int,
+    score_id: uuid.UUID,
     data: ScoreRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],

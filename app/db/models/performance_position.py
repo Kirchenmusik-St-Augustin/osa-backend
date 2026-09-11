@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 from app.db.models.position_columns_mixin import PositionColumns
+from app.db.uuid_pk import uuid_pk
 
 
 class PerformancePosition(PositionColumns, Base):
@@ -50,8 +52,8 @@ class PerformancePosition(PositionColumns, Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = uuid_pk()
+    performance_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("performances.id", ondelete="CASCADE")
     )
     quantity: Mapped[int]

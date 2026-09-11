@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -72,7 +73,7 @@ def list_deleted_users(
 
 @user_administration_router.get("/{user_id}")
 def get_user(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:
@@ -87,7 +88,7 @@ def get_user(
 
 @user_administration_router.post("/{user_id}/restore")
 def restore_user(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:
@@ -102,7 +103,7 @@ def restore_user(
 
 @user_administration_router.post("/{user_id}/unlock")
 def unlock_user(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:
@@ -117,7 +118,7 @@ def unlock_user(
 
 @user_administration_router.post("/{user_id}/set-password")
 def set_password(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:

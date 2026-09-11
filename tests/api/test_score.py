@@ -97,12 +97,14 @@ class TestCrudRoundtrip:
 
     def test_show_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.get("/scores/999999", headers=headers)
+        response = client.get(f"/scores/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.put("/scores/999999", json=_payload(), headers=headers)
+        response = client.put(
+            f"/scores/{uuid.uuid4()}", json=_payload(), headers=headers
+        )
         assert response.status_code == 404
 
 

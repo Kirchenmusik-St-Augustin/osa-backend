@@ -1,3 +1,4 @@
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -187,12 +188,12 @@ class ScoreRequest(StrictInputModel):
 
 
 class ScoreResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     created_at: UtcDatetime | None
     updated_at: UtcDatetime | None
     fields: dict[str, str | int]
 
 
 class ScoreSearchResult(BaseModel):
-    id: int
+    id: uuid.UUID
     label: str

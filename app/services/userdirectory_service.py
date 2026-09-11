@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import select
@@ -13,7 +14,7 @@ from app.services.position_types import PositionType
 
 # UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
 # identical _BOOKING_POSITION_COLUMNS for the full rationale.
-_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[uuid.UUID | None]] = {
     "instruments": UserPosition.instrument_id,
     "voices": UserPosition.voice_id,
     "choirjobs": UserPosition.choirjob_id,
@@ -52,7 +53,7 @@ def list_all_users(db: Session) -> Sequence[User]:
 
 
 def list_users_for_position(
-    db: Session, position_type: PositionType, position_id: int
+    db: Session, position_type: PositionType, position_id: uuid.UUID
 ) -> Sequence[User]:
     """1:1 Legacy's `$item->users` branch (type=instruments|voices|choirjobs)
     -- via the polymorphic user_positions pivot, same ordering/soft-delete

@@ -6,6 +6,7 @@ pyproject.toml's per-file-ignores for TID251)."""
 
 import json
 import resource
+import uuid
 from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
@@ -117,7 +118,7 @@ def _write_log_entry(
         db.close()
 
 
-def _resolve_user_id(db: Session, auth_header: str | None) -> int | None:
+def _resolve_user_id(db: Session, auth_header: str | None) -> uuid.UUID | None:
     if not auth_header or not auth_header.lower().startswith("bearer "):
         return None
     email = try_decode_token(auth_header[len("bearer ") :])

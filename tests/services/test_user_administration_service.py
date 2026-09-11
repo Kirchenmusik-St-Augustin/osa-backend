@@ -48,7 +48,7 @@ class TestListDeletedUsers:
 class TestGetUser:
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(user_administration_service.UserAdministrationNotFoundError):
-            user_administration_service.get_user(db_session, -1)
+            user_administration_service.get_user(db_session, uuid.uuid4())
 
     def test_finds_soft_deleted_users_too(self, db_session: Session, make_user):
         user = make_user()
@@ -70,7 +70,7 @@ class TestRestoreUser:
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(user_administration_service.UserAdministrationNotFoundError):
-            user_administration_service.restore_user(db_session, -1)
+            user_administration_service.restore_user(db_session, uuid.uuid4())
 
 
 class TestUnlockUser:
@@ -103,4 +103,6 @@ class TestSetRandomPassword:
     def test_unknown_id_raises_not_found(self, db_session: Session, make_user):
         admin = make_user(administrator=True)
         with pytest.raises(user_administration_service.UserAdministrationNotFoundError):
-            user_administration_service.set_random_password(db_session, -1, admin.id)
+            user_administration_service.set_random_password(
+                db_session, uuid.uuid4(), admin.id
+            )

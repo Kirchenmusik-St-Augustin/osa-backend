@@ -59,7 +59,7 @@ class TestUpdateFee:
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(fee_service.FeeNotFoundError):
-            fee_service.update_fee(db_session, -1, _request())
+            fee_service.update_fee(db_session, uuid.uuid4(), _request())
 
     def test_keeping_own_name_does_not_trigger_uniqueness_error(
         self, db_session: Session
@@ -86,4 +86,4 @@ class TestDeleteFee:
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(fee_service.FeeNotFoundError):
-            fee_service.delete_fee(db_session, -1)
+            fee_service.delete_fee(db_session, uuid.uuid4())

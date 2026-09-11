@@ -95,6 +95,8 @@ class TestListUsersForPosition:
 
     def test_unknown_position_id_returns_empty(self, db_session: Session):
         assert (
-            userdirectory_service.list_users_for_position(db_session, "choirjobs", -1)
+            userdirectory_service.list_users_for_position(
+                db_session, "choirjobs", uuid.uuid4()
+            )
             == []
         )

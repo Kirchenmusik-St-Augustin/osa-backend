@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class PerformanceProprium(Base):
@@ -27,14 +29,14 @@ class PerformanceProprium(Base):
     __tablename__ = "performance_proprium"
     __table_args__ = (UniqueConstraint("performance_id", "propriumelement_id"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = uuid_pk()
+    performance_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("performances.id", ondelete="CASCADE")
     )
-    propriumelement_id: Mapped[int] = mapped_column(
+    propriumelement_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("propriumelements.id", ondelete="RESTRICT")
     )
-    propriumwork_id: Mapped[int] = mapped_column(
+    propriumwork_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("propriumworks.id", ondelete="RESTRICT")
     )
     created_at: Mapped[datetime | None] = mapped_column(

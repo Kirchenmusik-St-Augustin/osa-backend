@@ -174,7 +174,7 @@ class TestCrudRoundtrip:
 
     def test_get_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.get("/performances/999", headers=headers)
+        response = client.get(f"/performances/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
     def test_update_missing_id_returns_404(self, client, make_user):
@@ -184,7 +184,7 @@ class TestCrudRoundtrip:
         location_id = _make_location(client, make_user)
 
         response = client.put(
-            "/performances/999",
+            f"/performances/{uuid.uuid4()}",
             json=_base_payload(location_id, work_id),
             headers=headers,
         )
@@ -192,14 +192,14 @@ class TestCrudRoundtrip:
 
     def test_delete_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.delete("/performances/999", headers=headers)
+        response = client.delete(f"/performances/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
 
 class TestFormData:
     def test_form_data_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.get("/performances/999/form", headers=headers)
+        response = client.get(f"/performances/{uuid.uuid4()}/form", headers=headers)
         assert response.status_code == 404
 
     def test_form_data_includes_ordinariumwork_label_and_setup(self, client, make_user):

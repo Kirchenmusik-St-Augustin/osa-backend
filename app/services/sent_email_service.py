@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import extract, select
 from sqlalchemy.orm import Session
 
@@ -41,7 +43,7 @@ def list_for_month(db: Session, year: int, month: int) -> list[SentEmailShortOut
     ]
 
 
-def get(db: Session, sent_email_id: int) -> SentEmailShowOutput:
+def get(db: Session, sent_email_id: uuid.UUID) -> SentEmailShowOutput:
     email = db.execute(
         select(SentEmail).where(SentEmail.id == sent_email_id)
     ).scalar_one_or_none()

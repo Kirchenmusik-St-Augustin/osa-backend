@@ -70,7 +70,7 @@ class TestListUsers:
         db_session.commit()
 
         response = client.get("/userdirectory", params={"type": "all"}, headers=headers)
-        entry = next(item for item in response.json() if item["id"] == user.id)
+        entry = next(item for item in response.json() if item["id"] == str(user.id))
         assert entry["has_email"] is False
         assert entry["email"] is None
 
@@ -83,7 +83,7 @@ class TestListUsers:
         db_session.commit()
 
         response = client.get("/userdirectory", params={"type": "all"}, headers=headers)
-        entry = next(item for item in response.json() if item["id"] == user.id)
+        entry = next(item for item in response.json() if item["id"] == str(user.id))
         assert entry["has_email"] is True
         assert entry["email"] == user.email
 
@@ -109,7 +109,7 @@ class TestListUsers:
         )
         assert response.status_code == 200
         ids = [item["id"] for item in response.json()]
-        assert ids == [matching.id]
+        assert ids == [str(matching.id)]
 
     def test_type_without_id_returns_empty(self, client, make_user):
         headers = _auth_headers(client, make_user)
@@ -129,4 +129,4 @@ class TestAbilities:
         assert response.status_code == 200
         body = response.json()
         assert "roles" not in body
-        assert choirjob.id in [item["id"] for item in body["choirjobs"]]
+        assert str(choirjob.id) in [item["id"] for item in body["choirjobs"]]

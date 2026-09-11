@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -44,7 +45,7 @@ def list_users(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
     directory_type: Annotated[DirectoryType | None, Query(alias="type")] = None,
-    position_id: Annotated[int | None, Query(alias="id")] = None,
+    position_id: Annotated[uuid.UUID | None, Query(alias="id")] = None,
 ) -> list[UserDirectoryEntryOutput]:
     if directory_type is None or directory_type == "all":
         users = userdirectory_service.list_all_users(db)

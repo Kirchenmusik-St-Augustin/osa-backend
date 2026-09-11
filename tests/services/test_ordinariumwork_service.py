@@ -190,7 +190,7 @@ class TestCreateOrdinariumwork:
             ordinariumwork_service.OrdinariumworkValidationError
         ) as exc_info:
             ordinariumwork_service.create_ordinariumwork(
-                db_session, _request(artist_id=999999)
+                db_session, _request(artist_id=uuid.uuid4())
             )
 
         assert exc_info.value.errors == [
@@ -212,7 +212,7 @@ class TestCreateOrdinariumwork:
     def test_rejects_unknown_instrument_in_setup(self, db_session: Session):
         artist_id = _make_artist(db_session)
         setup = OrdinariumworkSetupInput(
-            instruments=[OrdinariumworkPositionInput(id=999999, quantity=1)]
+            instruments=[OrdinariumworkPositionInput(id=uuid.uuid4(), quantity=1)]
         )
 
         with pytest.raises(
@@ -272,7 +272,7 @@ class TestUpdateOrdinariumwork:
         artist_id = _make_artist(db_session)
         with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
             ordinariumwork_service.update_ordinariumwork(
-                db_session, 999, _request(artist_id)
+                db_session, uuid.uuid4(), _request(artist_id)
             )
 
     def test_setup_sync_removes_updates_and_adds_positions(self, db_session: Session):
@@ -315,7 +315,7 @@ class TestUpdateOrdinariumwork:
 class TestGetSetup:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
-            ordinariumwork_service.get_setup(db_session, 999)
+            ordinariumwork_service.get_setup(db_session, uuid.uuid4())
 
     def test_empty_setup_returns_empty_lists(self, db_session: Session):
         artist_id = _make_artist(db_session)
@@ -396,7 +396,7 @@ class TestGetSetup:
 class TestDeleteOrdinariumwork:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(ordinariumwork_service.OrdinariumworkNotFoundError):
-            ordinariumwork_service.delete_ordinariumwork(db_session, 999)
+            ordinariumwork_service.delete_ordinariumwork(db_session, uuid.uuid4())
 
     def test_deletes_ordinariumwork_and_its_positions(self, db_session: Session):
         artist_id = _make_artist(db_session)

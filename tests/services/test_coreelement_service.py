@@ -196,7 +196,7 @@ class TestUpdateCoreelement:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(coreelement_service.CoreelementNotFoundError):
             coreelement_service.update_coreelement(
-                db_session, CoreelementType.instrument, 999, _request()
+                db_session, CoreelementType.instrument, uuid.uuid4(), _request()
             )
 
     def test_updates_name_without_changing_order(self, db_session: Session):
@@ -277,7 +277,7 @@ class TestDeleteCoreelement:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(coreelement_service.CoreelementNotFoundError):
             coreelement_service.delete_coreelement(
-                db_session, CoreelementType.instrument, 999
+                db_session, CoreelementType.instrument, uuid.uuid4()
             )
 
     def test_simple_type_has_no_dependency_check_yet(self, db_session: Session):
@@ -334,7 +334,7 @@ class TestMoveCoreelement:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(coreelement_service.CoreelementNotFoundError):
             coreelement_service.move_coreelement(
-                db_session, CoreelementType.instrument, 999, "up"
+                db_session, CoreelementType.instrument, uuid.uuid4(), "up"
             )
 
     def test_move_up_swaps_with_previous_item(self, db_session: Session):

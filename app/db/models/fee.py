@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class Fee(Base):
@@ -32,7 +34,7 @@ class Fee(Base):
     __tablename__ = "fees"
     __table_args__ = (CheckConstraint("amount >= 0", name="fees_amount_check"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(unique=True)
     amount: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime | None] = mapped_column(

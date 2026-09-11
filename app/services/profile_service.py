@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,7 +26,7 @@ class ProfileValidationError(Exception):
 
 
 def _name_combo_taken(
-    db: Session, surname: str, givenname: str, exclude_id: int
+    db: Session, surname: str, givenname: str, exclude_id: uuid.UUID
 ) -> bool:
     stmt = select(User.id).where(
         User.surname == surname, User.givenname == givenname, User.id != exclude_id
@@ -32,7 +34,7 @@ def _name_combo_taken(
     return db.execute(stmt).scalar_one_or_none() is not None
 
 
-def _email_taken(db: Session, email: str, exclude_id: int) -> bool:
+def _email_taken(db: Session, email: str, exclude_id: uuid.UUID) -> bool:
     stmt = select(User.id).where(User.email == email, User.id != exclude_id)
     return db.execute(stmt).scalar_one_or_none() is not None
 

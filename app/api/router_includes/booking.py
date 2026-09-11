@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated, Literal
 
 from arq.connections import ArqRedis
@@ -60,7 +61,7 @@ def _in_past() -> HTTPException:
 
 @booking_router.get("/{performance_id}/cast")
 def get_cast_page(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _CAST],
 ) -> PerformanceCastPageResponse:
@@ -74,7 +75,7 @@ def get_cast_page(
 
 @booking_router.post("/{performance_id}/cast")
 def save_cast(
-    performance_id: int,
+    performance_id: uuid.UUID,
     data: CastSaveRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _CAST],
@@ -88,14 +89,14 @@ def save_cast(
 
 
 def _change_user_request_status_sync(
-    db: Session, performance_id: int, current_user: User
+    db: Session, performance_id: uuid.UUID, current_user: User
 ) -> tuple[BookingStatusOutput, BookedOrStandbyCanceledNotification | None]:
     return booking_service.change_user_request_status(db, performance_id, current_user)
 
 
 @booking_router.post("/{performance_id}/booking-status")
 async def change_user_request_status(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _CHANGE_STATUS],
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
@@ -138,7 +139,7 @@ async def change_user_request_status(
 
 @booking_router.get("/{performance_id}/my-booking-status")
 def get_my_booking_status(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _CHANGE_STATUS],
 ) -> BookingStatusOutput:
@@ -152,7 +153,7 @@ def get_my_booking_status(
 
 @booking_router.get("/{performance_id}/billing")
 def get_billing(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _BILLING],
 ) -> PerformanceBillingResponse:
@@ -164,7 +165,7 @@ def get_billing(
 
 @booking_router.get("/{performance_id}/requests-and-bookings")
 def get_requests_and_bookings(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceRequestsAndBookingsResponse:
@@ -180,7 +181,7 @@ def get_requests_and_bookings(
 
 @booking_router.get("/{performance_id}/message-to-cast")
 def get_message_to_cast_page(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceMessageToCastResponse:
@@ -194,13 +195,13 @@ def get_message_to_cast_page(
 
 @booking_router.get("/{performance_id}/message-to-cast/recipients")
 def get_message_recipients(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
     position_type: Annotated[
         Literal["all", "instruments", "voices", "choirjobs"] | None, Query(alias="type")
     ] = None,
-    position_id: Annotated[int | None, Query(alias="id")] = None,
+    position_id: Annotated[uuid.UUID | None, Query(alias="id")] = None,
 ) -> list[MessageRecipientOutput]:
     resolved_type = None if position_type in (None, "all") else position_type
     try:
@@ -212,14 +213,14 @@ def get_message_recipients(
 
 
 def _send_message_to_cast_sync(
-    db: Session, performance_id: int, current_user: User, data: SendMessageRequest
+    db: Session, performance_id: uuid.UUID, current_user: User, data: SendMessageRequest
 ) -> tuple[list[str], str, str]:
     return booking_service.send_message_to_cast(db, performance_id, current_user, data)
 
 
 @booking_router.post("/{performance_id}/message-to-cast/send")
 async def send_message_to_cast(
-    performance_id: int,
+    performance_id: uuid.UUID,
     data: SendMessageRequest,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _MAINTAIN],

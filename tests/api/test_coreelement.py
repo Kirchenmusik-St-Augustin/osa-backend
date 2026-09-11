@@ -106,13 +106,17 @@ class TestCrudRoundtrip:
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
         response = client.put(
-            "/coreelements/instrument/999", json={"name": _unique()}, headers=headers
+            f"/coreelements/instrument/{uuid.uuid4()}",
+            json={"name": _unique()},
+            headers=headers,
         )
         assert response.status_code == 404
 
     def test_delete_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.delete("/coreelements/instrument/999", headers=headers)
+        response = client.delete(
+            f"/coreelements/instrument/{uuid.uuid4()}", headers=headers
+        )
         assert response.status_code == 404
 
 
@@ -516,7 +520,9 @@ class TestMove:
 
     def test_move_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.post("/coreelements/instrument/999/move/up", headers=headers)
+        response = client.post(
+            f"/coreelements/instrument/{uuid.uuid4()}/move/up", headers=headers
+        )
         assert response.status_code == 404
 
     def test_move_invalid_direction_returns_422(self, client, make_user):

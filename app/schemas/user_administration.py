@@ -1,10 +1,12 @@
+import uuid
+
 from pydantic import BaseModel
 
 from app.core.datetime_utils import UtcDatetime
 
 
 class UserAdministrationSearchResultOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     label: str
 
 
@@ -12,7 +14,7 @@ class UserAdministrationDeletedEntryOutput(BaseModel):
     """Mirrors Legacy's User\\DeletedListEntry resource -- deliberately
     thinner than the search result (no `label`, a plain `email`)."""
 
-    id: int
+    id: uuid.UUID
     surname: str
     givenname: str
     email: str | None
@@ -24,7 +26,7 @@ class UserAdministrationDetailOutput(BaseModel):
     Administration domain only ever needs status flags + the three
     actions."""
 
-    id: int
+    id: uuid.UUID
     surname: str
     givenname: str
     email: str | None

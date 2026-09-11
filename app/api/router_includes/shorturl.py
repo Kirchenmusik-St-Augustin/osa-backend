@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -42,7 +43,7 @@ def create_shorturl(
 
 @shorturl_router.put("/{shorturl_id}")
 def update_shorturl(
-    shorturl_id: int,
+    shorturl_id: uuid.UUID,
     data: ShorturlRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
@@ -62,7 +63,7 @@ def update_shorturl(
 
 @shorturl_router.delete("/{shorturl_id}")
 def delete_shorturl(
-    shorturl_id: int,
+    shorturl_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:

@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 from app.db.models.position_columns_mixin import PositionColumns
+from app.db.uuid_pk import uuid_pk
 
 # Native Postgres ENUM for this table's own booking_type column (see
 # alembic/versions/fa9e6613c5c1_convert_booking_type_to_enum.py). Unlike the
@@ -89,11 +91,11 @@ class BookingLog(PositionColumns, Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int | None] = mapped_column(
+    id: Mapped[uuid.UUID] = uuid_pk()
+    performance_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("performances.id", ondelete="SET NULL")
     )
-    user_id: Mapped[int | None] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
     booking_type: Mapped[str] = mapped_column(booking_type_enum)

@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -62,7 +63,7 @@ def get_available_positions(
 
 @ordinariumwork_router.get("/{ordinariumwork_id}")
 def get_ordinariumwork(
-    ordinariumwork_id: int,
+    ordinariumwork_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> OrdinariumworkResponse:
@@ -76,7 +77,7 @@ def get_ordinariumwork(
 
 @ordinariumwork_router.get("/{ordinariumwork_id}/setup")
 def get_ordinariumwork_setup(
-    ordinariumwork_id: int,
+    ordinariumwork_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> OrdinariumworkSetupOutput:
@@ -90,7 +91,7 @@ def get_ordinariumwork_setup(
 
 @ordinariumwork_router.put("/{ordinariumwork_id}")
 def update_ordinariumwork(
-    ordinariumwork_id: int,
+    ordinariumwork_id: uuid.UUID,
     data: OrdinariumworkRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
@@ -110,7 +111,7 @@ def update_ordinariumwork(
 
 @ordinariumwork_router.delete("/{ordinariumwork_id}")
 def delete_ordinariumwork(
-    ordinariumwork_id: int,
+    ordinariumwork_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:

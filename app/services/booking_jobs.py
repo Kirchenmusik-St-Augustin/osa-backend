@@ -9,6 +9,7 @@ scheduler itself running, so an extra `except Exception` here would only
 duplicate that (and generic exception handling is banned anyway).
 """
 
+import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
@@ -45,7 +46,7 @@ def purge_stale_booking_requests() -> None:
 
 def _latest_unnotified_entries(
     logs: Sequence[BookingLog],
-) -> dict[tuple[int, int], BookingLog]:
+) -> dict[tuple[uuid.UUID, uuid.UUID], BookingLog]:
     """Port of `BookingLog::checkNotificationForUpcomingPerformances()`'s
     per-(performance,user) decision: notify only if the latest log entry
     for that user on that performance hasn't been notified yet, AND either
@@ -68,7 +69,7 @@ def _latest_unnotified_entries(
     # reasoning).
     epoch = datetime.min  # noqa: DTZ901
 
-    by_performance_user: dict[tuple[int, int], list[BookingLog]] = {}
+    by_performance_user: dict[tuple[uuid.UUID, uuid.UUID], list[BookingLog]] = {}
     for log in logs:
         if log.performance_id is None or log.user_id is None:
             continue
@@ -76,7 +77,7 @@ def _latest_unnotified_entries(
             log
         )
 
-    result: dict[tuple[int, int], BookingLog] = {}
+    result: dict[tuple[uuid.UUID, uuid.UUID], BookingLog] = {}
     for key, entries in by_performance_user.items():
         ordered = sorted(entries, key=lambda entry: entry.created_at or epoch)
         latest = ordered[-1]
@@ -126,9 +127,10 @@ def notify_upcoming_booking_status() -> None:
         # grouped by user for a single combined mail. performance_id is
         # carried alongside each entry (from the already-narrowed tuple
         # key, see _latest_unnotified_entries) instead of re-reading
-        # entry.performance_id, which is `int | None` on the model itself.
+        # entry.performance_id, which is `uuid.UUID | None` on the model
+        # itself.
         per_performance_user_entry = _latest_unnotified_entries(logs)
-        entries_by_user: dict[int, list[tuple[int, BookingLog]]] = {}
+        entries_by_user: dict[uuid.UUID, list[tuple[uuid.UUID, BookingLog]]] = {}
         for (performance_id, user_id), entry in per_performance_user_entry.items():
             entries_by_user.setdefault(user_id, []).append((performance_id, entry))
 

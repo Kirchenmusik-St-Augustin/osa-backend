@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class Artist(Base):
@@ -25,7 +27,7 @@ class Artist(Base):
     __tablename__ = "artists"
     __table_args__ = (UniqueConstraint("surname", "givenname"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     surname: Mapped[str | None]
     givenname: Mapped[str | None]
     birthyear: Mapped[int | None]

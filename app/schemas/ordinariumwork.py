@@ -1,10 +1,12 @@
+import uuid
+
 from pydantic import BaseModel, Field
 
-from app.schemas.base import StrictInputModel
+from app.schemas.base import LenientUuid, StrictInputModel
 
 
 class OrdinariumworkPositionInput(StrictInputModel):
-    id: int
+    id: LenientUuid
     quantity: int = Field(ge=1, le=99)
 
 
@@ -16,24 +18,24 @@ class OrdinariumworkSetupInput(StrictInputModel):
 class OrdinariumworkRequest(StrictInputModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    artist_id: int
+    artist_id: LenientUuid
     duration: int | None = None
     demanding: bool = False
     setup: OrdinariumworkSetupInput
 
 
 class OrdinariumworkResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     description: str | None
-    artist_id: int
+    artist_id: uuid.UUID
     artist_name: str
     duration: int | None
     demanding: bool
 
 
 class OrdinariumworkPositionOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     quantity: int
     # Lets the frontend flag a setup row whose Instrument/Voice has since
@@ -50,12 +52,12 @@ class OrdinariumworkSetupOutput(BaseModel):
 
 
 class OrdinariumworkSearchResult(BaseModel):
-    id: int
+    id: uuid.UUID
     label: str
 
 
 class AvailablePositionOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
 
 

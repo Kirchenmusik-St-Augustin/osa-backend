@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from app.core.config import Settings
@@ -157,15 +159,19 @@ def test_performance_defaults(monkeypatch: pytest.MonkeyPatch):
 
     settings = Settings()
 
-    assert settings.performance_default_location_id == 1
-    assert settings.performance_default_conductor_artist_id == 95
+    # No built-in default makes sense for a UUID primary key (unlike the
+    # other Tier 2 settings) -- absent configuration means no pre-fill.
+    assert settings.performance_default_location_id is None
+    assert settings.performance_default_conductor_artist_id is None
 
 
 def test_performance_defaults_can_be_overridden(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("PERFORMANCE_DEFAULT_LOCATION_ID", "2")
-    monkeypatch.setenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", "7")
+    location_id = uuid.uuid4()
+    conductor_id = uuid.uuid4()
+    monkeypatch.setenv("PERFORMANCE_DEFAULT_LOCATION_ID", str(location_id))
+    monkeypatch.setenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", str(conductor_id))
 
     settings = Settings()
 
-    assert settings.performance_default_location_id == 2
-    assert settings.performance_default_conductor_artist_id == 7
+    assert settings.performance_default_location_id == location_id
+    assert settings.performance_default_conductor_artist_id == conductor_id

@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
@@ -50,7 +51,7 @@ def list_deleted_users(db: Session) -> Sequence[User]:
     return db.execute(stmt).scalars().all()
 
 
-def _get_or_404(db: Session, user_id: int) -> User:
+def _get_or_404(db: Session, user_id: uuid.UUID) -> User:
     result = db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
@@ -58,18 +59,18 @@ def _get_or_404(db: Session, user_id: int) -> User:
     return user
 
 
-def get_user(db: Session, user_id: int) -> User:
+def get_user(db: Session, user_id: uuid.UUID) -> User:
     return _get_or_404(db, user_id)
 
 
-def restore_user(db: Session, user_id: int) -> User:
+def restore_user(db: Session, user_id: uuid.UUID) -> User:
     user = _get_or_404(db, user_id)
     user.deleted_at = None
     db.commit()
     return user
 
 
-def unlock_user(db: Session, user_id: int) -> User:
+def unlock_user(db: Session, user_id: uuid.UUID) -> User:
     user = _get_or_404(db, user_id)
     user.auth_locked = False
     db.commit()
@@ -77,7 +78,7 @@ def unlock_user(db: Session, user_id: int) -> User:
 
 
 def set_random_password(
-    db: Session, user_id: int, current_user_id: int
+    db: Session, user_id: uuid.UUID, current_user_id: uuid.UUID
 ) -> tuple[User, str]:
     """Generates a one-time password, shown ONCE in the response -- never
     logged, never emailed (1:1 Legacy, which has no mail trigger for this

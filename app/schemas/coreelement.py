@@ -1,3 +1,4 @@
+import uuid
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -43,7 +44,7 @@ class CoreelementRequest(StrictInputModel):
 
 
 class CoreelementResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     order: int
     label: str | None = None

@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
@@ -85,7 +86,7 @@ class PerformanceInUseError(Exception):
     once the Booking domain landed (Schritt 6 plan A.5a)."""
 
 
-def _get_or_404(db: Session, performance_id: int) -> Performance:
+def _get_or_404(db: Session, performance_id: uuid.UUID) -> Performance:
     result = db.execute(select(Performance).where(Performance.id == performance_id))
     performance = result.scalar_one_or_none()
     if performance is None:
@@ -108,7 +109,7 @@ def _validate_positions(
 ) -> list[tuple[str, str]]:
     model = POSITION_MODELS[position_type]
     errors: list[tuple[str, str]] = []
-    seen_ids: set[int] = set()
+    seen_ids: set[uuid.UUID] = set()
     for item in items:
         if item.id in seen_ids:
             errors.append(("setup", f"{position_type}: doppelter Eintrag."))
@@ -124,7 +125,7 @@ def _validate_positions(
 
 def _validate_proprium(db: Session, data: PerformanceRequest) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
-    seen_elements: set[int] = set()
+    seen_elements: set[uuid.UUID] = set()
     for entry in data.proprium:
         if entry.propriumelement_id in seen_elements:
             errors.append(("proprium", "Doppelter Eintrag für dasselbe Element."))
@@ -163,7 +164,7 @@ def _validate_rehearsals(data: PerformanceRequest) -> list[tuple[str, str]]:
 
 
 def _validate_collision(
-    db: Session, data: PerformanceRequest, exclude_id: int | None
+    db: Session, data: PerformanceRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     """Legacy truncates to the HOUR (not the DB's exact-timestamp unique
     indexes) and, per User-Entscheidung 2026-07-29, now runs on both
@@ -192,7 +193,7 @@ def _validate_collision(
 
 
 def _validate(
-    db: Session, data: PerformanceRequest, exclude_id: int | None
+    db: Session, data: PerformanceRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
     schedule = data.schedule
@@ -238,8 +239,10 @@ def _validate(
 
 
 def _sync_positions(
-    db: Session, performance_id: int, data: PerformanceRequest
-) -> tuple[set[tuple[PositionType, int]], dict[tuple[PositionType, int], int]]:
+    db: Session, performance_id: uuid.UUID, data: PerformanceRequest
+) -> tuple[
+    set[tuple[PositionType, uuid.UUID]], dict[tuple[PositionType, uuid.UUID], int]
+]:
     """Returns (removed_keys, old_quantities) for
     booking_service.reconcile_setup_change (Schritt 6 plan A.5b) --
     old_quantities covers only positions
@@ -263,7 +266,7 @@ def _sync_positions(
         key: position.quantity for key, position in existing_by_key.items()
     }
 
-    desired: dict[tuple[PositionType, int], int] = {}
+    desired: dict[tuple[PositionType, uuid.UUID], int] = {}
     for item in data.setup.instruments:
         desired[("instruments", item.id)] = item.quantity
     for item in data.setup.voices:
@@ -290,7 +293,9 @@ def _sync_positions(
     return removed_keys, old_quantities
 
 
-def _sync_proprium(db: Session, performance_id: int, data: PerformanceRequest) -> None:
+def _sync_proprium(
+    db: Session, performance_id: uuid.UUID, data: PerformanceRequest
+) -> None:
     existing = (
         db.execute(
             select(PerformanceProprium).where(
@@ -324,7 +329,7 @@ def _sync_proprium(db: Session, performance_id: int, data: PerformanceRequest) -
 
 
 def _sync_rehearsals(
-    db: Session, performance_id: int, data: PerformanceRequest
+    db: Session, performance_id: uuid.UUID, data: PerformanceRequest
 ) -> None:
     """Legacy always fully replaces rehearsals (delete-all, recreate) on
     every save, never diffs them -- 1:1 replicated, including the
@@ -376,7 +381,7 @@ def _to_response(performance: Performance) -> PerformanceResponse:
     )
 
 
-def get_setup(db: Session, performance_id: int) -> PerformanceSetupOutput:
+def get_setup(db: Session, performance_id: uuid.UUID) -> PerformanceSetupOutput:
     """Output order follows each Instrument/Voice/Choirjob's own `order`
     column (their shared global admin-managed ordering), not pivot-row
     insertion order -- same lesson as Ordinariumwork's setup(), confirmed
@@ -433,13 +438,13 @@ def get_setup(db: Session, performance_id: int) -> PerformanceSetupOutput:
 
 
 def _build_proprium_by_performance(
-    db: Session, performance_ids: list[int]
-) -> dict[int, list[PerformancePropriumOutput]]:
+    db: Session, performance_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[PerformancePropriumOutput]]:
     """Batched across a whole list of performances -- an N+1-safe building
     block for both the single-performance get_proprium() below and the
     calendar's list_performances_for_month() -- query count must not scale
     with the number of performances returned."""
-    result: dict[int, list[PerformancePropriumOutput]] = {
+    result: dict[uuid.UUID, list[PerformancePropriumOutput]] = {
         pid: [] for pid in performance_ids
     }
     if not performance_ids:
@@ -485,7 +490,7 @@ def _build_proprium_by_performance(
         else {}
     )
 
-    entries_by_performance: dict[int, list[PerformanceProprium]] = {}
+    entries_by_performance: dict[uuid.UUID, list[PerformanceProprium]] = {}
     for entry in entries:
         entries_by_performance.setdefault(entry.performance_id, []).append(entry)
 
@@ -524,14 +529,16 @@ def _build_proprium_by_performance(
     return result
 
 
-def get_proprium(db: Session, performance_id: int) -> list[PerformancePropriumOutput]:
+def get_proprium(
+    db: Session, performance_id: uuid.UUID
+) -> list[PerformancePropriumOutput]:
     return _build_proprium_by_performance(db, [performance_id]).get(performance_id, [])
 
 
 def _build_rehearsals_by_performance(
-    db: Session, performance_ids: list[int]
-) -> dict[int, list[PerformanceRehearsalOutput]]:
-    result: dict[int, list[PerformanceRehearsalOutput]] = {
+    db: Session, performance_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[PerformanceRehearsalOutput]]:
+    result: dict[uuid.UUID, list[PerformanceRehearsalOutput]] = {
         pid: [] for pid in performance_ids
     }
     if not performance_ids:
@@ -555,7 +562,7 @@ def _build_rehearsals_by_performance(
 
 
 def get_rehearsals(
-    db: Session, performance_id: int
+    db: Session, performance_id: uuid.UUID
 ) -> list[PerformanceRehearsalOutput]:
     return _build_rehearsals_by_performance(db, [performance_id]).get(
         performance_id, []
@@ -571,7 +578,7 @@ class PerformanceBatchEntry:
     it."""
 
     location: PerformanceLocationOutput
-    ordinariumwork_id: int
+    ordinariumwork_id: uuid.UUID
     ordinariumwork_name: str
     ordinariumwork_artist_name: str
     ordinariumwork_demanding: bool
@@ -583,7 +590,7 @@ class PerformanceBatchEntry:
 
 def load_performance_batch_data(
     db: Session, performances: Sequence[Performance]
-) -> dict[int, PerformanceBatchEntry]:
+) -> dict[uuid.UUID, PerformanceBatchEntry]:
     """N+1-safe batch loader for Location/Ordinariumwork/Artist/Proprium/
     Rehearsals across an arbitrary list of Performances -- a fixed number
     of queries regardless of list length, the shared building block behind
@@ -624,7 +631,7 @@ def load_performance_batch_data(
     proprium_by_performance = _build_proprium_by_performance(db, performance_ids)
     rehearsals_by_performance = _build_rehearsals_by_performance(db, performance_ids)
 
-    result: dict[int, PerformanceBatchEntry] = {}
+    result: dict[uuid.UUID, PerformanceBatchEntry] = {}
     for performance in performances:
         location = locations_by_id[performance.location_id]
         ordinariumwork = ordinariumworks_by_id[performance.ordinariumwork_id]
@@ -649,7 +656,7 @@ def load_performance_batch_data(
 
 
 def list_performances_for_month(
-    db: Session, year: int, month: int, user_id: int
+    db: Session, year: int, month: int, user_id: uuid.UUID
 ) -> Sequence[PerformanceCalendarItem]:
     """Real indexed DB query (dialect-portable year/month extract() match),
     mirroring Legacy's own `Performance::ofMonth()` (already a real query
@@ -709,7 +716,9 @@ def list_performances_for_month(
     ]
 
 
-def get_performance_detail(db: Session, performance_id: int) -> PerformanceShowResponse:
+def get_performance_detail(
+    db: Session, performance_id: uuid.UUID
+) -> PerformanceShowResponse:
     performance = _get_or_404(db, performance_id)
     location = db.execute(
         select(Location).where(Location.id == performance.location_id)
@@ -750,7 +759,7 @@ def get_performance_detail(db: Session, performance_id: int) -> PerformanceShowR
     )
 
 
-def get_form_data(db: Session, performance_id: int) -> PerformanceFormData:
+def get_form_data(db: Session, performance_id: uuid.UUID) -> PerformanceFormData:
     performance = _get_or_404(db, performance_id)
     _ensure_not_past(performance)
     ordinariumwork = db.execute(
@@ -874,7 +883,7 @@ def create_performance(db: Session, data: PerformanceRequest) -> PerformanceResp
 
 
 def update_performance(
-    db: Session, performance_id: int, data: PerformanceRequest
+    db: Session, performance_id: uuid.UUID, data: PerformanceRequest
 ) -> PerformanceResponse:
     performance = _get_or_404(db, performance_id)
     _ensure_not_past(performance)
@@ -910,7 +919,7 @@ def update_performance(
     return _to_response(performance)
 
 
-def _has_bookings_or_requests(db: Session, performance_id: int) -> bool:
+def _has_bookings_or_requests(db: Session, performance_id: uuid.UUID) -> bool:
     """Mirrors Legacy's `Performance::$dependencies = ['bookings',
     'bookingrequests']` -- queries the Booking/BookingRequest models
     directly (not booking_service) since that's all this needs, avoiding
@@ -931,7 +940,7 @@ def _has_bookings_or_requests(db: Session, performance_id: int) -> bool:
     return request_count > 0
 
 
-def delete_performance(db: Session, performance_id: int) -> None:
+def delete_performance(db: Session, performance_id: uuid.UUID) -> None:
     """Deleting the row alone is enough: `performance_positions`/
     `performance_proprium`/`performance_rehearsals`.performance_id are all
     ON DELETE CASCADE foreign keys, so the database removes this

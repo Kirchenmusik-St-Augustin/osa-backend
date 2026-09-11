@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -52,7 +53,7 @@ def create_propriumwork(
 
 @propriumwork_router.get("/{propriumwork_id}")
 def get_propriumwork(
-    propriumwork_id: int,
+    propriumwork_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> PropriumworkResponse:
@@ -66,7 +67,7 @@ def get_propriumwork(
 
 @propriumwork_router.put("/{propriumwork_id}")
 def update_propriumwork(
-    propriumwork_id: int,
+    propriumwork_id: uuid.UUID,
     data: PropriumworkRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
@@ -86,7 +87,7 @@ def update_propriumwork(
 
 @propriumwork_router.delete("/{propriumwork_id}")
 def delete_propriumwork(
-    propriumwork_id: int,
+    propriumwork_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:

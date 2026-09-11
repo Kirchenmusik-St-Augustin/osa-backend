@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class PerformanceRehearsal(Base):
@@ -27,8 +29,8 @@ class PerformanceRehearsal(Base):
     __tablename__ = "performance_rehearsals"
     __table_args__ = (UniqueConstraint("performance_id", "schedule"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = uuid_pk()
+    performance_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("performances.id", ondelete="CASCADE")
     )
     schedule: Mapped[datetime] = mapped_column(DateTime())

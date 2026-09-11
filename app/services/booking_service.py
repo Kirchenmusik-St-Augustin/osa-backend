@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -79,7 +80,9 @@ from app.services.user_position_service import (
 # position_kwargs()/position_key() (construction/key-extraction) for the
 # query-filter use case, which needs the actual InstrumentedAttribute, not
 # just a column name string.
-_BOOKING_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+_BOOKING_POSITION_COLUMNS: dict[
+    PositionType, InstrumentedAttribute[uuid.UUID | None]
+] = {
     "instruments": Booking.instrument_id,
     "voices": Booking.voice_id,
     "choirjobs": Booking.choirjob_id,
@@ -89,7 +92,7 @@ _BOOKING_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]]
 # works with, decoupled from the CastMemberInput/-Output Pydantic schemas
 # that only exist at the HTTP boundary (reconcile_setup_change and
 # cancel_auth_user_booking build these from ORM rows, not request bodies).
-CastEntry = tuple[int, int]
+CastEntry = tuple[uuid.UUID, int]
 
 # Fixed business constants from Legacy's config/osa.php ("billing" section)
 # -- not user-editable Settings fields, same reasoning as
@@ -130,7 +133,7 @@ class BookedOrStandbyCanceledNotification:
 # --- shared helpers ----------------------------------------------------------
 
 
-def _get_performance_or_404(db: Session, performance_id: int) -> Performance:
+def _get_performance_or_404(db: Session, performance_id: uuid.UUID) -> Performance:
     result = db.execute(select(Performance).where(Performance.id == performance_id))
     performance = result.scalar_one_or_none()
     if performance is None:
@@ -143,7 +146,9 @@ def _ensure_not_past(performance: Performance) -> None:
         raise PerformanceInPastError
 
 
-def _setup_position_ids(setup: PerformanceSetupOutput) -> dict[PositionType, set[int]]:
+def _setup_position_ids(
+    setup: PerformanceSetupOutput,
+) -> dict[PositionType, set[uuid.UUID]]:
     return {
         "instruments": {item.id for item in setup.instruments},
         "voices": {item.id for item in setup.voices},
@@ -151,7 +156,7 @@ def _setup_position_ids(setup: PerformanceSetupOutput) -> dict[PositionType, set
     }
 
 
-def _users_by_id(db: Session, user_ids: set[int]) -> dict[int, User]:
+def _users_by_id(db: Session, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, User]:
     """Includes soft-deleted users -- for displaying an EXISTING booking's/
     request's user, which must never crash on a deactivated account
     (Schritt-5 withTrashed()-consistency decision, applied here to every
@@ -162,7 +167,7 @@ def _users_by_id(db: Session, user_ids: set[int]) -> dict[int, User]:
     return {user.id: user for user in rows}
 
 
-def _active_users_by_id(db: Session, user_ids: set[int]) -> dict[int, User]:
+def _active_users_by_id(db: Session, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, User]:
     """Excludes soft-deleted users -- for NEW-booking candidate/suggestion
     lists (staff() bookable, popularBookings(), notbooked()'s GET side),
     matching Legacy's own relation scoping there (no withTrashed() call)."""
@@ -176,7 +181,9 @@ def _active_users_by_id(db: Session, user_ids: set[int]) -> dict[int, User]:
     return {user.id: user for user in rows}
 
 
-def _primary_voice_by_user(db: Session, user_ids: set[int]) -> dict[int, Voice]:
+def _primary_voice_by_user(
+    db: Session, user_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, Voice]:
     """Each user's lowest-`Voice.order` assigned Voice (their "primary"
     voice for choirjob auto-sort) via UserPosition -- N+1-safe: exactly one
     UserPosition query + one Voice query, regardless of how many user_ids
@@ -187,7 +194,7 @@ def _primary_voice_by_user(db: Session, user_ids: set[int]) -> dict[int, Voice]:
     `.order_by(Voice.order, Voice.id)` canonical-ordering idiom."""
     if not user_ids:
         return {}
-    voice_ids_by_user: dict[int, set[int]] = {}
+    voice_ids_by_user: dict[uuid.UUID, set[uuid.UUID]] = {}
     rows = db.execute(
         select(UserPosition.user_id, UserPosition.voice_id).where(
             UserPosition.user_id.in_(user_ids),
@@ -195,7 +202,7 @@ def _primary_voice_by_user(db: Session, user_ids: set[int]) -> dict[int, Voice]:
         )
     ).all()
     for user_id, voice_id in rows:
-        # voice_id is statically `int | None` (the WHERE clause's
+        # voice_id is statically `uuid.UUID | None` (the WHERE clause's
         # `is_not(None)` is a runtime-only guarantee, not one the type
         # checker can see through) -- narrow explicitly rather than lean on
         # a redundant-in-practice branch never actually taken.
@@ -225,7 +232,9 @@ def _primary_voice_by_user(db: Session, user_ids: set[int]) -> dict[int, Voice]:
 
 
 def _choirjob_voice_fields(
-    position_type: PositionType, user_id: int, primary_voice_by_user: dict[int, Voice]
+    position_type: PositionType,
+    user_id: uuid.UUID,
+    primary_voice_by_user: dict[uuid.UUID, Voice],
 ) -> tuple[str | None, int | None]:
     """Voice fields only ever populated for choirjobs -- instruments/voices
     cast members and candidates keep both fields None."""
@@ -242,10 +251,10 @@ def _display_name(user: User | None) -> str:
 
 
 def _position_names_batch(
-    db: Session, keys: set[tuple[PositionType, int]]
-) -> dict[tuple[PositionType, int], str]:
-    result: dict[tuple[PositionType, int], str] = {}
-    ids_by_type: dict[PositionType, set[int]] = {}
+    db: Session, keys: set[tuple[PositionType, uuid.UUID]]
+) -> dict[tuple[PositionType, uuid.UUID], str]:
+    result: dict[tuple[PositionType, uuid.UUID], str] = {}
+    ids_by_type: dict[PositionType, set[uuid.UUID]] = {}
     for position_type, position_id in keys:
         ids_by_type.setdefault(position_type, set()).add(position_id)
     for position_type, ids in ids_by_type.items():
@@ -257,8 +266,8 @@ def _position_names_batch(
 
 
 def _quantities_for_performance(
-    db: Session, performance_id: int
-) -> dict[tuple[PositionType, int], int]:
+    db: Session, performance_id: uuid.UUID
+) -> dict[tuple[PositionType, uuid.UUID], int]:
     rows = (
         db.execute(
             select(PerformancePosition).where(
@@ -294,7 +303,7 @@ def _to_short_output(
 def user_booking_status(
     db: Session,
     performance: Performance,
-    user_id: int,
+    user_id: uuid.UUID,
     *,
     keep_past_status: bool = False,
 ) -> BookingStatusOutput:
@@ -304,7 +313,7 @@ def user_booking_status(
 
 
 def get_my_booking_status(
-    db: Session, performance_id: int, user_id: int
+    db: Session, performance_id: uuid.UUID, user_id: uuid.UUID
 ) -> BookingStatusOutput:
     """Public entry point for `GET /performances/{id}/my-booking-status` --
     deliberately its own small endpoint+service function (not a retrofit of
@@ -320,10 +329,10 @@ def get_my_booking_status(
 def user_booking_status_batch(
     db: Session,
     performance: Performance,
-    user_ids: list[int],
+    user_ids: list[uuid.UUID],
     *,
     keep_past_status: bool = False,
-) -> dict[int, BookingStatusOutput]:
+) -> dict[uuid.UUID, BookingStatusOutput]:
     """N+1-safe: a fixed, small number of queries regardless of how many
     user_ids are passed in -- mirrors Performance::userBookingStatus()
     called once per user in Legacy's requestsAndBookings(), but without
@@ -340,7 +349,7 @@ def user_booking_status_batch(
         .scalars()
         .all()
     )
-    user_position_ids: dict[int, dict[PositionType, set[int]]] = {
+    user_position_ids: dict[uuid.UUID, dict[PositionType, set[uuid.UUID]]] = {
         user_id: {position_type: set() for position_type in POSITION_TYPES}
         for user_id in user_ids
     }
@@ -376,7 +385,7 @@ def user_booking_status_batch(
         db, {position_key(booking) for booking in bookings}
     )
 
-    result: dict[int, BookingStatusOutput] = {}
+    result: dict[uuid.UUID, BookingStatusOutput] = {}
     for user_id in user_ids:
         if not is_bookable(user_position_ids[user_id], setup_ids):
             result[user_id] = BookingStatusOutput(status=0)
@@ -417,10 +426,10 @@ def user_booking_status_batch(
 def user_booking_status_for_performances(
     db: Session,
     performances: list[Performance],
-    user_id: int,
+    user_id: uuid.UUID,
     *,
     keep_past_status: bool = False,
-) -> dict[int, BookingStatusOutput]:
+) -> dict[uuid.UUID, BookingStatusOutput]:
     """N+1-safe variant of user_booking_status_batch() for the other axis:
     ONE user across MANY performances -- what the calendar list needs for
     its self-service badge/trigger on every row. Legacy's own equivalent
@@ -438,7 +447,7 @@ def user_booking_status_for_performances(
     if not performances:
         return {}
 
-    result: dict[int, BookingStatusOutput] = {
+    result: dict[uuid.UUID, BookingStatusOutput] = {
         performance.id: BookingStatusOutput(status=0) for performance in performances
     }
     eligible_ids = [
@@ -458,13 +467,13 @@ def user_booking_status_for_performances(
         .scalars()
         .all()
     )
-    setup_ids_by_performance: dict[int, dict[PositionType, set[int]]] = {
+    setup_ids_by_performance: dict[uuid.UUID, dict[PositionType, set[uuid.UUID]]] = {
         performance_id: {position_type: set() for position_type in POSITION_TYPES}
         for performance_id in eligible_ids
     }
-    quantity_by_performance: dict[int, dict[tuple[PositionType, int], int]] = {
-        performance_id: {} for performance_id in eligible_ids
-    }
+    quantity_by_performance: dict[
+        uuid.UUID, dict[tuple[PositionType, uuid.UUID], int]
+    ] = {performance_id: {} for performance_id in eligible_ids}
     for row in setup_rows:
         row_key = position_key(row)
         setup_ids_by_performance[row.performance_id][row_key[0]].add(row_key[1])
@@ -475,7 +484,7 @@ def user_booking_status_for_performances(
         .scalars()
         .all()
     )
-    user_position_ids: dict[PositionType, set[int]] = {
+    user_position_ids: dict[PositionType, set[uuid.UUID]] = {
         position_type: set() for position_type in POSITION_TYPES
     }
     for user_position in user_positions:
@@ -524,14 +533,14 @@ def user_booking_status_for_performances(
 
 
 def _resolve_calendar_status(
-    performance_id: int,
+    performance_id: uuid.UUID,
     *,
-    user_position_ids: dict[PositionType, set[int]],
-    setup_ids_by_performance: dict[int, dict[PositionType, set[int]]],
-    quantity_by_performance: dict[int, dict[tuple[PositionType, int], int]],
-    bookings_by_performance: dict[int, Booking],
-    requests_by_performance: dict[int, BookingRequest],
-    name_by_key: dict[tuple[PositionType, int], str],
+    user_position_ids: dict[PositionType, set[uuid.UUID]],
+    setup_ids_by_performance: dict[uuid.UUID, dict[PositionType, set[uuid.UUID]]],
+    quantity_by_performance: dict[uuid.UUID, dict[tuple[PositionType, uuid.UUID], int]],
+    bookings_by_performance: dict[uuid.UUID, Booking],
+    requests_by_performance: dict[uuid.UUID, BookingRequest],
+    name_by_key: dict[tuple[PositionType, uuid.UUID], str],
 ) -> BookingStatusOutput:
     """Pure per-row decision extracted from user_booking_status_for_
     performances() -- same branching as user_booking_status_batch()'s inline
@@ -583,7 +592,7 @@ def _get_cast_form_data(
         .scalars()
         .all()
     )
-    bookings_by_position: dict[tuple[PositionType, int], list[Booking]] = {}
+    bookings_by_position: dict[tuple[PositionType, uuid.UUID], list[Booking]] = {}
     for booking in bookings:
         bookings_by_position.setdefault(position_key(booking), []).append(booking)
     users_by_id = _users_by_id(db, {booking.user_id for booking in bookings})
@@ -653,18 +662,18 @@ def _get_cast_form_data(
 def _get_staff(
     db: Session, performance: Performance, setup: PerformanceSetupOutput
 ) -> StaffSectionOutput:
-    keys: dict[PositionType, set[int]] = {
+    keys: dict[PositionType, set[uuid.UUID]] = {
         "instruments": {item.id for item in setup.instruments},
         "voices": {item.id for item in setup.voices},
         "choirjobs": {item.id for item in setup.choirjobs},
     }
     qualified = get_qualified_user_ids_batch(db, keys)
-    all_user_ids: set[int] = set()
+    all_user_ids: set[uuid.UUID] = set()
     for ids in qualified.values():
         all_user_ids |= ids
     users_by_id = _active_users_by_id(db, all_user_ids)
 
-    choirjob_user_ids: set[int] = set()
+    choirjob_user_ids: set[uuid.UUID] = set()
     for item in setup.choirjobs:
         choirjob_user_ids |= qualified.get(("choirjobs", item.id), set())
     primary_voice_by_user = _primary_voice_by_user(db, choirjob_user_ids)
@@ -733,9 +742,9 @@ def _get_staff(
 
 def _popular_for_position(
     db: Session,
-    performance_ids: list[int],
+    performance_ids: list[uuid.UUID],
     position_type: PositionType,
-    position_id: int,
+    position_id: uuid.UUID,
 ) -> PopularItemOutput:
     rows = db.execute(
         # Booking.id, not created_at/updated_at: a Booking row is always
@@ -748,10 +757,14 @@ def _popular_for_position(
         # identical created_at value, which loses "who was booked most
         # recently" whenever several bookings happen close together (a
         # single Cast-page save iterates multiple positions in one
-        # transaction). The auto-increment id is a strictly monotonic,
-        # timestamp-independent stand-in for insertion order and is never
-        # NULL, so it sorts "most recently booked" correctly regardless
-        # of how many bookings landed in the same transaction.
+        # transaction). Booking.id is UUIDv7 -- time-ordered with real
+        # sub-millisecond precision (verified: consecutive uuidv7() calls
+        # within one statement come back in strict generation order), so
+        # it is still a valid, timestamp-independent stand-in for
+        # insertion order and is never NULL, sorting "most recently
+        # booked" correctly regardless of how many bookings landed in the
+        # same transaction -- the same property the previous
+        # autoincrement-integer id gave, just derived differently.
         select(Booking.id, Booking.user_id, Performance.schedule)
         .join(Performance, Performance.id == Booking.performance_id)
         .where(
@@ -764,7 +777,7 @@ def _popular_for_position(
 
     users_by_id = _active_users_by_id(db, {row.user_id for row in rows})
 
-    counts: dict[int, int] = {}
+    counts: dict[uuid.UUID, int] = {}
     for row in rows:
         if row.user_id in users_by_id:
             counts[row.user_id] = counts.get(row.user_id, 0) + 1
@@ -776,7 +789,7 @@ def _popular_for_position(
         for uid in frequent_ids
     ]
 
-    seen: set[int] = set()
+    seen: set[uuid.UUID] = set()
     recent: list[PopularRecentUserOutput] = []
     for row in sorted(rows, key=lambda r: r.id, reverse=True):
         if row.user_id in seen or row.user_id not in users_by_id:
@@ -815,8 +828,8 @@ def _get_popular(db: Session, performance: Performance) -> PopularSectionOutput:
         .all()
     )
 
-    instruments_popular: dict[int, PopularItemOutput] = {}
-    voices_popular: dict[int, PopularItemOutput] = {}
+    instruments_popular: dict[uuid.UUID, PopularItemOutput] = {}
+    voices_popular: dict[uuid.UUID, PopularItemOutput] = {}
     if past_performance_ids:
         for item in ow_setup.instruments:
             instruments_popular[item.id] = _popular_for_position(
@@ -832,7 +845,9 @@ def _get_popular(db: Session, performance: Performance) -> PopularSectionOutput:
     )
 
 
-def get_cast_page(db: Session, performance_id: int) -> PerformanceCastPageResponse:
+def get_cast_page(
+    db: Session, performance_id: uuid.UUID
+) -> PerformanceCastPageResponse:
     performance = _get_performance_or_404(db, performance_id)
     _ensure_not_past(performance)
     detail = performance_service.get_performance_detail(db, performance_id)
@@ -865,12 +880,12 @@ def get_cast_page(db: Session, performance_id: int) -> PerformanceCastPageRespon
 
 def _booking_log(
     db: Session,
-    performance_id: int,
+    performance_id: uuid.UUID,
     *,
-    user_id: int,
+    user_id: uuid.UUID,
     booking_type: Literal["book", "unbook"],
     position_type: PositionType,
-    position_id: int,
+    position_id: uuid.UUID,
     fee: int,
 ) -> None:
     db.add(
@@ -889,7 +904,7 @@ def _diff_cast_transitions(
     new_cast: list[CastEntry],
     quantity: int,
     old_quantity: int | None,
-) -> list[tuple[int, Literal["book", "unbook"], int]]:
+) -> list[tuple[uuid.UUID, Literal["book", "unbook"], int]]:
     """Pure decision logic behind Performance::saveCastItem()'s book/unbook
     log entries -- deliberately separated from _save_cast_item's DB writes
     so both halves stay independently readable (and this half independently
@@ -897,7 +912,7 @@ def _diff_cast_transitions(
     old_ids = [user_id for user_id, _fee in old_cast]
     new_ids = [user_id for user_id, _fee in new_cast]
     reference_quantity = old_quantity if old_quantity is not None else quantity
-    transitions: list[tuple[int, Literal["book", "unbook"], int]] = []
+    transitions: list[tuple[uuid.UUID, Literal["book", "unbook"], int]] = []
 
     # 1. entries that dropped out entirely
     for user_id, fee in old_cast:
@@ -925,9 +940,9 @@ def _diff_cast_transitions(
 
 def _save_cast_item(
     db: Session,
-    performance_id: int,
+    performance_id: uuid.UUID,
     position_type: PositionType,
-    position_id: int,
+    position_id: uuid.UUID,
     *,
     new_cast: list[CastEntry] | None,
     old_quantity: int | None,
@@ -1026,7 +1041,7 @@ def _apply_cast(
     performance: Performance,
     setup: PerformanceSetupOutput,
     cast_data: CastSectionInput,
-    old_quantities: dict[tuple[PositionType, int], int] | None = None,
+    old_quantities: dict[tuple[PositionType, uuid.UUID], int] | None = None,
 ) -> None:
     cast_groups: tuple[
         tuple[PositionType, list[PerformancePositionOutput], list[CastSetupItemInput]],
@@ -1060,7 +1075,9 @@ def _apply_cast(
             )
 
 
-def _apply_notbooked(db: Session, performance: Performance, ids: list[int]) -> None:
+def _apply_notbooked(
+    db: Session, performance: Performance, ids: list[uuid.UUID]
+) -> None:
     """Port of Performance::notbooked()'s SET branch -- MUST run after
     _apply_cast(), it reads `bookings` post-mutation to exclude anyone who
     ended up actually cast from the "rejected" list."""
@@ -1088,7 +1105,9 @@ def _apply_notbooked(db: Session, performance: Performance, ids: list[int]) -> N
         )
 
 
-def save_cast(db: Session, performance_id: int, data: CastSaveRequest) -> CastFormData:
+def save_cast(
+    db: Session, performance_id: uuid.UUID, data: CastSaveRequest
+) -> CastFormData:
     performance = _get_performance_or_404(db, performance_id)
     _ensure_not_past(performance)
     setup = performance_service.get_setup(db, performance_id)
@@ -1100,9 +1119,9 @@ def save_cast(db: Session, performance_id: int, data: CastSaveRequest) -> CastFo
 
 def reconcile_setup_change(
     db: Session,
-    performance_id: int,
-    removed_keys: set[tuple[PositionType, int]],
-    old_quantities: dict[tuple[PositionType, int], int],
+    performance_id: uuid.UUID,
+    removed_keys: set[tuple[PositionType, uuid.UUID]],
+    old_quantities: dict[tuple[PositionType, uuid.UUID], int],
 ) -> None:
     """Port of Performance::setup()'s cast-reconciliation step, called from
     performance_service.update_performance() right after `_sync_positions`
@@ -1187,7 +1206,9 @@ def _build_canceled_notification(
     )
 
 
-def cancel_auth_user_booking(db: Session, performance_id: int, user_id: int) -> None:
+def cancel_auth_user_booking(
+    db: Session, performance_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
     """Port of cancelAuthUserBooking() -- rebuilds the remaining cast list
     for the user's (former) position (without them) and re-runs it through
     _save_cast_item, which automatically promotes the next standby entry
@@ -1225,7 +1246,9 @@ def cancel_auth_user_booking(db: Session, performance_id: int, user_id: int) -> 
     )
 
 
-def _request_booking(db: Session, performance_id: int, user_id: int) -> None:
+def _request_booking(
+    db: Session, performance_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
     existing = db.execute(
         select(BookingRequest).where(
             BookingRequest.performance_id == performance_id,
@@ -1261,7 +1284,7 @@ def _cancel_booking_or_request(
 
 
 def change_user_request_status(
-    db: Session, performance_id: int, user: User
+    db: Session, performance_id: uuid.UUID, user: User
 ) -> tuple[BookingStatusOutput, BookedOrStandbyCanceledNotification | None]:
     """Port of PerformanceController::changeUserRequestStatus() -- takes no
     client-provided target status (unlike this plan's original draft
@@ -1387,7 +1410,7 @@ def _org_fee(instrument_count: int, choirjob_count: int) -> BillingOrgfeeOutput:
 
 
 def get_billing(
-    db: Session, performance_id: int, current_user: User
+    db: Session, performance_id: uuid.UUID, current_user: User
 ) -> PerformanceBillingResponse:
     """No past-lock -- Legacy's `billing` policy checks only the `billing`
     role, unlike `cast`/`maintain` (Schritt 6 plan, router table)."""
@@ -1437,7 +1460,7 @@ def get_billing(
 
 
 def get_requests_and_bookings(
-    db: Session, performance_id: int, current_user: User
+    db: Session, performance_id: uuid.UUID, current_user: User
 ) -> PerformanceRequestsAndBookingsResponse:
     performance = _get_performance_or_404(db, performance_id)
     _ensure_not_past(performance)
@@ -1461,8 +1484,8 @@ def get_requests_and_bookings(
         .scalars()
         .all()
     )
-    ordered_ids: list[int] = []
-    seen: set[int] = set()
+    ordered_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
     for user_id in booked_user_ids + requesting_user_ids:
         if user_id not in seen:
             seen.add(user_id)
@@ -1488,7 +1511,7 @@ def get_requests_and_bookings(
 
 
 def get_upcoming_requests_and_bookings_for_user(
-    db: Session, user_id: int, *, upcoming_only: bool = True
+    db: Session, user_id: uuid.UUID, *, upcoming_only: bool = True
 ) -> list[PerformanceShortOutput]:
     """1:1 Legacy's `User::requestsAndBookings($upcomingOnly, false)`: every
     Performance the user has either a confirmed Booking for, or (failing
@@ -1522,8 +1545,8 @@ def get_upcoming_requests_and_bookings_for_user(
         requested_query = requested_query.where(Performance.schedule >= now)
     booked_ids = list(db.execute(booked_query).scalars().all())
     requested_ids = list(db.execute(requested_query).scalars().all())
-    ordered_ids: list[int] = []
-    seen: set[int] = set()
+    ordered_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
     for performance_id in booked_ids + requested_ids:
         if performance_id not in seen:
             seen.add(performance_id)
@@ -1566,7 +1589,7 @@ def get_upcoming_requests_and_bookings_for_user(
 
 
 def get_message_to_cast_page(
-    db: Session, performance_id: int, current_user: User
+    db: Session, performance_id: uuid.UUID, current_user: User
 ) -> PerformanceMessageToCastResponse:
     """No past-lock -- Legacy's MessageToCastRequest authorizes against
     `Performance::class` (no instance), so `maintain`'s object-level
@@ -1587,8 +1610,8 @@ def get_message_to_cast_page(
 def _ordered_recipient_ids(
     booked_cast: CastSectionOutput,
     position_type: PositionType | None,
-    position_id: int | None,
-) -> list[int]:
+    position_id: uuid.UUID | None,
+) -> list[uuid.UUID]:
     """Legacy order: instruments, then voices, then choirjobs -- each
     item's cast is already sorted by position order + booking order (see
     Performance::cast()/bookedCast())."""
@@ -1597,8 +1620,8 @@ def _ordered_recipient_ids(
         item = next((entry for entry in section if entry.id == position_id), None)
         return [member.id for member in item.cast] if item is not None else []
 
-    ordered_ids: list[int] = []
-    seen: set[int] = set()
+    ordered_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
     for section in (booked_cast.instruments, booked_cast.voices, booked_cast.choirjobs):
         for item in section:
             for member in item.cast:
@@ -1611,9 +1634,9 @@ def _ordered_recipient_ids(
 
 def get_message_recipients(
     db: Session,
-    performance_id: int,
+    performance_id: uuid.UUID,
     position_type: PositionType | None,
-    position_id: int | None,
+    position_id: uuid.UUID | None,
 ) -> list[MessageRecipientOutput]:
     performance = _get_performance_or_404(db, performance_id)
     setup = performance_service.get_setup(db, performance_id)
@@ -1636,7 +1659,7 @@ def get_message_recipients(
 
 
 def send_message_to_cast(
-    db: Session, performance_id: int, sender: User, data: SendMessageRequest
+    db: Session, performance_id: uuid.UUID, sender: User, data: SendMessageRequest
 ) -> tuple[list[str], str, str]:
     """The MessageToCast send bugfix -- Legacy's "Nachricht senden" button
     posted to a GET-only route (guaranteed HTTP 405, the feature was

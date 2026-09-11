@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
@@ -35,21 +36,23 @@ def ensure_scheme(url: str) -> str:
     return url
 
 
-def _path_taken(db: Session, path: str, exclude_id: int | None) -> bool:
+def _path_taken(db: Session, path: str, exclude_id: uuid.UUID | None) -> bool:
     stmt = select(Shorturl.id).where(Shorturl.path == path)
     if exclude_id is not None:
         stmt = stmt.where(Shorturl.id != exclude_id)
     return db.execute(stmt).scalar_one_or_none() is not None
 
 
-def _validate(db: Session, path: str, exclude_id: int | None) -> list[tuple[str, str]]:
+def _validate(
+    db: Session, path: str, exclude_id: uuid.UUID | None
+) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
     if _path_taken(db, path, exclude_id):
         errors.append(("path", "Der Pfad ist bereits vergeben."))
     return errors
 
 
-def _get_or_404(db: Session, shorturl_id: int) -> Shorturl:
+def _get_or_404(db: Session, shorturl_id: uuid.UUID) -> Shorturl:
     result = db.execute(select(Shorturl).where(Shorturl.id == shorturl_id))
     shorturl = result.scalar_one_or_none()
     if shorturl is None:
@@ -104,7 +107,7 @@ def create_shorturl(db: Session, data: ShorturlRequest) -> ShorturlResponse:
 
 
 def update_shorturl(
-    db: Session, shorturl_id: int, data: ShorturlRequest
+    db: Session, shorturl_id: uuid.UUID, data: ShorturlRequest
 ) -> ShorturlResponse:
     shorturl = _get_or_404(db, shorturl_id)
     path = data.path.lstrip("/")
@@ -118,7 +121,7 @@ def update_shorturl(
     return _to_response(shorturl)
 
 
-def delete_shorturl(db: Session, shorturl_id: int) -> None:
+def delete_shorturl(db: Session, shorturl_id: uuid.UUID) -> None:
     # No has_dependencies check -- Legacy's own DestroyRequest has an empty
     # rules() too, no other table references shorturls.id.
     shorturl = _get_or_404(db, shorturl_id)

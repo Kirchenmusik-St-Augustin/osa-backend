@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, UniqueConstraint, func
@@ -5,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
 from app.db.models.role import Role
+from app.db.uuid_pk import uuid_pk
 
 
 class User(Base):
@@ -25,7 +27,7 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (UniqueConstraint("surname", "givenname"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     surname: Mapped[str]
     givenname: Mapped[str]
     email: Mapped[str | None] = mapped_column(unique=True)

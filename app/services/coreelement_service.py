@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -25,13 +26,15 @@ CoreelementModel = Instrument | Voice | Choirjob | Location | Propriumelement | 
 # two FK columns corresponds to a given position_type -- OrdinariumworkPosition
 # structurally has no choirjob_id column at all (see its own model docstring),
 # so it is a 2-entry table, not 3.
-_PERFORMANCE_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+_PERFORMANCE_POSITION_COLUMNS: dict[
+    PositionType, InstrumentedAttribute[uuid.UUID | None]
+] = {
     "instruments": PerformancePosition.instrument_id,
     "voices": PerformancePosition.voice_id,
     "choirjobs": PerformancePosition.choirjob_id,
 }
 _ORDINARIUMWORK_POSITION_COLUMNS: dict[
-    Literal["instruments", "voices"], InstrumentedAttribute[int | None]
+    Literal["instruments", "voices"], InstrumentedAttribute[uuid.UUID | None]
 ] = {
     "instruments": OrdinariumworkPosition.instrument_id,
     "voices": OrdinariumworkPosition.voice_id,
@@ -192,7 +195,7 @@ def _value_taken(
     model: type[CoreelementModel],
     field_name: str,
     value: str,
-    exclude_id: int | None,
+    exclude_id: uuid.UUID | None,
 ) -> bool:
     column = getattr(model, field_name)
     stmt = select(model.id).where(column == value)
@@ -202,7 +205,7 @@ def _value_taken(
 
 
 def _validate_name(
-    db: Session, config: CoreelementTypeConfig, name: str, exclude_id: int | None
+    db: Session, config: CoreelementTypeConfig, name: str, exclude_id: uuid.UUID | None
 ) -> tuple[str, str] | None:
     if not 3 <= len(name) <= config.name_max_length:
         return (
@@ -219,7 +222,7 @@ def _validate_extra_field(
     config: CoreelementTypeConfig,
     spec: FieldSpec,
     value: str | None,
-    exclude_id: int | None,
+    exclude_id: uuid.UUID | None,
 ) -> tuple[str, str] | None:
     if value is None:
         return spec.name, "Dieses Feld ist erforderlich."
@@ -252,7 +255,7 @@ def _validate(
     db: Session,
     type_: CoreelementType,
     data: CoreelementRequest,
-    exclude_id: int | None,
+    exclude_id: uuid.UUID | None,
 ) -> list[tuple[str, str]]:
     config = COREELEMENT_CONFIG[type_]
     errors: list[tuple[str, str]] = []
@@ -274,7 +277,7 @@ def _validate(
 
 
 def _get_or_404(
-    db: Session, model: type[CoreelementModel], element_id: int
+    db: Session, model: type[CoreelementModel], element_id: uuid.UUID
 ) -> CoreelementModel:
     result = db.execute(select(model).where(model.id == element_id))
     obj = result.scalar_one_or_none()
@@ -335,7 +338,7 @@ def create_coreelement(
 
 
 def update_coreelement(
-    db: Session, type_: CoreelementType, element_id: int, data: CoreelementRequest
+    db: Session, type_: CoreelementType, element_id: uuid.UUID, data: CoreelementRequest
 ) -> CoreelementModel:
     config = COREELEMENT_CONFIG[type_]
     obj = _get_or_404(db, config.model, element_id)
@@ -357,7 +360,9 @@ def update_coreelement(
     return obj
 
 
-def delete_coreelement(db: Session, type_: CoreelementType, element_id: int) -> None:
+def delete_coreelement(
+    db: Session, type_: CoreelementType, element_id: uuid.UUID
+) -> None:
     config = COREELEMENT_CONFIG[type_]
     obj = _get_or_404(db, config.model, element_id)
     if config.has_dependencies is not None and config.has_dependencies(db, obj):
@@ -369,7 +374,7 @@ def delete_coreelement(db: Session, type_: CoreelementType, element_id: int) -> 
 def move_coreelement(
     db: Session,
     type_: CoreelementType,
-    element_id: int,
+    element_id: uuid.UUID,
     direction: Literal["up", "down"],
 ) -> Sequence[CoreelementModel]:
     """Two-row order swap, replacing Legacy's HasCoreelementFeatures::move()

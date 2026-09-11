@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, datetime
 from typing import cast, overload
 
@@ -91,7 +92,7 @@ def should_skip(path: str, *, skip_header_present: bool) -> bool:
     return skip_header_present or path in _SKIP_PATHS
 
 
-def _get_or_create_client_user_agent(db: Session, user_agent_string: str) -> int:
+def _get_or_create_client_user_agent(db: Session, user_agent_string: str) -> uuid.UUID:
     result = db.execute(
         select(ClientUserAgent.id).where(ClientUserAgent.string == user_agent_string)
     )
@@ -109,7 +110,7 @@ def record_request(
     *,
     client_ip: str,
     client_ips: list[str],
-    user_id: int | None,
+    user_id: uuid.UUID | None,
     user_agent_string: str | None,
     request_method: str,
     request_path: str,
@@ -187,7 +188,7 @@ def list_days_with_users_for_month(
         return []
 
     tz = get_app_timezone()
-    user_ids_by_day: dict[date, set[int]] = {}
+    user_ids_by_day: dict[date, set[uuid.UUID]] = {}
     for raw_created_at, raw_user_id in rows:
         # Narrows the ORM columns' nullable static type (both Mapped[T | None]
         # at the model level) -- not a defensive runtime branch: the WHERE
@@ -196,7 +197,7 @@ def list_days_with_users_for_month(
         # filter; user_id is filtered via is_not(None)), so an `if ... is
         # None: continue` here would be unreachable dead code.
         created_at = cast("datetime", raw_created_at)
-        user_id = cast("int", raw_user_id)
+        user_id = cast("uuid.UUID", raw_user_id)
         local_day = ensure_tz_aware(created_at).astimezone(tz).date()
         user_ids_by_day.setdefault(local_day, set()).add(user_id)
 
@@ -231,7 +232,7 @@ def list_days_with_users_for_month(
 
 
 def list_entries_for_user_day(
-    db: Session, user_id: int, day: date
+    db: Session, user_id: uuid.UUID, day: date
 ) -> RequestLogUserDetailOutput:
     user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
     if user is None:
@@ -266,7 +267,7 @@ def list_entries_for_user_day(
     )
 
 
-def get(db: Session, request_log_id: int) -> RequestLogShowOutput:
+def get(db: Session, request_log_id: uuid.UUID) -> RequestLogShowOutput:
     """1:1 Legacy's `RequestLog\\Show` resource. `user_name` is resolved via
     a PLAIN (non-withTrashed) User lookup -- a real, deliberate asymmetry
     vs. list_days_with_users_for_month()/list_entries_for_user_day() above:

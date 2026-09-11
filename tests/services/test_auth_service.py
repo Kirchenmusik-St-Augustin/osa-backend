@@ -6,6 +6,7 @@ import jwt
 import pytest
 from sqlalchemy import select
 
+from app.core import security
 from app.core.security import (
     ALGORITHM,
     SECRET_KEY,
@@ -479,10 +480,27 @@ def test_verify_email_is_idempotent_on_already_verified_user(db_session, make_us
 
 
 def test_verify_email_rejects_unknown_user_id(db_session):
-    token = create_email_verification_token(999_999, "nobody@example.test")
+    token = create_email_verification_token(uuid.uuid4(), "nobody@example.test")
 
     with pytest.raises(ValueError, match="ungültig oder abgelaufen"):
         auth_service.verify_email(db_session, token)
+
+
+def test_verify_email_rejects_pre_migration_integer_user_id_token(db_session):
+    """A token issued before the primary-key migration carries a plain
+    integer user_id -- must surface as the same generic invalid-link
+    error a user sees for any other bad link, not an unhandled
+    exception (see the token's 60-minute TTL: a link emailed shortly
+    before a cutover can still be clicked shortly after it)."""
+    legacy_token = security._email_verification_serializer.dumps(
+        {
+            "user_id": "42",
+            "email_hash": security.hash_email_for_verification("nobody@example.test"),
+        }
+    )
+
+    with pytest.raises(ValueError, match="ungültig oder abgelaufen"):
+        auth_service.verify_email(db_session, legacy_token)
 
 
 def test_verify_email_rejects_token_after_email_changed(db_session, make_user):
@@ -809,4 +827,4 @@ def test_unlink_oauth_binding_rejects_unknown_id(db_session, make_user):
     user = make_user()
 
     with pytest.raises(OauthBindingNotFoundError):
-        auth_service.unlink_oauth_binding(db_session, 999_999, user.id)
+        auth_service.unlink_oauth_binding(db_session, uuid.uuid4(), user.id)

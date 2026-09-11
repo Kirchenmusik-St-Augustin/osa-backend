@@ -93,30 +93,48 @@ def test_parse_refresh_cookie_rejects_non_uuid_session_id():
 
 
 def test_email_verification_token_roundtrip():
-    token = security.create_email_verification_token(42, "user@example.test")
+    user_id = uuid.uuid4()
+    token = security.create_email_verification_token(user_id, "user@example.test")
 
-    user_id, email_hash = security.decode_email_verification_token(
+    decoded_user_id, email_hash = security.decode_email_verification_token(
         token, max_age_seconds=3600
     )
 
-    assert user_id == 42
+    assert decoded_user_id == user_id
     assert email_hash == security.hash_email_for_verification("user@example.test")
 
 
 def test_email_verification_token_rejects_expired_token():
-    token = security.create_email_verification_token(42, "user@example.test")
+    token = security.create_email_verification_token(uuid.uuid4(), "user@example.test")
 
     with pytest.raises(security.InvalidVerificationTokenError):
         security.decode_email_verification_token(token, max_age_seconds=-1)
 
 
 def test_email_verification_token_rejects_tampered_token():
-    token = security.create_email_verification_token(42, "user@example.test")
+    token = security.create_email_verification_token(uuid.uuid4(), "user@example.test")
 
     with pytest.raises(security.InvalidVerificationTokenError):
         security.decode_email_verification_token(
             token + "tampered", max_age_seconds=3600
         )
+
+
+def test_email_verification_token_rejects_pre_migration_integer_user_id():
+    """A token issued before the primary-key migration carries a plain
+    integer user_id string in its payload -- decode_email_verification_token
+    must reject that the same way as any other invalid link, not crash,
+    since a link emailed shortly before a cutover can still be clicked
+    shortly after it (see the token's 60-minute TTL)."""
+    legacy_token = security._email_verification_serializer.dumps(
+        {
+            "user_id": "42",
+            "email_hash": security.hash_email_for_verification("user@example.test"),
+        }
+    )
+
+    with pytest.raises(security.InvalidVerificationTokenError):
+        security.decode_email_verification_token(legacy_token, max_age_seconds=3600)
 
 
 def test_hash_email_for_verification_is_case_sensitive_and_deterministic():

@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
 from app.core.datetime_utils import UtcDatetime
@@ -87,7 +89,7 @@ class UserProfileResponse(BaseModel):
     Frontend-facing shape of "who am I": drives navbar display and
     permission-gated UI, since /auth/login itself returns only a JWT."""
 
-    id: int
+    id: uuid.UUID
     email: str
     email_verified_at: UtcDatetime | None
     surname: str

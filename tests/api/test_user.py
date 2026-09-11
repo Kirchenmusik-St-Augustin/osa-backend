@@ -173,7 +173,7 @@ class TestCrudRoundtrip:
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
         response = client.put(
-            "/users/999999",
+            f"/users/{uuid.uuid4()}",
             json={
                 "givenname": "Max",
                 "surname": _unique(),
@@ -191,7 +191,7 @@ class TestCrudRoundtrip:
 
     def test_delete_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.delete("/users/999999", headers=headers)
+        response = client.delete(f"/users/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
     def test_form_options_lists_choirjobs(self, client, make_user, db_session):
@@ -199,7 +199,7 @@ class TestCrudRoundtrip:
         headers = _auth_headers(client, make_user)
         response = client.get("/users/form-options", headers=headers)
         assert response.status_code == 200
-        assert choirjob.id in [item["id"] for item in response.json()["choirjobs"]]
+        assert str(choirjob.id) in [item["id"] for item in response.json()["choirjobs"]]
 
 
 class TestQuirks:
@@ -328,7 +328,9 @@ class TestNPlusOne:
 class TestRequestsAndBookings:
     def test_returns_404_for_unknown_user(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.get("/users/999999/requests-and-bookings", headers=headers)
+        response = client.get(
+            f"/users/{uuid.uuid4()}/requests-and-bookings", headers=headers
+        )
         assert response.status_code == 404
 
     def test_includes_past_performances_unlike_the_selfadmin_endpoint(
@@ -361,4 +363,4 @@ class TestRequestsAndBookings:
         )
 
         assert response.status_code == 200
-        assert [item["id"] for item in response.json()] == [performance.id]
+        assert [item["id"] for item in response.json()] == [str(performance.id)]

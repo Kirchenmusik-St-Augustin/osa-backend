@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import (
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 from app.db.models.position_columns_mixin import PositionColumns
+from app.db.uuid_pk import uuid_pk
 
 
 class Booking(PositionColumns, Base):
@@ -87,11 +89,13 @@ class Booking(PositionColumns, Base):
         Index("bookings_user_id_index", "user_id"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    performance_id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = uuid_pk()
+    performance_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("performances.id", ondelete="RESTRICT")
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     order: Mapped[int] = mapped_column("sort_order", default=0)
     fee: Mapped[int]
     created_at: Mapped[datetime | None] = mapped_column(

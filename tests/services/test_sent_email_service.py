@@ -114,4 +114,4 @@ class TestGet:
 
     def test_raises_not_found_for_unknown_id(self, db_session: Session):
         with pytest.raises(SentEmailNotFoundError):
-            sent_email_service.get(db_session, 999_999)
+            sent_email_service.get(db_session, uuid.uuid4())

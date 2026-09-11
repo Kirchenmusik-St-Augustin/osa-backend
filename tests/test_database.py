@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -15,7 +17,9 @@ def test_get_db_session_enforces_foreign_keys():
     )
     for session in get_db():
         with pytest.raises(IntegrityError, match="foreign key constraint"):
-            session.execute(insert_orphan, {"user_id": -1, "role_id": -1})
+            session.execute(
+                insert_orphan, {"user_id": uuid.uuid4(), "role_id": uuid.uuid4()}
+            )
         session.rollback()
         break
 

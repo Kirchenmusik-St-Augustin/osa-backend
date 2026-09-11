@@ -59,7 +59,7 @@ class TestSearchAndDeletedList:
             "/administrator/users/search", params={"q": marker}, headers=headers
         )
         assert response.status_code == 200
-        assert deleted_user.id in [item["id"] for item in response.json()]
+        assert str(deleted_user.id) in [item["id"] for item in response.json()]
 
     def test_deleted_list_only_shows_soft_deleted_users(
         self, client, make_user, db_session
@@ -72,7 +72,7 @@ class TestSearchAndDeletedList:
 
         response = client.get("/administrator/users/deleted", headers=headers)
         ids = [item["id"] for item in response.json()]
-        assert deleted_user.id in ids
+        assert str(deleted_user.id) in ids
         assert active.id not in ids
 
 
@@ -89,7 +89,7 @@ class TestShow:
 
     def test_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
-        response = client.get("/administrator/users/999999", headers=headers)
+        response = client.get(f"/administrator/users/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
 

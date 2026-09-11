@@ -1,3 +1,4 @@
+import uuid
 from typing import Literal
 
 from app.db.models.choirjob import Choirjob
@@ -33,7 +34,9 @@ _POSITION_COLUMN_NAMES: dict[PositionType, str] = {
 }
 
 
-def position_kwargs(position_type: PositionType, position_id: int) -> dict[str, int]:
+def position_kwargs(
+    position_type: PositionType, position_id: uuid.UUID
+) -> dict[str, uuid.UUID]:
     """Build the single-key {instrument_id|voice_id|choirjob_id: position_id}
     keyword-argument dict for constructing a row on one of the four tables
     mixing in PositionColumns, from a (position_type, position_id) pair --
@@ -41,7 +44,7 @@ def position_kwargs(position_type: PositionType, position_id: int) -> dict[str, 
     return {_POSITION_COLUMN_NAMES[position_type]: position_id}
 
 
-def position_key(row: PositionColumns) -> tuple[PositionType, int]:
+def position_key(row: PositionColumns) -> tuple[PositionType, uuid.UUID]:
     """Reconstruct the (position_type, position_id) pair from whichever of
     a PositionColumns row's three FK columns is populated -- the inverse of
     position_kwargs(), for call sites that used to read row.position_type/

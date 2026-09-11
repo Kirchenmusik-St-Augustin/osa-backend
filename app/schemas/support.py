@@ -1,13 +1,15 @@
+import uuid
+
 from pydantic import BaseModel, Field
 
-from app.schemas.base import StrictInputModel
+from app.schemas.base import LenientUuid, StrictInputModel
 
 
 class ContactUserOutput(BaseModel):
     """1:1 Legacy's `User\\Short` resource -- `has_email` mirrors
     `hasVerifiedEmail()`, not merely "an email is set"."""
 
-    id: int
+    id: uuid.UUID
     givenname: str
     surname: str
     has_email: bool
@@ -16,7 +18,7 @@ class ContactUserOutput(BaseModel):
 class RoleWithContactsOutput(BaseModel):
     """1:1 Legacy's `Role\\ShowWithUsers` resource."""
 
-    id: int
+    id: uuid.UUID
     name: str
     label: str
     description: str | None
@@ -30,5 +32,5 @@ class MessageToContactpersonRequest(StrictInputModel):
     support_service.send_message_to_contactperson's docstring for why that
     Legacy quirk is not worth replicating literally)."""
 
-    recipient_id: int
+    recipient_id: LenientUuid
     message: str = Field(min_length=3)

@@ -12,6 +12,7 @@ Schema comes from the real Alembic migrations (see conftest.py's
 session-scoped _create_schema fixture) -- these tests verify actual
 migration output, not just model intent."""
 
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -130,8 +131,8 @@ class TestMoneyCheckConstraints:
         db_session.add(
             Performance(
                 schedule=datetime(2027, 1, 1, 12, 0),  # noqa: DTZ001 -- naive on purpose
-                location_id=1,
-                ordinariumwork_id=1,
+                location_id=uuid.uuid4(),
+                ordinariumwork_id=uuid.uuid4(),
                 extracost_amount=-1,
             )
         )
@@ -248,8 +249,8 @@ class TestBookingTypeEnum:
         instrument = make_instrument()
         db_session.add(
             BookingLog(
-                performance_id=1,
-                user_id=1,
+                performance_id=uuid.uuid4(),
+                user_id=uuid.uuid4(),
                 booking_type="bogus",
                 instrument_id=instrument.id,
                 fee=0,
@@ -380,7 +381,7 @@ class TestPositionExclusiveColumns:
                 performance_id=performance.id,
                 user_id=user.id,
                 fee=0,
-                **{column: 999_999_999},
+                **{column: uuid.uuid4()},
             )
         )
         with pytest.raises(IntegrityError, match="foreign key constraint"):

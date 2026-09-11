@@ -81,11 +81,13 @@ class TestListAndShow:
 
         assert response.status_code == 200
         ids = [item["id"] for item in response.json()]
-        assert in_month.id in ids
+        assert str(in_month.id) in ids
 
     def test_show_returns_404_for_unknown_id(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
-        response = client.get("/administrator/sent-emails/999999", headers=headers)
+        response = client.get(
+            f"/administrator/sent-emails/{uuid.uuid4()}", headers=headers
+        )
         assert response.status_code == 404
 
     def test_show_returns_full_detail_including_from_field(

@@ -455,7 +455,7 @@ class TestListEntriesForUserDay:
     def test_raises_not_found_for_a_nonexistent_user(self, db_session: Session):
         with pytest.raises(RequestLogUserNotFoundError):
             request_log_service.list_entries_for_user_day(
-                db_session, 999_999, date(2026, 6, 10)
+                db_session, uuid.uuid4(), date(2026, 6, 10)
             )
 
     def test_buckets_an_entry_by_vienna_calendar_day_not_utc_calendar_day(
@@ -555,4 +555,4 @@ class TestGet:
 
     def test_raises_not_found_for_unknown_id(self, db_session: Session):
         with pytest.raises(RequestLogNotFoundError):
-            request_log_service.get(db_session, 999_999)
+            request_log_service.get(db_session, uuid.uuid4())

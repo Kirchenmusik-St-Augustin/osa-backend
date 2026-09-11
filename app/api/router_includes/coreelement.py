@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -90,7 +91,7 @@ def create_item(
 @coreelement_router.put("/{element_type}/{element_id}")
 def update_item(
     element_type: CoreelementType,
-    element_id: int,
+    element_id: uuid.UUID,
     data: CoreelementRequest,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
@@ -113,7 +114,7 @@ def update_item(
 @coreelement_router.delete("/{element_type}/{element_id}")
 def delete_item(
     element_type: CoreelementType,
-    element_id: int,
+    element_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> dict[str, str]:
@@ -133,7 +134,7 @@ def delete_item(
 @coreelement_router.post("/{element_type}/{element_id}/move/{direction}")
 def move_item(
     element_type: CoreelementType,
-    element_id: int,
+    element_id: uuid.UUID,
     direction: Literal["up", "down"],
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
