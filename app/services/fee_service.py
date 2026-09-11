@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,7 +21,7 @@ class FeeValidationError(Exception):
         super().__init__("Fee validation failed")
 
 
-def _name_taken(db: Session, name: str, exclude_id: int | None) -> bool:
+def _name_taken(db: Session, name: str, exclude_id: uuid.UUID | None) -> bool:
     stmt = select(Fee.id).where(Fee.name == name)
     if exclude_id is not None:
         stmt = stmt.where(Fee.id != exclude_id)
@@ -27,7 +29,7 @@ def _name_taken(db: Session, name: str, exclude_id: int | None) -> bool:
 
 
 def _validate(
-    db: Session, data: FeeRequest, exclude_id: int | None
+    db: Session, data: FeeRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
     if _name_taken(db, data.name.strip(), exclude_id):
@@ -35,7 +37,7 @@ def _validate(
     return errors
 
 
-def _get_or_404(db: Session, fee_id: int) -> Fee:
+def _get_or_404(db: Session, fee_id: uuid.UUID) -> Fee:
     result = db.execute(select(Fee).where(Fee.id == fee_id))
     fee = result.scalar_one_or_none()
     if fee is None:
@@ -65,7 +67,7 @@ def create_fee(db: Session, data: FeeRequest) -> FeeResponse:
     return _to_response(fee)
 
 
-def update_fee(db: Session, fee_id: int, data: FeeRequest) -> FeeResponse:
+def update_fee(db: Session, fee_id: uuid.UUID, data: FeeRequest) -> FeeResponse:
     fee = _get_or_404(db, fee_id)
     errors = _validate(db, data, exclude_id=fee_id)
     if errors:
@@ -77,7 +79,7 @@ def update_fee(db: Session, fee_id: int, data: FeeRequest) -> FeeResponse:
     return _to_response(fee)
 
 
-def delete_fee(db: Session, fee_id: int) -> None:
+def delete_fee(db: Session, fee_id: uuid.UUID) -> None:
     # No has_dependencies check -- Legacy's own DestroyRequest has an empty
     # rules() too, since bookings.fee/booking_logs.fee are plain integer
     # copies of a Fee's amount, never an FK to fees.id.

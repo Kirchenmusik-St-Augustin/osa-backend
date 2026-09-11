@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,7 +29,7 @@ def list_sent_emails(
 
 @sent_email_router.get("/{sent_email_id}")
 def get_sent_email(
-    sent_email_id: int,
+    sent_email_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _VIEW],
 ) -> SentEmailShowOutput:

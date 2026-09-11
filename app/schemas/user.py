@@ -1,25 +1,27 @@
+import uuid
+
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import StrictInputModel
+from app.schemas.base import LenientUuid, StrictInputModel
 from app.schemas.performance import PositionRefOutput
 from app.schemas.validators import PHONE_PATTERN
 
 
 class RoleRefOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     label: str
 
 
 class Oauth2BindingOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     provider: str
     remote_name: str
 
 
 class UserSearchResultOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     label: str
 
 
@@ -52,10 +54,10 @@ class UserRequest(StrictInputModel):
     email: EmailStr | None = Field(default=None, max_length=190)
     phone: str | None = None
     auth_locked: bool = False
-    instruments: list[int] = Field(default_factory=list)
-    voices: list[int] = Field(default_factory=list)
-    choirjobs: list[int] = Field(default_factory=list)
-    roles: list[int] = Field(default_factory=list)
+    instruments: list[LenientUuid] = Field(default_factory=list)
+    voices: list[LenientUuid] = Field(default_factory=list)
+    choirjobs: list[LenientUuid] = Field(default_factory=list)
+    roles: list[LenientUuid] = Field(default_factory=list)
     administrator: bool = False
 
     @field_validator("phone")
@@ -72,7 +74,7 @@ class UserResponse(BaseModel):
     already established for Artist (see artist_service.get_artist() /
     ArtistResponse)."""
 
-    id: int
+    id: uuid.UUID
     surname: str
     givenname: str
     email: str | None

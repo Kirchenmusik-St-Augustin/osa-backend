@@ -196,7 +196,10 @@ class TestCastRoundtrip:
             json={
                 "cast": {
                     "instruments": [
-                        {"id": instrument_id, "cast": [{"id": musician.id, "fee": 80}]}
+                        {
+                            "id": instrument_id,
+                            "cast": [{"id": str(musician.id), "fee": 80}],
+                        }
                     ],
                     "voices": [],
                     "choirjobs": [],
@@ -206,9 +209,8 @@ class TestCastRoundtrip:
             headers=headers,
         )
         assert save_response.status_code == 200
-        assert (
-            save_response.json()["cast"]["instruments"][0]["cast"][0]["id"]
-            == musician.id
+        assert save_response.json()["cast"]["instruments"][0]["cast"][0]["id"] == str(
+            musician.id
         )
 
     def test_cast_raises_403_for_past_performance(self, client, make_user, db_session):
@@ -224,7 +226,7 @@ class TestCastRoundtrip:
 
     def test_cast_missing_performance_returns_404(self, client, make_user):
         headers, _ = _auth_headers(client, make_user, roles=["disponent"])
-        response = client.get("/performances/999999/cast", headers=headers)
+        response = client.get(f"/performances/{uuid.uuid4()}/cast", headers=headers)
         assert response.status_code == 404
 
     def test_cast_query_count_does_not_scale_with_setup_size(
@@ -303,7 +305,7 @@ class TestMessageToCast:
 
         response = client.post(
             f"/performances/{performance_id}/message-to-cast/send",
-            json={"recipient_ids": [recipient.id], "message": "Hallo!"},
+            json={"recipient_ids": [str(recipient.id)], "message": "Hallo!"},
             headers=headers,
         )
 
@@ -326,7 +328,7 @@ class TestMessageToCast:
 
         response = client.post(
             f"/performances/{performance_id}/message-to-cast/send",
-            json={"recipient_ids": [recipient.id], "message": "Hallo!"},
+            json={"recipient_ids": [str(recipient.id)], "message": "Hallo!"},
             headers=headers,
         )
 

@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
@@ -8,7 +10,7 @@ class SentEmailShortOutput(BaseModel):
     `updated_at` here (NOT `created_at`, see SentEmailShowOutput below),
     matching `SentEmail::ofMonth()`'s own filter/sort column."""
 
-    id: int
+    id: uuid.UUID
     datetime: UtcDatetime
     to: str | None
     subject: str | None
@@ -19,7 +21,7 @@ class SentEmailShowOutput(BaseModel):
     `created_at` here, unlike the Short/list resource above (verified
     against Legacy source, not a typo)."""
 
-    id: int
+    id: uuid.UUID
     mailer: str | None
     datetime: UtcDatetime
     from_: str | None = Field(alias="from")

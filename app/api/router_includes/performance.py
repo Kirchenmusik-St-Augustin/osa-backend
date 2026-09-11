@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -58,7 +59,7 @@ def get_available_data(
 
 @performance_router.get("/{performance_id}")
 def get_performance(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, Depends(get_verified_user)],
 ) -> PerformanceShowResponse:
@@ -72,7 +73,7 @@ def get_performance(
 
 @performance_router.get("/{performance_id}/form")
 def get_performance_form_data(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceFormData:
@@ -105,7 +106,7 @@ def create_performance(
 
 @performance_router.put("/{performance_id}")
 def update_performance(
-    performance_id: int,
+    performance_id: uuid.UUID,
     data: PerformanceRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
@@ -129,7 +130,7 @@ def update_performance(
 
 @performance_router.delete("/{performance_id}")
 def delete_performance(
-    performance_id: int,
+    performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:

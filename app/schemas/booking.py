@@ -1,8 +1,9 @@
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import StrictInputModel
+from app.schemas.base import LenientUuid, StrictInputModel
 from app.schemas.fee import FeeResponse
 from app.schemas.performance import (
     BookingStatusOutput,
@@ -20,12 +21,12 @@ from app.schemas.performance import (
 
 
 class CastMemberInput(StrictInputModel):
-    id: int
+    id: LenientUuid
     fee: int = Field(ge=0)
 
 
 class CastSetupItemInput(StrictInputModel):
-    id: int
+    id: LenientUuid
     cast: list[CastMemberInput] = Field(default_factory=list)
 
 
@@ -36,7 +37,7 @@ class CastSectionInput(StrictInputModel):
 
 
 class NotBookedEntryInput(StrictInputModel):
-    id: int
+    id: LenientUuid
 
 
 class CastSaveRequest(StrictInputModel):
@@ -45,7 +46,7 @@ class CastSaveRequest(StrictInputModel):
 
 
 class CastMemberOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     fee: int
     # Only ever populated for choirjobs cast members (auto-sort-by-voice
@@ -55,7 +56,7 @@ class CastMemberOutput(BaseModel):
 
 
 class CastSetupItemOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     cast: list[CastMemberOutput]
 
@@ -67,7 +68,7 @@ class CastSectionOutput(BaseModel):
 
 
 class NotBookedOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
 
 
@@ -77,7 +78,7 @@ class CastFormData(BaseModel):
 
 
 class BookableUserOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     # Only ever populated for choirjobs candidates -- see CastMemberOutput.
     voice_name: str | None = None
@@ -90,7 +91,7 @@ class BookableGroupOutput(BaseModel):
 
 
 class StaffItemOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     bookable: BookableGroupOutput
 
@@ -102,13 +103,13 @@ class StaffSectionOutput(BaseModel):
 
 
 class PopularFrequentUserOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     total: int
 
 
 class PopularRecentUserOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     booked: datetime
 
@@ -121,13 +122,13 @@ class PopularItemOutput(BaseModel):
 class PopularSectionOutput(BaseModel):
     # dict keys are position (Instrument/Voice/Choirjob) ids -- JSON
     # serializes them as strings, the frontend type reflects that.
-    instruments: dict[int, PopularItemOutput]
-    voices: dict[int, PopularItemOutput]
-    choirjobs: dict[int, PopularItemOutput]
+    instruments: dict[uuid.UUID, PopularItemOutput]
+    voices: dict[uuid.UUID, PopularItemOutput]
+    choirjobs: dict[uuid.UUID, PopularItemOutput]
 
 
 class PerformanceShortOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     ordinariumwork_name: str
     ordinariumwork_artist_name: str
     artist_name: str | None
@@ -140,7 +141,7 @@ class PerformanceShortOutput(BaseModel):
 
 
 class PerformanceCastPageResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     ordinariumwork_name: str
     ordinariumwork_artist_name: str
     artist_name: str | None
@@ -156,13 +157,13 @@ class PerformanceCastPageResponse(BaseModel):
 
 
 class BillingPositionOutput(BaseModel):
-    id: int | None
+    id: uuid.UUID | None
     name: str
     fee: int
 
 
 class BillingItemOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     quantity: int
     positions: list[BillingPositionOutput]
@@ -200,7 +201,7 @@ class PerformanceBillingResponse(PerformanceShortOutput):
 
 
 class RequestOrBookingEntryOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     status: BookingStatusOutput
 
@@ -214,7 +215,7 @@ class PerformanceMessageToCastResponse(PerformanceShortOutput):
 
 
 class MessageRecipientOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     surname: str
     givenname: str
     has_email: bool
@@ -223,5 +224,5 @@ class MessageRecipientOutput(BaseModel):
 
 
 class SendMessageRequest(StrictInputModel):
-    recipient_ids: list[int] = Field(min_length=1)
+    recipient_ids: list[LenientUuid] = Field(min_length=1)
     message: str = Field(min_length=1)

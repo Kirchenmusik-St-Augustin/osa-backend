@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class Oauth2Binding(Base):
@@ -21,10 +23,12 @@ class Oauth2Binding(Base):
     __tablename__ = "oauth2_bindings"
     __table_args__ = (UniqueConstraint("provider", "remote_id"),)
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     provider: Mapped[str]
     remote_id: Mapped[str]
     remote_name: Mapped[str]
-    local_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    local_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
     bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     lastuse_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

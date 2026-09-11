@@ -1,3 +1,4 @@
+import uuid
 from datetime import date
 
 from pydantic import BaseModel
@@ -10,7 +11,7 @@ class RequestLogUserSummaryOutput(BaseModel):
     """One user row nested under RequestLogDayGroupOutput.users below --
     users who were active on that day."""
 
-    id: int
+    id: uuid.UUID
     label: str
 
 
@@ -30,7 +31,7 @@ class RequestLogDayGroupOutput(BaseModel):
 class RequestLogEntryOutput(BaseModel):
     """1:1 Legacy's `RequestLog\\Short` resource."""
 
-    id: int
+    id: uuid.UUID
     created_at: UtcDatetime
     request_method: str
     request_path: str
@@ -47,11 +48,11 @@ class RequestLogUserDetailOutput(BaseModel):
 class RequestLogShowOutput(BaseModel):
     """1:1 Legacy's `RequestLog\\Show` resource."""
 
-    id: int
+    id: uuid.UUID
     client_ip: str
     client_ips: list[str]
     client_user_agent_string: str | None
-    user_id: int | None
+    user_id: uuid.UUID | None
     user_name: str | None
     request_method: str
     request_path: str

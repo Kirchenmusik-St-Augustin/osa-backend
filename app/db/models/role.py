@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -5,6 +6,7 @@ from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 if TYPE_CHECKING:
     from app.db.models.user import User
@@ -29,7 +31,7 @@ class Role(Base):
 
     __tablename__ = "roles"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(unique=True)
     label: Mapped[str] = mapped_column(unique=True)
     description: Mapped[str | None]

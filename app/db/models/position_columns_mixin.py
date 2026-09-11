@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,14 +23,17 @@ class PositionColumns:
     OrdinariumworkPosition deliberately does NOT use this mixin -- its
     domain excludes choirjobs entirely, so it declares instrument_id/
     voice_id directly instead of inheriting a column it must never
-    populate."""
+    populate.
 
-    instrument_id: Mapped[int | None] = mapped_column(
+    UUIDv7 as of the UUID-migration slice (2026-09), matching
+    instruments/voices/choirjobs' own primary key type."""
+
+    instrument_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("instruments.id", ondelete="RESTRICT")
     )
-    voice_id: Mapped[int | None] = mapped_column(
+    voice_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("voices.id", ondelete="RESTRICT")
     )
-    choirjob_id: Mapped[int | None] = mapped_column(
+    choirjob_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("choirjobs.id", ondelete="RESTRICT")
     )

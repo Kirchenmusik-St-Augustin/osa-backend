@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -42,7 +43,7 @@ def create_fee(
 
 @fee_router.put("/{fee_id}")
 def update_fee(
-    fee_id: int,
+    fee_id: uuid.UUID,
     data: FeeRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
@@ -62,7 +63,7 @@ def update_fee(
 
 @fee_router.delete("/{fee_id}")
 def delete_fee(
-    fee_id: int,
+    fee_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:

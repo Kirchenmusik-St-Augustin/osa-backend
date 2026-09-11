@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 # Every numeric column below is a physical count (how many copies/parts/
 # instrument-headcount slots the archive card lists) -- negative counts
@@ -148,7 +150,7 @@ class Score(Base):
         for column in _COUNT_CHECKS
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
 
     # -- Werk identification --
     kasten: Mapped[str | None] = mapped_column()

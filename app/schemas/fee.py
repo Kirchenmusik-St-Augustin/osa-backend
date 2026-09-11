@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel, Field
 
 from app.schemas.base import StrictInputModel
@@ -9,6 +11,6 @@ class FeeRequest(StrictInputModel):
 
 
 class FeeResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     amount: int

@@ -166,7 +166,7 @@ class TestCreatePropriumwork:
             propriumwork_service.PropriumworkValidationError
         ) as exc_info:
             propriumwork_service.create_propriumwork(
-                db_session, _request(artist_id=999999)
+                db_session, _request(artist_id=uuid.uuid4())
             )
 
         assert exc_info.value.errors == [
@@ -219,7 +219,7 @@ class TestUpdatePropriumwork:
         artist_id = _make_artist(db_session)
         with pytest.raises(propriumwork_service.PropriumworkNotFoundError):
             propriumwork_service.update_propriumwork(
-                db_session, 999, _request(artist_id)
+                db_session, uuid.uuid4(), _request(artist_id)
             )
 
     def test_keeping_own_name_does_not_trigger_uniqueness_error(
@@ -256,7 +256,7 @@ class TestUpdatePropriumwork:
 class TestDeletePropriumwork:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(propriumwork_service.PropriumworkNotFoundError):
-            propriumwork_service.delete_propriumwork(db_session, 999)
+            propriumwork_service.delete_propriumwork(db_session, uuid.uuid4())
 
     def test_succeeds(self, db_session: Session):
         artist_id = _make_artist(db_session)

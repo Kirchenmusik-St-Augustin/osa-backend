@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
@@ -49,7 +50,7 @@ def _name_year_range_error(field: str, value: int | None) -> tuple[str, str] | N
 
 
 def _validate(
-    db: Session, data: ArtistRequest, exclude_id: int | None
+    db: Session, data: ArtistRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
 
@@ -83,7 +84,7 @@ def _validate(
     return errors
 
 
-def _get_or_404(db: Session, artist_id: int) -> Artist:
+def _get_or_404(db: Session, artist_id: uuid.UUID) -> Artist:
     result = db.execute(select(Artist).where(Artist.id == artist_id))
     artist = result.scalar_one_or_none()
     if artist is None:
@@ -144,7 +145,7 @@ def create_artist(db: Session, data: ArtistRequest) -> Artist:
     return artist
 
 
-def update_artist(db: Session, artist_id: int, data: ArtistRequest) -> Artist:
+def update_artist(db: Session, artist_id: uuid.UUID, data: ArtistRequest) -> Artist:
     artist = _get_or_404(db, artist_id)
     errors = _validate(db, data, exclude_id=artist_id)
     if errors:
@@ -161,11 +162,11 @@ def update_artist(db: Session, artist_id: int, data: ArtistRequest) -> Artist:
     return artist
 
 
-def get_artist(db: Session, artist_id: int) -> Artist:
+def get_artist(db: Session, artist_id: uuid.UUID) -> Artist:
     return _get_or_404(db, artist_id)
 
 
-def _artist_has_dependencies(db: Session, artist_id: int) -> bool:
+def _artist_has_dependencies(db: Session, artist_id: uuid.UUID) -> bool:
     # Ordinariumwork/Propriumwork's artist_id is the composer; Performance's
     # is the conductor (Dirigent) -- both point at the same `artists` table,
     # and Legacy's own $dependencies = ['ordinariumworks', 'propriumworks',
@@ -181,7 +182,7 @@ def _artist_has_dependencies(db: Session, artist_id: int) -> bool:
     return False
 
 
-def delete_artist(db: Session, artist_id: int) -> None:
+def delete_artist(db: Session, artist_id: uuid.UUID) -> None:
     artist = _get_or_404(db, artist_id)
     if _artist_has_dependencies(db, artist_id):
         raise ArtistInUseError

@@ -90,7 +90,7 @@ class TestUpdateShorturl:
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(shorturl_service.ShorturlNotFoundError):
-            shorturl_service.update_shorturl(db_session, -1, _request())
+            shorturl_service.update_shorturl(db_session, uuid.uuid4(), _request())
 
     def test_keeping_own_path_does_not_trigger_uniqueness_error(
         self, db_session: Session
@@ -122,7 +122,7 @@ class TestDeleteShorturl:
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(shorturl_service.ShorturlNotFoundError):
-            shorturl_service.delete_shorturl(db_session, -1)
+            shorturl_service.delete_shorturl(db_session, uuid.uuid4())
 
 
 def _reload(db_session: Session, path: str):

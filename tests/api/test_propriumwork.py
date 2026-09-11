@@ -100,14 +100,14 @@ class TestCrudRoundtrip:
 
     def test_get_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.get("/propriumworks/999", headers=headers)
+        response = client.get(f"/propriumworks/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
         artist_id = _make_artist(client, headers)
         response = client.put(
-            "/propriumworks/999",
+            f"/propriumworks/{uuid.uuid4()}",
             json={
                 "name": _unique(),
                 "description": None,
@@ -121,7 +121,7 @@ class TestCrudRoundtrip:
 
     def test_delete_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.delete("/propriumworks/999", headers=headers)
+        response = client.delete(f"/propriumworks/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
 

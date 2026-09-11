@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -63,7 +64,9 @@ class UserInUseError(Exception):
 
 
 def _position_refs_for_user(
-    db: Session, position_ids: dict[PositionType, set[int]], position_type: PositionType
+    db: Session,
+    position_ids: dict[PositionType, set[uuid.UUID]],
+    position_type: PositionType,
 ) -> list[PositionRefOutput]:
     ids = position_ids[position_type]
     if not ids:
@@ -79,7 +82,7 @@ def _position_refs_for_user(
     return [PositionRefOutput(id=row.id, name=row.name) for row in rows]
 
 
-def _is_deletable(db: Session, user_id: int) -> bool:
+def _is_deletable(db: Session, user_id: uuid.UUID) -> bool:
     """`!(hasDependencies || upcoming confirmed bookings)`. Legacy's
     HasDependencies trait on User only lists `roles` (NOT the Instrument/
     Voice/Choirjob assignments in `user_positions`) -- an assigned
@@ -149,7 +152,7 @@ def _to_response(db: Session, user: User) -> UserResponse:
     )
 
 
-def _get_or_404(db: Session, user_id: int) -> User:
+def _get_or_404(db: Session, user_id: uuid.UUID) -> User:
     result = db.execute(
         select(User)
         .options(selectinload(User.roles))
@@ -186,7 +189,7 @@ def search_users(db: Session, query: str) -> Sequence[User]:
     return db.execute(stmt).scalars().all()
 
 
-def get_user(db: Session, user_id: int) -> UserResponse:
+def get_user(db: Session, user_id: uuid.UUID) -> UserResponse:
     user = _get_or_404(db, user_id)
     return _to_response(db, user)
 
@@ -231,7 +234,7 @@ def get_form_options(db: Session) -> UserFormOptionsOutput:
 
 
 def _name_combo_taken(
-    db: Session, surname: str, givenname: str, exclude_id: int | None
+    db: Session, surname: str, givenname: str, exclude_id: uuid.UUID | None
 ) -> bool:
     # No deleted_at filter -- `UniqueConstraint("surname", "givenname")` on
     # the users table itself is unconditional (spans soft-deleted rows
@@ -243,7 +246,7 @@ def _name_combo_taken(
     return db.execute(stmt).scalar_one_or_none() is not None
 
 
-def _email_taken(db: Session, email: str, exclude_id: int | None) -> bool:
+def _email_taken(db: Session, email: str, exclude_id: uuid.UUID | None) -> bool:
     # Same reasoning as _name_combo_taken -- users.email's unique index is
     # unconditional too.
     stmt = select(User.id).where(User.email == email)
@@ -253,7 +256,7 @@ def _email_taken(db: Session, email: str, exclude_id: int | None) -> bool:
 
 
 def _validate(
-    db: Session, data: UserRequest, exclude_id: int | None
+    db: Session, data: UserRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
     surname = normalize_surname(data.surname)
@@ -284,7 +287,7 @@ def _apply_administrator_grant(
 
 
 def _sync_roles_if_administrator(
-    db: Session, user_id: int, role_ids: list[int], current_user: User
+    db: Session, user_id: uuid.UUID, role_ids: list[uuid.UUID], current_user: User
 ) -> None:
     """Roles may only be assigned/removed by a real administrator -- 1:1
     Legacy's System::UserController::save(): "this controller should be
@@ -310,7 +313,7 @@ def _sync_roles_if_administrator(
         db.add(UserRole(user_id=user_id, role_id=role_id))
 
 
-def _sync_positions(db: Session, user_id: int, data: UserRequest) -> None:
+def _sync_positions(db: Session, user_id: uuid.UUID, data: UserRequest) -> None:
     sync_user_positions(
         db,
         user_id=user_id,
@@ -348,7 +351,7 @@ def create_user(db: Session, data: UserRequest, current_user: User) -> UserRespo
 
 
 def update_user(
-    db: Session, user_id: int, data: UserRequest, current_user: User
+    db: Session, user_id: uuid.UUID, data: UserRequest, current_user: User
 ) -> UserResponse:
     user = _get_or_404(db, user_id)
     if user.administrator:
@@ -381,7 +384,7 @@ def update_user(
     return get_user(db, user.id)
 
 
-def delete_user(db: Session, user_id: int) -> None:
+def delete_user(db: Session, user_id: uuid.UUID) -> None:
     user = _get_or_404(db, user_id)
     if user.administrator:
         raise AdministratorProtectedError

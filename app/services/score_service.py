@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -109,7 +111,7 @@ def _to_response(score: Score) -> ScoreResponse:
     )
 
 
-def _get_or_404(db: Session, score_id: int) -> Score:
+def _get_or_404(db: Session, score_id: uuid.UUID) -> Score:
     result = db.execute(select(Score).where(Score.id == score_id))
     score = result.scalar_one_or_none()
     if score is None:
@@ -124,7 +126,7 @@ def _werk_taken(
     surname: str | None,
     givenname: str | None,
     teil: str | None,
-    exclude_id: int | None,
+    exclude_id: uuid.UUID | None,
 ) -> bool:
     """1:1 Legacy's SaveRequest compound-unique rule: `werk` must be
     unique WITHIN the (surname, givenname, teil) scope, not globally.
@@ -148,7 +150,7 @@ def _werk_taken(
 
 
 def _validate(
-    db: Session, data: ScoreRequest, exclude_id: int | None
+    db: Session, data: ScoreRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
     if _werk_taken(
@@ -206,7 +208,7 @@ def _label_for_score(score: Score) -> str:
     return label
 
 
-def get_score(db: Session, score_id: int) -> ScoreResponse:
+def get_score(db: Session, score_id: uuid.UUID) -> ScoreResponse:
     return _to_response(_get_or_404(db, score_id))
 
 
@@ -222,7 +224,7 @@ def create_score(db: Session, data: ScoreRequest) -> ScoreResponse:
     return _to_response(score)
 
 
-def update_score(db: Session, score_id: int, data: ScoreRequest) -> ScoreResponse:
+def update_score(db: Session, score_id: uuid.UUID, data: ScoreRequest) -> ScoreResponse:
     score = _get_or_404(db, score_id)
     errors = _validate(db, data, exclude_id=score_id)
     if errors:

@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -62,7 +63,7 @@ def get_form_options(
 
 @user_router.get("/{user_id}")
 def get_user(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> UserResponse:
@@ -76,7 +77,7 @@ def get_user(
 
 @user_router.get("/{user_id}/requests-and-bookings")
 def get_requests_and_bookings(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> list[PerformanceShortOutput]:
@@ -116,7 +117,7 @@ def create_user(
 
 @user_router.put("/{user_id}")
 def update_user(
-    user_id: int,
+    user_id: uuid.UUID,
     data: UserRequest,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _MAINTAIN],
@@ -143,7 +144,7 @@ def update_user(
 
 @user_router.delete("/{user_id}")
 def delete_user(
-    user_id: int,
+    user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:

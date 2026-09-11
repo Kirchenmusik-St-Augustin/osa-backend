@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, ForeignKey, Index, func
@@ -5,6 +6,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class PersonalAccessToken(Base):
@@ -30,8 +32,9 @@ class PersonalAccessToken(Base):
     property aliasing the old `tokenable_id` -- it is now the real column
     name, and that alias is gone.
 
-    Integer PK, not UUID: kept as part of the structural 1:1 transfer --
-    UUID PKs are part of the not-yet-started full schema redesign.
+    `id`/`user_id` are UUIDv7 (server-generated via Postgres's native
+    `uuidv7()`, see app.db.uuid_pk) as of the UUID-migration slice
+    (2026-09), replacing the former integer autoincrement sequence.
 
     `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09): `created_at` is populated by
@@ -47,8 +50,10 @@ class PersonalAccessToken(Base):
         Index("personal_access_tokens_token_unique", "token", unique=True),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
     name: Mapped[str]  # e.g. "session"
     token: Mapped[str]  # JWT-ID (jti)
     abilities: Mapped[str | None]  # repurposed: refresh token hash

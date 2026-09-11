@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 from typing import Literal
 
@@ -53,8 +54,8 @@ _POSITION_COLUMN_NAMES: dict[OrdinariumworkPositionType, str] = {
 
 
 def _position_kwargs(
-    position_type: OrdinariumworkPositionType, position_id: int
-) -> dict[str, int]:
+    position_type: OrdinariumworkPositionType, position_id: uuid.UUID
+) -> dict[str, uuid.UUID]:
     """2-type counterpart of app.services.position_types.position_kwargs()
     for OrdinariumworkPosition's own instrument_id/voice_id-only shape."""
     return {_POSITION_COLUMN_NAMES[position_type]: position_id}
@@ -62,7 +63,7 @@ def _position_kwargs(
 
 def _position_key(
     row: OrdinariumworkPosition,
-) -> tuple[OrdinariumworkPositionType, int]:
+) -> tuple[OrdinariumworkPositionType, uuid.UUID]:
     """2-type counterpart of app.services.position_types.position_key()."""
     if row.instrument_id is not None:
         return "instruments", row.instrument_id
@@ -92,7 +93,7 @@ class OrdinariumworkInUseError(Exception):
     mirroring the Instrument/Voice retrofit in coreelement_service.py)."""
 
 
-def _get_or_404(db: Session, ordinariumwork_id: int) -> Ordinariumwork:
+def _get_or_404(db: Session, ordinariumwork_id: uuid.UUID) -> Ordinariumwork:
     result = db.execute(
         select(Ordinariumwork).where(Ordinariumwork.id == ordinariumwork_id)
     )
@@ -109,7 +110,7 @@ def _validate_positions(
 ) -> list[tuple[str, str]]:
     model = _POSITION_MODELS[position_type]
     errors: list[tuple[str, str]] = []
-    seen_ids: set[int] = set()
+    seen_ids: set[uuid.UUID] = set()
     for item in items:
         if item.id in seen_ids:
             errors.append(("setup", f"{position_type}: doppelter Eintrag."))
@@ -124,7 +125,7 @@ def _validate_positions(
 
 
 def _validate(
-    db: Session, data: OrdinariumworkRequest, exclude_id: int | None
+    db: Session, data: OrdinariumworkRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
 
@@ -165,7 +166,7 @@ def _validate(
 
 
 def _sync_positions(
-    db: Session, ordinariumwork_id: int, data: OrdinariumworkRequest
+    db: Session, ordinariumwork_id: uuid.UUID, data: OrdinariumworkRequest
 ) -> None:
     """Mirrors Legacy's `Ordinariumwork::setup()` sync() semantics: rows
     not in the new setup are removed, existing ones get their quantity
@@ -181,7 +182,7 @@ def _sync_positions(
     )
     existing_by_key = {_position_key(p): p for p in existing}
 
-    desired: dict[tuple[OrdinariumworkPositionType, int], int] = {}
+    desired: dict[tuple[OrdinariumworkPositionType, uuid.UUID], int] = {}
     for item in data.setup.instruments:
         desired[("instruments", item.id)] = item.quantity
     for item in data.setup.voices:
@@ -292,7 +293,7 @@ def create_ordinariumwork(
 
 
 def update_ordinariumwork(
-    db: Session, ordinariumwork_id: int, data: OrdinariumworkRequest
+    db: Session, ordinariumwork_id: uuid.UUID, data: OrdinariumworkRequest
 ) -> OrdinariumworkResponse:
     ordinariumwork = _get_or_404(db, ordinariumwork_id)
     errors = _validate(db, data, exclude_id=ordinariumwork_id)
@@ -309,12 +310,14 @@ def update_ordinariumwork(
     return _to_response(db, ordinariumwork)
 
 
-def get_ordinariumwork(db: Session, ordinariumwork_id: int) -> OrdinariumworkResponse:
+def get_ordinariumwork(
+    db: Session, ordinariumwork_id: uuid.UUID
+) -> OrdinariumworkResponse:
     ordinariumwork = _get_or_404(db, ordinariumwork_id)
     return _to_response(db, ordinariumwork)
 
 
-def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
+def get_setup(db: Session, ordinariumwork_id: uuid.UUID) -> OrdinariumworkSetupOutput:
     """Output order follows the Instrument/Voice's own `order` column, not
     pivot-row insertion order -- Legacy's Instrument/Voice models carry a
     global `OrderByOrder` scope (HasCoreelementFeatures trait) that applies
@@ -372,7 +375,7 @@ def get_setup(db: Session, ordinariumwork_id: int) -> OrdinariumworkSetupOutput:
     return OrdinariumworkSetupOutput(instruments=instruments_out, voices=voices_out)
 
 
-def _ordinariumwork_has_dependencies(db: Session, ordinariumwork_id: int) -> bool:
+def _ordinariumwork_has_dependencies(db: Session, ordinariumwork_id: uuid.UUID) -> bool:
     count = db.execute(
         select(func.count())
         .select_from(Performance)
@@ -381,7 +384,7 @@ def _ordinariumwork_has_dependencies(db: Session, ordinariumwork_id: int) -> boo
     return count > 0
 
 
-def delete_ordinariumwork(db: Session, ordinariumwork_id: int) -> None:
+def delete_ordinariumwork(db: Session, ordinariumwork_id: uuid.UUID) -> None:
     """Deleting the row alone is enough: `ordinariumwork_positions.
     ordinariumwork_id` is an ON DELETE CASCADE foreign key, so the
     database removes this Ordinariumwork's position rows on its own."""

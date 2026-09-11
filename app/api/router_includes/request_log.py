@@ -1,3 +1,4 @@
+import uuid
 from datetime import date
 from typing import Annotated
 
@@ -62,7 +63,7 @@ def list_request_log_users(
 
 @request_log_router.get("/users/{user_id}")
 def get_request_logs_for_user(
-    user_id: int,
+    user_id: uuid.UUID,
     day: Annotated[date, _DAY],
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _VIEW],
@@ -77,7 +78,7 @@ def get_request_logs_for_user(
 
 @request_log_router.get("/{request_log_id}")
 def get_request_log(
-    request_log_id: int,
+    request_log_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _VIEW],
 ) -> RequestLogShowOutput:

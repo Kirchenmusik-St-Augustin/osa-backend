@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
@@ -11,7 +13,7 @@ from app.services.position_types import (
 
 # UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
 # identical _BOOKING_POSITION_COLUMNS for the full rationale.
-_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = {
+_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[uuid.UUID | None]] = {
     "instruments": UserPosition.instrument_id,
     "voices": UserPosition.voice_id,
     "choirjobs": UserPosition.choirjob_id,
@@ -19,11 +21,11 @@ _USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[int | None]] = 
 
 
 def get_position_ids_for_user(
-    db: Session, user_id: int
-) -> dict[PositionType, set[int]]:
+    db: Session, user_id: uuid.UUID
+) -> dict[PositionType, set[uuid.UUID]]:
     """A User's own Instrument/Voice/Choirjob qualifications -- one query,
     used by userBookingStatus()'s bookable-intersection check."""
-    result: dict[PositionType, set[int]] = {
+    result: dict[PositionType, set[uuid.UUID]] = {
         position_type: set() for position_type in POSITION_TYPES
     }
     rows = db.execute(select(UserPosition).where(UserPosition.user_id == user_id))
@@ -34,12 +36,12 @@ def get_position_ids_for_user(
 
 
 def get_qualified_user_ids_batch(
-    db: Session, keys: dict[PositionType, set[int]]
-) -> dict[tuple[PositionType, int], set[int]]:
+    db: Session, keys: dict[PositionType, set[uuid.UUID]]
+) -> dict[tuple[PositionType, uuid.UUID], set[uuid.UUID]]:
     """Which users are qualified for each (position_type, position_id) in
     `keys` -- at most one query PER TYPE (not per item), the N+1-safe
     building block for staff()'s `bookable` candidate lists."""
-    result: dict[tuple[PositionType, int], set[int]] = {
+    result: dict[tuple[PositionType, uuid.UUID], set[uuid.UUID]] = {
         (position_type, position_id): set()
         for position_type, position_ids in keys.items()
         for position_id in position_ids
@@ -54,7 +56,7 @@ def get_qualified_user_ids_batch(
             )
         ).all()
         for position_id, user_id in rows:
-            # position_id is statically `int | None` (it's the same
+            # position_id is statically `uuid.UUID | None` (it's the same
             # InstrumentedAttribute used in the WHERE clause above), but
             # the `.in_(position_ids)` filter guarantees non-NULL at
             # runtime for every returned row.
@@ -65,8 +67,8 @@ def get_qualified_user_ids_batch(
 
 
 def is_bookable(
-    user_position_ids: dict[PositionType, set[int]],
-    performance_position_ids: dict[PositionType, set[int]],
+    user_position_ids: dict[PositionType, set[uuid.UUID]],
+    performance_position_ids: dict[PositionType, set[uuid.UUID]],
 ) -> bool:
     """Port of `userBookingStatus()`'s bookable check: does the user hold at
     least one Instrument/Voice/Choirjob qualification that the performance
@@ -81,7 +83,11 @@ def is_bookable(
 
 
 def create_user_position(
-    db: Session, *, user_id: int, position_type: PositionType, position_id: int
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    position_type: PositionType,
+    position_id: uuid.UUID,
 ) -> UserPosition:
     """Dev/test/fixture-seeding helper -- there is deliberately no router
     endpoint for this in Schritt 6, the admin UI to assign these lands with
@@ -95,7 +101,7 @@ def create_user_position(
 
 
 def sync_user_positions(
-    db: Session, *, user_id: int, desired: dict[PositionType, set[int]]
+    db: Session, *, user_id: uuid.UUID, desired: dict[PositionType, set[uuid.UUID]]
 ) -> None:
     """Schritt 7: replaces a User's Instrument/Voice/Choirjob assignments
     with exactly `desired` -- remove-not-in-new/insert-new, 1:1 Legacy's
@@ -109,8 +115,8 @@ def sync_user_positions(
         .all()
     )
     existing_by_key = {position_key(p): p for p in existing}
-    existing_keys: set[tuple[PositionType, int]] = set(existing_by_key)
-    desired_keys: set[tuple[PositionType, int]] = {
+    existing_keys: set[tuple[PositionType, uuid.UUID]] = set(existing_by_key)
+    desired_keys: set[tuple[PositionType, uuid.UUID]] = {
         (position_type, position_id)
         for position_type, position_ids in desired.items()
         for position_id in position_ids

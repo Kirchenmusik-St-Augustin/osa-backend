@@ -176,7 +176,7 @@ class TestSearchUsers:
 class TestGetUser:
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(user_service.UserNotFoundError):
-            user_service.get_user(db_session, -1)
+            user_service.get_user(db_session, uuid.uuid4())
 
     def test_soft_deleted_user_raises_not_found(self, db_session: Session, make_user):
         user = make_user()
@@ -442,7 +442,7 @@ class TestUpdateUser:
     def test_unknown_id_raises_not_found(self, db_session: Session, make_user):
         admin = make_user(administrator=True)
         with pytest.raises(user_service.UserNotFoundError):
-            user_service.update_user(db_session, -1, _request(), admin)
+            user_service.update_user(db_session, uuid.uuid4(), _request(), admin)
 
     def test_administrator_target_is_protected_even_from_another_administrator(
         self, db_session: Session, make_user
@@ -558,7 +558,7 @@ class TestUpdateUser:
 class TestDeleteUser:
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(user_service.UserNotFoundError):
-            user_service.delete_user(db_session, -1)
+            user_service.delete_user(db_session, uuid.uuid4())
 
     def test_administrator_target_is_protected(self, db_session: Session, make_user):
         admin = make_user(administrator=True)

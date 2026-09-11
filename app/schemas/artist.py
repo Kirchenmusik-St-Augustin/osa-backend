@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel, Field
 
 from app.schemas.base import StrictInputModel
@@ -14,7 +16,7 @@ class ArtistRequest(StrictInputModel):
 
 
 class ArtistResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     surname: str
     givenname: str
     description: str | None
@@ -25,5 +27,5 @@ class ArtistResponse(BaseModel):
 
 
 class ArtistSearchResult(BaseModel):
-    id: int
+    id: uuid.UUID
     label: str

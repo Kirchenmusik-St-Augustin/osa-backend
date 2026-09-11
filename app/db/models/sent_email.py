@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class SentEmail(Base):
@@ -22,7 +24,7 @@ class SentEmail(Base):
 
     __tablename__ = "sent_emails"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     mail_from: Mapped[str | None] = mapped_column("from")
     to: Mapped[str | None]
     cc: Mapped[str | None]

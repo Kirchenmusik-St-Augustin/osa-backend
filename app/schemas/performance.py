@@ -1,10 +1,11 @@
+import uuid
 from datetime import datetime
 from typing import Annotated
 
 from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import StrictInputModel
+from app.schemas.base import LenientUuid, StrictInputModel
 
 # Pydantic's model-level strict=True (StrictInputModel) rejects ISO-8601
 # datetime STRINGS for a plain `datetime` field -- JSON has no native
@@ -18,7 +19,7 @@ _LenientDatetime = Annotated[datetime, Field(strict=False)]
 
 
 class PerformancePositionInput(StrictInputModel):
-    id: int
+    id: LenientUuid
     quantity: int = Field(ge=1, le=99)
 
 
@@ -34,15 +35,15 @@ class PerformanceRehearsalInput(StrictInputModel):
 
 
 class PerformancePropriumEntryInput(StrictInputModel):
-    propriumelement_id: int
-    propriumwork_id: int
+    propriumelement_id: LenientUuid
+    propriumwork_id: LenientUuid
 
 
 class PerformanceRequest(StrictInputModel):
     schedule: _LenientDatetime
-    location_id: int
-    ordinariumwork_id: int
-    artist_id: int | None = None
+    location_id: LenientUuid
+    ordinariumwork_id: LenientUuid
+    artist_id: LenientUuid | None = None
     description: str | None = None
     choirjob_defaultfee: int = Field(ge=0)
     instrument_defaultfee: int = Field(ge=0)
@@ -55,11 +56,11 @@ class PerformanceRequest(StrictInputModel):
 
 
 class PerformanceResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     schedule: datetime
-    location_id: int
-    ordinariumwork_id: int
-    artist_id: int | None
+    location_id: uuid.UUID
+    ordinariumwork_id: uuid.UUID
+    artist_id: uuid.UUID | None
     description: str | None
     choirjob_defaultfee: int
     instrument_defaultfee: int
@@ -69,7 +70,7 @@ class PerformanceResponse(BaseModel):
 
 
 class PerformancePositionOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     quantity: int
     # Lets the frontend flag a setup row whose Instrument/Voice/Choirjob
@@ -87,9 +88,9 @@ class PerformanceSetupOutput(BaseModel):
 
 
 class PerformancePropriumOutput(BaseModel):
-    propriumelement_id: int
+    propriumelement_id: uuid.UUID
     propriumelement_name: str
-    propriumwork_id: int
+    propriumwork_id: uuid.UUID
     propriumwork_name: str
     artist_name: str
     description: str | None
@@ -102,14 +103,14 @@ class PerformanceRehearsalOutput(BaseModel):
 
 
 class PerformanceLocationOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     color: str
     address: str | None
 
 
 class PositionRefOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
 
 
@@ -127,10 +128,10 @@ class BookingStatusOutput(BaseModel):
 
 
 class PerformanceCalendarItem(BaseModel):
-    id: int
+    id: uuid.UUID
     schedule: datetime
     location: PerformanceLocationOutput
-    ordinariumwork_id: int
+    ordinariumwork_id: uuid.UUID
     ordinariumwork_name: str
     ordinariumwork_artist_name: str
     ordinariumwork_demanding: bool
@@ -142,16 +143,16 @@ class PerformanceCalendarItem(BaseModel):
 
 
 class PerformanceShowResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     schedule: datetime
     location: PerformanceLocationOutput
-    ordinariumwork_id: int
+    ordinariumwork_id: uuid.UUID
     ordinariumwork_name: str
     ordinariumwork_artist_name: str
     ordinariumwork_artist_description: str | None
     ordinariumwork_description: str | None
     ordinariumwork_demanding: bool
-    artist_id: int | None
+    artist_id: uuid.UUID | None
     artist_name: str | None
     artist_description: str | None
     description: str | None
@@ -162,12 +163,12 @@ class PerformanceShowResponse(BaseModel):
 
 
 class PerformanceFormData(BaseModel):
-    id: int
+    id: uuid.UUID
     schedule: datetime
-    location_id: int
-    ordinariumwork_id: int
+    location_id: uuid.UUID
+    ordinariumwork_id: uuid.UUID
     ordinariumwork_label: str
-    artist_id: int | None
+    artist_id: uuid.UUID | None
     description: str | None
     choirjob_defaultfee: int
     instrument_defaultfee: int
@@ -181,7 +182,7 @@ class PerformanceFormData(BaseModel):
 
 
 class AvailablePositionOutput(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
 
 
@@ -195,5 +196,5 @@ class PerformanceAvailableData(BaseModel):
     # Pre-resolved defaults for a NEW performance's Ort/Dirigent fields
     # (None if the configured default row was deleted or, for the
     # conductor, lost its conductor flag -- see get_available_data()).
-    default_location_id: int | None
-    default_conductor_id: int | None
+    default_location_id: uuid.UUID | None
+    default_conductor_id: uuid.UUID | None

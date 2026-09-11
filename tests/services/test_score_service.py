@@ -193,7 +193,7 @@ class TestUpdateScore:
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(score_service.ScoreNotFoundError):
-            score_service.update_score(db_session, -1, _payload())
+            score_service.update_score(db_session, uuid.uuid4(), _payload())
 
     def test_keeping_own_werk_does_not_trigger_uniqueness_error(
         self, db_session: Session
@@ -233,7 +233,7 @@ class TestGetScore:
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(score_service.ScoreNotFoundError):
-            score_service.get_score(db_session, -1)
+            score_service.get_score(db_session, uuid.uuid4())
 
 
 def test_no_delete_function_exists():

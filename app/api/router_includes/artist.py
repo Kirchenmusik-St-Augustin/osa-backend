@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -78,7 +79,7 @@ def list_composer_artists(
 
 @artist_router.get("/{artist_id}")
 def get_artist(
-    artist_id: int,
+    artist_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> ArtistResponse:
@@ -93,7 +94,7 @@ def get_artist(
 
 @artist_router.put("/{artist_id}")
 def update_artist(
-    artist_id: int,
+    artist_id: uuid.UUID,
     data: ArtistRequest,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
@@ -114,7 +115,7 @@ def update_artist(
 
 @artist_router.delete("/{artist_id}")
 def delete_artist(
-    artist_id: int,
+    artist_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:

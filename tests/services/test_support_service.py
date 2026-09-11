@@ -110,7 +110,7 @@ class TestListRolesWithContacts:
 
 class TestSendMessageToContactperson:
     def _data(
-        self, *, recipient_id: int, message: str = "Bitte um Rückruf."
+        self, *, recipient_id: uuid.UUID, message: str = "Bitte um Rückruf."
     ) -> MessageToContactpersonRequest:
         return MessageToContactpersonRequest(recipient_id=recipient_id, message=message)
 
@@ -163,7 +163,7 @@ class TestSendMessageToContactperson:
         sender = make_user()
 
         result = support_service.send_message_to_contactperson(
-            db_session, sender, self._data(recipient_id=0)
+            db_session, sender, self._data(recipient_id=uuid.uuid4())
         )
 
         assert result is None

@@ -1,6 +1,9 @@
-from sqlalchemy.orm import Mapped, mapped_column
+import uuid
+
+from sqlalchemy.orm import Mapped
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class ClientUserAgent(Base):
@@ -11,5 +14,5 @@ class ClientUserAgent(Base):
 
     __tablename__ = "client_user_agents"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     string: Mapped[str]

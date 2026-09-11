@@ -1,3 +1,4 @@
+import uuid
 from math import ceil
 from typing import Annotated
 from urllib.parse import urlencode
@@ -474,7 +475,7 @@ def google_link(
 
 @auth_router.delete("/oauth2/{binding_id}")
 def disconnect_oauth2_binding(
-    binding_id: int,
+    binding_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> dict[str, str]:

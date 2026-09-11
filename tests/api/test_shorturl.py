@@ -80,7 +80,7 @@ class TestCrudRoundtrip:
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
         response = client.put(
-            "/shorturls/999999",
+            f"/shorturls/{uuid.uuid4()}",
             json={"path": _unique(), "target": "example.org"},
             headers=headers,
         )
@@ -88,7 +88,7 @@ class TestCrudRoundtrip:
 
     def test_delete_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.delete("/shorturls/999999", headers=headers)
+        response = client.delete(f"/shorturls/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
 

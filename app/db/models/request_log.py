@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, ForeignKey, func
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.json_types import JsonObject, JsonValue
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class RequestLog(Base):
@@ -29,13 +31,13 @@ class RequestLog(Base):
 
     __tablename__ = "request_logs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     client_ip: Mapped[str]
     client_ips: Mapped[list[str] | None] = mapped_column(JSONB())
-    client_user_agent_id: Mapped[int | None] = mapped_column(
+    client_user_agent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("client_user_agents.id", ondelete="SET NULL")
     )
-    user_id: Mapped[int | None] = mapped_column(
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
     request_method: Mapped[str]

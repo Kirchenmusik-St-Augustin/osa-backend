@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
@@ -47,7 +48,7 @@ class PropriumworkInUseError(Exception):
     is only referenced through the `performance_proprium` pivot table."""
 
 
-def _get_or_404(db: Session, propriumwork_id: int) -> Propriumwork:
+def _get_or_404(db: Session, propriumwork_id: uuid.UUID) -> Propriumwork:
     result = db.execute(select(Propriumwork).where(Propriumwork.id == propriumwork_id))
     propriumwork = result.scalar_one_or_none()
     if propriumwork is None:
@@ -56,7 +57,7 @@ def _get_or_404(db: Session, propriumwork_id: int) -> Propriumwork:
 
 
 def _validate(
-    db: Session, data: PropriumworkRequest, exclude_id: int | None
+    db: Session, data: PropriumworkRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
 
@@ -155,7 +156,7 @@ def create_propriumwork(db: Session, data: PropriumworkRequest) -> PropriumworkR
 
 
 def update_propriumwork(
-    db: Session, propriumwork_id: int, data: PropriumworkRequest
+    db: Session, propriumwork_id: uuid.UUID, data: PropriumworkRequest
 ) -> PropriumworkResponse:
     propriumwork = _get_or_404(db, propriumwork_id)
     errors = _validate(db, data, exclude_id=propriumwork_id)
@@ -171,12 +172,12 @@ def update_propriumwork(
     return _to_response(db, propriumwork)
 
 
-def get_propriumwork(db: Session, propriumwork_id: int) -> PropriumworkResponse:
+def get_propriumwork(db: Session, propriumwork_id: uuid.UUID) -> PropriumworkResponse:
     propriumwork = _get_or_404(db, propriumwork_id)
     return _to_response(db, propriumwork)
 
 
-def _propriumwork_has_dependencies(db: Session, propriumwork_id: int) -> bool:
+def _propriumwork_has_dependencies(db: Session, propriumwork_id: uuid.UUID) -> bool:
     count = db.execute(
         select(func.count())
         .select_from(PerformanceProprium)
@@ -185,7 +186,7 @@ def _propriumwork_has_dependencies(db: Session, propriumwork_id: int) -> bool:
     return count > 0
 
 
-def delete_propriumwork(db: Session, propriumwork_id: int) -> None:
+def delete_propriumwork(db: Session, propriumwork_id: uuid.UUID) -> None:
     propriumwork = _get_or_404(db, propriumwork_id)
     if _propriumwork_has_dependencies(db, propriumwork_id):
         raise PropriumworkInUseError

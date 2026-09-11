@@ -305,7 +305,7 @@ class TestCreatePerformance:
 
         with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
             performance_service.create_performance(
-                db_session, _request(999999, work.id)
+                db_session, _request(uuid.uuid4(), work.id)
             )
 
         assert exc_info.value.errors == [("location_id", "Ort wurde nicht gefunden.")]
@@ -315,7 +315,7 @@ class TestCreatePerformance:
 
         with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
             performance_service.create_performance(
-                db_session, _request(location.id, 999999)
+                db_session, _request(location.id, uuid.uuid4())
             )
 
         assert exc_info.value.errors == [
@@ -329,7 +329,7 @@ class TestCreatePerformance:
 
         with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
             performance_service.create_performance(
-                db_session, _request(location.id, work.id, artist_id=999999)
+                db_session, _request(location.id, work.id, artist_id=uuid.uuid4())
             )
 
         assert exc_info.value.errors == [
@@ -341,7 +341,7 @@ class TestCreatePerformance:
         location = _make_location(db_session)
         work = _make_ordinariumwork(db_session, composer_id)
         setup = PerformanceSetupInput(
-            instruments=[PerformancePositionInput(id=999999, quantity=1)]
+            instruments=[PerformancePositionInput(id=uuid.uuid4(), quantity=1)]
         )
 
         with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
@@ -386,7 +386,7 @@ class TestCreatePerformance:
                     work.id,
                     proprium=[
                         PerformancePropriumEntryInput(
-                            propriumelement_id=element.id, propriumwork_id=999999
+                            propriumelement_id=element.id, propriumwork_id=uuid.uuid4()
                         )
                     ],
                 ),
@@ -428,7 +428,8 @@ class TestCreatePerformance:
                     work.id,
                     proprium=[
                         PerformancePropriumEntryInput(
-                            propriumelement_id=999999, propriumwork_id=propriumwork.id
+                            propriumelement_id=uuid.uuid4(),
+                            propriumwork_id=propriumwork.id,
                         )
                     ],
                 ),
@@ -677,7 +678,7 @@ class TestUpdatePerformance:
 
         with pytest.raises(performance_service.PerformanceNotFoundError):
             performance_service.update_performance(
-                db_session, 999, _request(location.id, work.id)
+                db_session, uuid.uuid4(), _request(location.id, work.id)
             )
 
     def test_collision_check_also_runs_on_update(self, db_session: Session):
@@ -970,7 +971,7 @@ class TestUpdatePerformance:
 class TestDeletePerformance:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(performance_service.PerformanceNotFoundError):
-            performance_service.delete_performance(db_session, 999)
+            performance_service.delete_performance(db_session, uuid.uuid4())
 
     def test_deletes_performance_and_its_positions_proprium_rehearsals(
         self, db_session: Session
@@ -1073,7 +1074,7 @@ class TestDeletePerformance:
 class TestGetFormData:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(performance_service.PerformanceNotFoundError):
-            performance_service.get_form_data(db_session, 999)
+            performance_service.get_form_data(db_session, uuid.uuid4())
 
     def test_deletable_is_false_when_booking_exists(
         self, db_session: Session, make_user
@@ -1185,8 +1186,8 @@ class TestGetAvailableData:
     def test_default_ids_resolve_to_none_when_configured_row_missing(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setenv("PERFORMANCE_DEFAULT_LOCATION_ID", "999999999")
-        monkeypatch.setenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", "999999999")
+        monkeypatch.setenv("PERFORMANCE_DEFAULT_LOCATION_ID", str(uuid.uuid4()))
+        monkeypatch.setenv("PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID", str(uuid.uuid4()))
         get_settings.cache_clear()
 
         result = performance_service.get_available_data(db_session)

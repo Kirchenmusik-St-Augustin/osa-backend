@@ -139,7 +139,7 @@ class TestCreateArtist:
 class TestUpdateArtist:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(artist_service.ArtistNotFoundError):
-            artist_service.update_artist(db_session, 999, _request())
+            artist_service.update_artist(db_session, uuid.uuid4(), _request())
 
     def test_keeping_own_name_does_not_trigger_uniqueness_error(
         self, db_session: Session
@@ -173,7 +173,7 @@ class TestUpdateArtist:
 class TestDeleteArtist:
     def test_not_found_raises(self, db_session: Session):
         with pytest.raises(artist_service.ArtistNotFoundError):
-            artist_service.delete_artist(db_session, 999)
+            artist_service.delete_artist(db_session, uuid.uuid4())
 
     def test_succeeds_without_dependents(self, db_session: Session):
         artist = artist_service.create_artist(db_session, _request())

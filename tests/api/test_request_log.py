@@ -101,7 +101,7 @@ class TestUserFlow:
         assert response.status_code == 200
         body = response.json()
         day_group = next(group for group in body if group["day"] == "2026-11-12")
-        assert target.id in [item["id"] for item in day_group["users"]]
+        assert str(target.id) in [item["id"] for item in day_group["users"]]
 
     def test_user_detail_returns_entries_for_that_user_and_day(
         self, client, make_user, db_session: Session
@@ -129,12 +129,12 @@ class TestUserFlow:
         assert response.status_code == 200
         body = response.json()
         assert body["username"] == f"{target.surname}, {target.givenname}"
-        assert [item["id"] for item in body["entries"]] == [entry.id]
+        assert [item["id"] for item in body["entries"]] == [str(entry.id)]
 
     def test_user_detail_returns_404_for_unknown_user(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
         response = client.get(
-            "/administrator/request-logs/users/999999",
+            f"/administrator/request-logs/users/{uuid.uuid4()}",
             params={"year": 2026, "month": 1, "day": 15},
             headers=headers,
         )
@@ -142,7 +142,9 @@ class TestUserFlow:
 
     def test_show_returns_404_for_unknown_id(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
-        response = client.get("/administrator/request-logs/999999", headers=headers)
+        response = client.get(
+            f"/administrator/request-logs/{uuid.uuid4()}", headers=headers
+        )
         assert response.status_code == 404
 
     def test_show_returns_full_detail(self, client, make_user, db_session: Session):
@@ -160,7 +162,7 @@ class TestUserFlow:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["id"] == entry.id
+        assert body["id"] == str(entry.id)
         assert body["user_name"] == f"{target.surname}, {target.givenname}"
 
 

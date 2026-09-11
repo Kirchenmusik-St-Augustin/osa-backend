@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.json_types import JsonObject
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class AuthLog(Base):
@@ -32,7 +34,7 @@ class AuthLog(Base):
 
     __tablename__ = "auth_logs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     event: Mapped[str | None]
     fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ip_address: Mapped[str | None]

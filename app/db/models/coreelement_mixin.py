@@ -1,7 +1,10 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db.uuid_pk import uuid_pk
 
 
 class CoreelementColumns:
@@ -29,9 +32,13 @@ class CoreelementColumns:
     audit-trigger hardening slice (2026-09): `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger registered on every table built
-    on this mixin -- neither is ever assigned from Python anymore."""
+    on this mixin -- neither is ever assigned from Python anymore.
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    `id` is a UUIDv7 primary key (server-generated via Postgres's native
+    `uuidv7()`, see app.db.uuid_pk) as of the UUID-migration slice
+    (2026-09), replacing the former integer autoincrement sequence."""
+
+    id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(unique=True)
     order: Mapped[int] = mapped_column("sort_order", default=0)
     created_at: Mapped[datetime | None] = mapped_column(

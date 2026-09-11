@@ -1,9 +1,11 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.uuid_pk import uuid_pk
 
 
 class Shorturl(Base):
@@ -22,7 +24,7 @@ class Shorturl(Base):
 
     __tablename__ = "shorturls"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[uuid.UUID] = uuid_pk()
     path: Mapped[str] = mapped_column(unique=True)
     target: Mapped[str] = mapped_column()
     counter: Mapped[int] = mapped_column(default=0)

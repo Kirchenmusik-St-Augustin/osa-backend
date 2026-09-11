@@ -24,6 +24,7 @@ normal RuntimeError instead of exiting the process.
 """
 
 import sys
+import uuid
 from functools import lru_cache
 from typing import NoReturn
 
@@ -76,21 +77,20 @@ class Settings(BaseSettings):
     shorturl_domain: str = Field(
         default="go.hochamt.at", validation_alias="SHORTURL_DOMAIN"
     )
-    # Tier 2 -- defaults mirror Legacy's config('osa.performance.default.*')
-    # (legacy/config/osa.php), used by PerformanceController::create() to
-    # pre-fill a brand-new Performance's Ort/Dirigent fields. Verified
-    # against production data: locations.id=1 is "Augustinerkirche",
-    # artists.id=95 is TIEFENGRABER, Peter with conductor=true -- stable
-    # since the SQLite->Postgres cutover. A real setting (not a literal) so
-    # a future deployment could repoint it without a code change; see
-    # performance_service.get_available_data()'s existence check for what
-    # happens if the configured row is ever deleted or loses its conductor
-    # flag.
-    performance_default_location_id: int = Field(
-        default=1, validation_alias="PERFORMANCE_DEFAULT_LOCATION_ID"
+    # Tier 2 -- used by PerformanceController::create()'s successor
+    # (performance_service.get_available_data()) to pre-fill a brand-new
+    # Performance's Ort/Dirigent fields. UUID primary keys are generated at
+    # row-creation time, not predictable literals, so there is no sane
+    # built-in default here (unlike the other Tier 2 settings above) --
+    # each deployment configures its own row's id via the env var once one
+    # is chosen. `None` (no pre-fill) is the correct default absent that.
+    # See get_available_data()'s existence check for what happens if the
+    # configured row is ever deleted or loses its conductor flag.
+    performance_default_location_id: uuid.UUID | None = Field(
+        default=None, validation_alias="PERFORMANCE_DEFAULT_LOCATION_ID"
     )
-    performance_default_conductor_artist_id: int = Field(
-        default=95, validation_alias="PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID"
+    performance_default_conductor_artist_id: uuid.UUID | None = Field(
+        default=None, validation_alias="PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID"
     )
 
     # Tier 2 (mail) -- defaults taken from Legacy's config/mail.php /

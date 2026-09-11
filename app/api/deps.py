@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -64,7 +65,7 @@ def _get_session_record(db: Session, token_id: str) -> PersonalAccessToken:
     return session_record
 
 
-def _bump_lastsignal(db: Session, user_id: int, now: datetime) -> None:
+def _bump_lastsignal(db: Session, user_id: uuid.UUID, now: datetime) -> None:
     db.execute(update(User).where(User.id == user_id).values(auth_lastsignal=now))
 
 

@@ -71,13 +71,15 @@ class TestCrudRoundtrip:
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
         response = client.put(
-            "/fees/999999", json={"name": _unique(), "amount": 10}, headers=headers
+            f"/fees/{uuid.uuid4()}",
+            json={"name": _unique(), "amount": 10},
+            headers=headers,
         )
         assert response.status_code == 404
 
     def test_delete_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.delete("/fees/999999", headers=headers)
+        response = client.delete(f"/fees/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
 

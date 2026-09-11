@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel
 
 from app.schemas.performance import PositionRefOutput
@@ -18,7 +20,7 @@ class UserDirectoryEntryOutput(BaseModel):
     """Mirrors Legacy's User\\Directory resource: `email` is only exposed
     once the address is verified, mirroring `hasVerifiedEmail()`."""
 
-    id: int
+    id: uuid.UUID
     surname: str
     givenname: str
     has_email: bool

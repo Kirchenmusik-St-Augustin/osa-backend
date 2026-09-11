@@ -113,7 +113,7 @@ class TestGetMyRequestsAndBookings:
 
         response = client.get("/support/requests-and-bookings", headers=headers)
         assert response.status_code == 200
-        assert [item["id"] for item in response.json()] == [performance.id]
+        assert [item["id"] for item in response.json()] == [str(performance.id)]
 
 
 class TestGetContactpersons:
@@ -129,9 +129,9 @@ class TestGetContactpersons:
 
         response = client.get("/support/contactpersons", headers=headers)
         assert response.status_code == 200
-        entry = next(r for r in response.json() if r["id"] == role.id)
+        entry = next(r for r in response.json() if r["id"] == str(role.id))
         assert entry["description"] == "Plant den Dienstplan."
-        assert [u["id"] for u in entry["users"]] == [contact.id]
+        assert [u["id"] for u in entry["users"]] == [str(contact.id)]
 
     def test_query_count_does_not_scale_with_role_or_contact_count(
         self, client, make_user, count_queries
@@ -163,7 +163,7 @@ class TestSendMessageToContactperson:
 
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": recipient.id, "message": "Bitte um Rückruf."},
+            json={"recipient_id": str(recipient.id), "message": "Bitte um Rückruf."},
             headers=headers,
         )
 
@@ -185,7 +185,7 @@ class TestSendMessageToContactperson:
 
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": recipient.id, "message": "Bitte um Rückruf."},
+            json={"recipient_id": str(recipient.id), "message": "Bitte um Rückruf."},
             headers=headers,
         )
 
@@ -199,7 +199,7 @@ class TestSendMessageToContactperson:
 
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": 0, "message": "Bitte um Rückruf."},
+            json={"recipient_id": str(uuid.uuid4()), "message": "Bitte um Rückruf."},
             headers=headers,
         )
 

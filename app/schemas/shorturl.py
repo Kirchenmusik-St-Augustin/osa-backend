@@ -1,3 +1,5 @@
+import uuid
+
 from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
@@ -13,7 +15,7 @@ class ShorturlRequest(StrictInputModel):
 
 
 class ShorturlResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     path: str
     target: str
     counter: int

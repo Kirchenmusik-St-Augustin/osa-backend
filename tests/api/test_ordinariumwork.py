@@ -120,14 +120,14 @@ class TestCrudRoundtrip:
 
     def test_get_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.get("/ordinariumworks/999", headers=headers)
+        response = client.get(f"/ordinariumworks/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
         artist_id = _make_artist(client, headers)
         response = client.put(
-            "/ordinariumworks/999",
+            f"/ordinariumworks/{uuid.uuid4()}",
             json={
                 "name": _unique(),
                 "description": None,
@@ -142,7 +142,7 @@ class TestCrudRoundtrip:
 
     def test_delete_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.delete("/ordinariumworks/999", headers=headers)
+        response = client.delete(f"/ordinariumworks/{uuid.uuid4()}", headers=headers)
         assert response.status_code == 404
 
 
@@ -197,7 +197,7 @@ class TestSetup:
 
     def test_setup_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
-        response = client.get("/ordinariumworks/999/setup", headers=headers)
+        response = client.get(f"/ordinariumworks/{uuid.uuid4()}/setup", headers=headers)
         assert response.status_code == 404
 
 
@@ -214,7 +214,10 @@ class TestValidation:
                 "artist_id": artist_id,
                 "duration": None,
                 "demanding": False,
-                "setup": {"instruments": [{"id": 999999, "quantity": 1}], "voices": []},
+                "setup": {
+                    "instruments": [{"id": str(uuid.uuid4()), "quantity": 1}],
+                    "voices": [],
+                },
             },
             headers=headers,
         )
