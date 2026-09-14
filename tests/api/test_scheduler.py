@@ -1,6 +1,9 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import patch
 
+from sqlalchemy.orm import Session
+
+from app.db.models.job_run import JobRun
 from app.services.backup_service import BackupError
 
 
@@ -62,7 +65,15 @@ def test_returns_registered_jobs_with_expected_shape(client, make_user):
     jobs = response.json()
     assert len(jobs) >= 1
     for job in jobs:
-        assert set(job.keys()) == {"id", "name", "trigger", "next_run", "description"}
+        assert set(job.keys()) == {
+            "id",
+            "name",
+            "trigger",
+            "next_run",
+            "description",
+            "last_run",
+        }
+        assert job["last_run"] is None
 
 
 def test_hides_production_only_jobs_outside_production(client, make_user):
@@ -250,3 +261,47 @@ class TestTriggerDownsync:
 
         assert response.status_code == 500
         assert response.json()["detail"] == "Koofr download failed"
+
+
+class TestNPlusOne:
+    def test_list_jobs_query_count_does_not_scale_with_job_run_count(
+        self, client, make_user, db_session: Session, count_queries
+    ):
+        """get_latest_run_per_job() is one DISTINCT ON query, not one per
+        job -- adding more job_runs rows across every job must not add
+        more SQL statements to GET /jobs."""
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        with count_queries() as before_any_runs:
+            response_before = client.get(
+                "/administrator/scheduler/jobs", headers=headers
+            )
+
+        for job_id in (
+            "purge_stale_booking_requests",
+            "notify_upcoming_booking_status",
+            "purge_expired_password_reset_tokens",
+            "purge_old_request_logs",
+            "backup_koofr",
+            "downsync",
+        ):
+            for offset in range(3):
+                started_at = datetime(2026, 9, 1, offset, tzinfo=UTC)
+                db_session.add(
+                    JobRun(
+                        job_id=job_id,
+                        status="success",
+                        started_at=started_at,
+                        finished_at=started_at,
+                    )
+                )
+        db_session.commit()
+
+        with count_queries() as after_many_runs:
+            response_after = client.get(
+                "/administrator/scheduler/jobs", headers=headers
+            )
+
+        assert response_before.status_code == 200
+        assert response_after.status_code == 200
+        assert after_many_runs.count == before_any_runs.count

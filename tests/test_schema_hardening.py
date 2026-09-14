@@ -11,13 +11,16 @@ trigger function now maintains `updated_at` on every table that has one),
 and the final cleanup slice of the UUIDv7 primary-key migration (the
 `id_legacy_int`/`*_legacy_int` bridge columns and their owned sequences,
 kept around as an inert forensic trail after the cutover, dropped for
-good once no longer needed). Schema comes from the real Alembic
-migrations (see conftest.py's session-scoped _create_schema fixture) --
-these tests verify actual migration output, not just model intent."""
+good once no longer needed). Also covers the job_runs table's own
+schema-level guarantees (native ENUMs, a CHECK constraint, a generated
+column) added alongside the persisted "last run" scheduler feature.
+Schema comes from the real Alembic migrations (see conftest.py's
+session-scoped _create_schema fixture) -- these tests verify actual
+migration output, not just model intent."""
 
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import inspect, select, text
@@ -32,6 +35,7 @@ from app.db.models.booking_log import BookingLog
 from app.db.models.choirjob import Choirjob
 from app.db.models.fee import Fee
 from app.db.models.instrument import Instrument
+from app.db.models.job_run import JobRun
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
@@ -737,3 +741,66 @@ class TestLegacyIntBridgeColumnsDropped:
             text("SELECT sequence_name FROM information_schema.sequences")
         ).all()
         assert rows == []
+
+
+class TestJobRunsHardening:
+    """job_runs' own schema-level guarantees -- see
+    app.db.models.job_run. Not part of the eight-slice DB-hardening
+    roadmap the classes above document; added alongside the persisted
+    "last run" scheduler feature that introduced this table."""
+
+    def test_finished_before_started_is_rejected(self, db_session: Session):
+        started_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+        db_session.add(
+            JobRun(
+                job_id="backup_koofr",
+                status="success",
+                started_at=started_at,
+                finished_at=started_at - timedelta(seconds=1),
+            )
+        )
+        with pytest.raises(IntegrityError, match="violates check constraint"):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_duration_seconds_is_computed_from_started_and_finished_at(
+        self, db_session: Session
+    ):
+        started_at = datetime(2026, 9, 1, 12, 0, 0, tzinfo=UTC)
+        run = JobRun(
+            job_id="downsync",
+            status="success",
+            started_at=started_at,
+            finished_at=started_at + timedelta(seconds=90),
+        )
+        db_session.add(run)
+        db_session.flush()
+        db_session.expire(run)
+
+        assert run.duration_seconds == 90
+
+    def test_invalid_job_id_is_rejected(self, db_session: Session):
+        db_session.add(
+            JobRun(
+                job_id="bogus_job",
+                status="success",
+                started_at=datetime(2026, 9, 1, tzinfo=UTC),
+                finished_at=datetime(2026, 9, 1, tzinfo=UTC),
+            )
+        )
+        with pytest.raises(DataError, match="invalid input value for enum"):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_invalid_status_is_rejected(self, db_session: Session):
+        db_session.add(
+            JobRun(
+                job_id="backup_koofr",
+                status="bogus",
+                started_at=datetime(2026, 9, 1, tzinfo=UTC),
+                finished_at=datetime(2026, 9, 1, tzinfo=UTC),
+            )
+        )
+        with pytest.raises(DataError, match="invalid input value for enum"):
+            db_session.flush()
+        db_session.rollback()

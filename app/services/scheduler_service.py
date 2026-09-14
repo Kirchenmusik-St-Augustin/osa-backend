@@ -9,15 +9,21 @@ same catalog (see app.worker.settings.WorkerSettings), the two displays
 can never disagree in content -- but this endpoint's response no longer
 confirms that the worker container is actually up and running right now,
 only that it *would* run these jobs on this schedule if it is.
+
+`last_run` is the one piece of genuinely persisted state in this
+otherwise-theoretical overview -- see app.services.job_run_service.
 """
 
 from datetime import datetime
 
 from arq.cron import next_cron
+from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.datetime_utils import get_app_timezone
-from app.schemas.scheduler import ScheduledJobOutput
+from app.db.models.job_run import JobRun
+from app.schemas.scheduler import JobRunOutput, ScheduledJobOutput
+from app.services.job_run_service import get_latest_run_per_job
 from app.worker.cron_config import CronSchedule, build_cron_catalog
 
 _TRIGGER_FIELDS = ("month", "day", "weekday", "hour", "minute", "second")
@@ -47,20 +53,37 @@ def _next_run_display(schedule: CronSchedule) -> str:
     return next_run.astimezone(get_app_timezone()).strftime("%d.%m.%Y, %H:%M")
 
 
-def _to_output(schedule: CronSchedule) -> ScheduledJobOutput:
+def _to_last_run_output(run: JobRun | None) -> JobRunOutput | None:
+    if run is None:
+        return None
+    return JobRunOutput(
+        status=run.status,
+        output=run.output,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+    )
+
+
+def _to_output(
+    schedule: CronSchedule, latest_runs: dict[str, JobRun]
+) -> ScheduledJobOutput:
     return ScheduledJobOutput(
         id=schedule.job_id,
         name=schedule.job_id,
         trigger=_trigger_display(schedule),
         next_run=_next_run_display(schedule),
         description=schedule.description,
+        last_run=_to_last_run_output(latest_runs.get(schedule.job_id)),
     )
 
 
-def get_scheduled_jobs(settings: Settings | None = None) -> list[ScheduledJobOutput]:
+def get_scheduled_jobs(
+    db: Session, settings: Settings | None = None
+) -> list[ScheduledJobOutput]:
     active_settings = settings or get_settings()
+    latest_runs = get_latest_run_per_job(db)
     return [
-        _to_output(schedule)
+        _to_output(schedule, latest_runs)
         for schedule in build_cron_catalog(active_settings)
         if schedule.active
     ]

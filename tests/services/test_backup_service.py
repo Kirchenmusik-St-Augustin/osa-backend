@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from subprocess import CalledProcessError
@@ -150,6 +151,37 @@ class TestRunBackup:
         assert str(uploaded["url"]).endswith(archive_name)
         assert uploaded["auth"] == ("user", "pw")
         assert uploaded["data"] == b"PG_DUMP_DATA"
+
+    def test_excludes_job_runs_row_data_from_the_dump(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """job_runs holds this stage's own scheduled-job run history -- a
+        shared backup must never carry it, or a downsync/restore on another
+        stage would silently replace that stage's own history with this
+        one's (see run_restore()'s preserve mechanism, which relies on this
+        exclusion to have already happened)."""
+        monkeypatch.setenv("DATABASE_URL", PG_URL)
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
+        monkeypatch.setattr(
+            backup_service.requests,
+            "put",
+            lambda *_a, **_kw: _FakeResponse(status_code=200),
+        )
+
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], **_kw: object) -> MagicMock:
+            calls.append(args)
+            return MagicMock(stdout=b"x", returncode=0)
+
+        monkeypatch.setattr(backup_service.subprocess, "run", fake_run)
+
+        backup_service.run_backup()
+
+        assert len(calls) == 1
+        assert "--exclude-table-data=public.job_runs" in calls[0]
 
     def test_manual_true_tags_the_filename_with_a_manual_suffix(
         self, monkeypatch: pytest.MonkeyPatch
@@ -694,15 +726,24 @@ class TestRunRestore:
         result = backup_service.run_restore(backup_name=backup_name, force=True)
 
         assert result == backup_name
-        # psql (wipe), pg_restore, psql (ANALYZE), psql (row-count verify)
-        assert len(calls) == 4
-        assert calls[0][0] == FAKE_PSQL
-        assert "DROP SCHEMA public CASCADE" in calls[0][-1]
-        assert calls[1][0] == FAKE_PG_RESTORE
-        assert calls[2][0] == FAKE_PSQL
-        assert calls[2][-1] == "ANALYZE;"
+        # pg_dump (preserve job_runs), psql (wipe), pg_restore (main),
+        # psql (ANALYZE), psql (row-count verify), pg_restore (reinsert
+        # preserved job_runs) -- see run_restore()'s own ordering comment
+        # for why the reinsert happens AFTER the row-count verification.
+        assert len(calls) == 6
+        assert calls[0][0] == FAKE_PG_DUMP
+        assert "--data-only" in calls[0]
+        assert "--table=public.job_runs" in calls[0]
+        assert calls[1][0] == FAKE_PSQL
+        assert "DROP SCHEMA public CASCADE" in calls[1][-1]
+        assert calls[2][0] == FAKE_PG_RESTORE
+        assert "--data-only" not in calls[2]
         assert calls[3][0] == FAKE_PSQL
-        assert "SUM(n_live_tup)" in calls[3][-1]
+        assert calls[3][-1] == "ANALYZE;"
+        assert calls[4][0] == FAKE_PSQL
+        assert "SUM(n_live_tup)" in calls[4][-1]
+        assert calls[5][0] == FAKE_PG_RESTORE
+        assert "--data-only" in calls[5]
 
     def test_raises_when_the_restored_database_ends_up_empty(
         self, monkeypatch: pytest.MonkeyPatch
@@ -903,6 +944,84 @@ class TestRunRestore:
             )
 
         assert fake_engine.disposed is False
+
+    def test_restore_still_succeeds_when_preserving_job_runs_fails(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        """The pre-wipe job_runs preserve step (see
+        backup_service._preserve_job_runs_before_wipe()) is best-effort --
+        a failure there (e.g. this stage's very first restore ever, before
+        job_runs exists) must never abort the restore itself."""
+        monkeypatch.setenv("DATABASE_URL", PG_URL)
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(status_code=200, content=b"x"),
+        )
+        monkeypatch.setattr(backup_service, "engine", _FakeEngine())
+
+        def fake_run(args: list[str], **_kw: object) -> MagicMock:
+            if args[0] == FAKE_PG_DUMP:
+                raise CalledProcessError(
+                    1, "pg_dump", stderr=b'relation "job_runs" does not exist'
+                )
+            if "SUM(n_live_tup)" in args[-1]:
+                return MagicMock(stdout=b"5", returncode=0)
+            return MagicMock(stdout=b"", returncode=0)
+
+        monkeypatch.setattr(backup_service.subprocess, "run", fake_run)
+
+        with caplog.at_level(logging.ERROR):
+            result = backup_service.run_restore(
+                backup_name="production-2024-01-01_00-00-00.dump", force=True
+            )
+
+        assert result == "production-2024-01-01_00-00-00.dump"
+        assert "could not preserve" in caplog.text.lower()
+
+    def test_restore_still_succeeds_when_reinserting_job_runs_fails(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        """The post-restore job_runs reinsert step (see
+        backup_service._restore_preserved_job_runs()) is best-effort too --
+        by the time it runs, the actual restore has already succeeded and
+        passed _verify_restore_populated()."""
+        monkeypatch.setenv("DATABASE_URL", PG_URL)
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(status_code=200, content=b"x"),
+        )
+        monkeypatch.setattr(backup_service, "engine", _FakeEngine())
+
+        restore_calls: list[list[str]] = []
+
+        def fake_run(args: list[str], **_kw: object) -> MagicMock:
+            if args[0] == FAKE_PG_RESTORE:
+                restore_calls.append(args)
+                if "--data-only" in args:
+                    raise CalledProcessError(1, "pg_restore", stderr=b"broken pipe")
+                return MagicMock(stdout=b"", returncode=0)
+            if "SUM(n_live_tup)" in args[-1]:
+                return MagicMock(stdout=b"5", returncode=0)
+            return MagicMock(stdout=b"", returncode=0)
+
+        monkeypatch.setattr(backup_service.subprocess, "run", fake_run)
+
+        with caplog.at_level(logging.ERROR):
+            result = backup_service.run_restore(
+                backup_name="production-2024-01-01_00-00-00.dump", force=True
+            )
+
+        assert result == "production-2024-01-01_00-00-00.dump"
+        assert len(restore_calls) == 2
+        assert "could not reinsert" in caplog.text.lower()
 
 
 class TestRetryTransientKoofrRequest:

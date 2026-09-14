@@ -1,4 +1,5 @@
 import logging
+from unittest.mock import Mock
 
 import pytest
 
@@ -6,9 +7,20 @@ from app.services import downsync_jobs
 from app.services.backup_service import BackupError
 
 
+@pytest.fixture(autouse=True)
+def mock_record_job_run(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """job_downsync() self-reports via record_job_run() -- mocked at
+    downsync_jobs' own import site (same pattern as list_backups/
+    run_restore below), never touching a real DB session in this otherwise
+    pure unit-test file."""
+    mock = Mock()
+    monkeypatch.setattr(downsync_jobs, "record_job_run", mock)
+    return mock
+
+
 class TestJobDownsync:
     def test_success_restores_the_latest_production_backup(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, mock_record_job_run: Mock
     ):
         monkeypatch.setenv("APP_ENVIRONMENT", "test")
         calls: list[tuple[str, object]] = []
@@ -34,9 +46,16 @@ class TestJobDownsync:
             ("list_backups", "production"),
             ("run_restore", "production-2024-06-01_00-00-00.dump"),
         ]
+        assert mock_record_job_run.call_args.kwargs == {
+            "status": "success",
+            "output": "Restored production-2024-06-01_00-00-00.dump.",
+        }
 
     def test_never_runs_in_production_even_if_registration_guard_is_bypassed(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        mock_record_job_run: Mock,
     ):
         monkeypatch.setenv("APP_ENVIRONMENT", "production")
 
@@ -50,9 +69,15 @@ class TestJobDownsync:
             downsync_jobs.job_downsync()
 
         assert "production" in caplog.text.lower()
+        recorded = mock_record_job_run.call_args.kwargs
+        assert recorded["status"] == "failure"
+        assert "production" in recorded["output"].lower()
 
     def test_skips_and_logs_when_no_production_backup_exists_yet(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        mock_record_job_run: Mock,
     ):
         monkeypatch.setenv("APP_ENVIRONMENT", "test")
         monkeypatch.setattr(downsync_jobs, "list_backups", lambda **_kwargs: [])
@@ -67,9 +92,17 @@ class TestJobDownsync:
             downsync_jobs.job_downsync()
 
         assert "no production backup" in caplog.text.lower()
+        # Success, not failure -- the job correctly found nothing to do,
+        # not an error.
+        recorded = mock_record_job_run.call_args.kwargs
+        assert recorded["status"] == "success"
+        assert "no production backup" in recorded["output"].lower()
 
     def test_list_backups_failure_is_caught_and_logged(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        mock_record_job_run: Mock,
     ):
         monkeypatch.setenv("APP_ENVIRONMENT", "test")
 
@@ -83,9 +116,15 @@ class TestJobDownsync:
             downsync_jobs.job_downsync()
 
         assert "could not list backups" in caplog.text.lower()
+        recorded = mock_record_job_run.call_args.kwargs
+        assert recorded["status"] == "failure"
+        assert "Koofr directory listing failed" in recorded["output"]
 
     def test_run_restore_failure_is_caught_and_logged(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        mock_record_job_run: Mock,
     ):
         monkeypatch.setenv("APP_ENVIRONMENT", "test")
         monkeypatch.setattr(
@@ -104,3 +143,7 @@ class TestJobDownsync:
             downsync_jobs.job_downsync()
 
         assert "scheduled downsync failed" in caplog.text.lower()
+        assert mock_record_job_run.call_args.kwargs == {
+            "status": "failure",
+            "output": "Koofr download failed",
+        }

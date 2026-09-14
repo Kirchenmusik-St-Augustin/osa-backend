@@ -1,12 +1,16 @@
-"""Scheduled jobs for the Booking domain, registered in app.core.scheduler.
+"""Scheduled jobs for the Booking domain, registered in
+app.worker.settings.WorkerSettings (see app.worker.cron_config for the
+shared timing catalog).
 
 Each function opens its own short-lived SessionLocal() -- these run outside
 any request context (the documented exception to the SessionLocal-outside-
 Depends ruff ban, see pyproject.toml's per-file-ignores and app.core.mailer
-for the same pattern). Exceptions are deliberately NOT caught here --
-APScheduler's own executor already logs a job's exception and keeps the
-scheduler itself running, so an extra `except Exception` here would only
-duplicate that (and generic exception handling is banned anyway).
+for the same pattern). Exceptions are deliberately NOT caught here -- arq's
+own Worker.run_job() already logs a job's exception and keeps the worker
+itself running, so an extra `except Exception` here would only duplicate
+that (and generic exception handling is banned anyway). Their outcome is
+recorded by app.worker.scheduled_jobs._run_and_record(), the async wrapper
+that actually invokes these functions.
 """
 
 import uuid

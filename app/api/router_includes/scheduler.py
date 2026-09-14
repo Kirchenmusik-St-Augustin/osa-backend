@@ -2,9 +2,11 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.api.auth_guards import require_permission
 from app.core.config import get_settings
+from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.scheduler import (
     BackupTriggerOutput,
@@ -43,11 +45,14 @@ _NO_PRODUCTION_BACKUP_DETAIL = "Kein Production-Backup auf Koofr vorhanden."
 @scheduler_router.get("/jobs")
 def list_scheduled_jobs(
     _current_user: Annotated[User, _VIEW],
+    db: Annotated[Session, Depends(get_db)],
 ) -> list[ScheduledJobOutput]:
-    """Pure in-memory computation from the shared cron catalog -- no DB
-    session needed, no dependency on the arq worker container actually
-    being up right now (see scheduler_service's own docstring)."""
-    return scheduler_service.get_scheduled_jobs()
+    """Trigger/next_run are pure in-memory computation from the shared cron
+    catalog -- no dependency on the arq worker container actually being up
+    right now (see scheduler_service's own docstring). `last_run` is the
+    one field that does need a DB session, read from the persisted
+    job_runs table."""
+    return scheduler_service.get_scheduled_jobs(db)
 
 
 @scheduler_router.post("/backup/trigger", status_code=status.HTTP_201_CREATED)
