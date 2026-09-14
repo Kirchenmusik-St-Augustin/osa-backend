@@ -5,12 +5,15 @@ slice (missing indexes, money >= 0 CHECK constraints, the `order` ->
 converted from varchar+CHECK to native Postgres ENUMs), the
 JSONB-conversion slice (request_logs' three JSON-text columns and
 auth_logs.payload converted to native JSONB, sent_emails.attachments
-dropped as dead), and the TIMESTAMPTZ + audit-trigger slice (every
+dropped as dead), the TIMESTAMPTZ + audit-trigger slice (every
 genuinely-UTC DateTime column converted to TIMESTAMPTZ, a shared Postgres
-trigger function now maintains `updated_at` on every table that has one).
-Schema comes from the real Alembic migrations (see conftest.py's
-session-scoped _create_schema fixture) -- these tests verify actual
-migration output, not just model intent."""
+trigger function now maintains `updated_at` on every table that has one),
+and the final cleanup slice of the UUIDv7 primary-key migration (the
+`id_legacy_int`/`*_legacy_int` bridge columns and their owned sequences,
+kept around as an inert forensic trail after the cutover, dropped for
+good once no longer needed). Schema comes from the real Alembic
+migrations (see conftest.py's session-scoped _create_schema fixture) --
+these tests verify actual migration output, not just model intent."""
 
 import uuid
 from collections.abc import Callable
@@ -711,3 +714,26 @@ class TestUpdatedAtTrigger:
 
         assert user_role.updated_at is not None
         assert user_role.updated_at > old_updated_at
+
+
+class TestLegacyIntBridgeColumnsDropped:
+    """Phase C of the UUIDv7 primary-key migration: every id_legacy_int/
+    *_legacy_int bridge column and its owned sequence is gone. Checked
+    exhaustively via information_schema in a single query each, rather
+    than the representative-sample style used elsewhere in this file --
+    completeness is the actual point of this slice."""
+
+    def test_no_legacy_int_columns_remain(self, db_session: Session):
+        rows = db_session.execute(
+            text(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE column_name LIKE '%\\_legacy\\_int' ESCAPE '\\'"
+            )
+        ).all()
+        assert rows == []
+
+    def test_no_sequences_remain(self, db_session: Session):
+        rows = db_session.execute(
+            text("SELECT sequence_name FROM information_schema.sequences")
+        ).all()
+        assert rows == []
