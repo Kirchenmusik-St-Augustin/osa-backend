@@ -121,6 +121,8 @@ def test_session_with_never_used_timestamp_is_bumped_not_rejected(
     )
 
     assert response.status_code == 200
+    db_session.refresh(user)
+    assert user.auth_lastsignal is not None
 
 
 def test_session_within_grace_period_bumps_lastsignal(client, make_user, db_session):
@@ -147,3 +149,38 @@ def test_session_within_grace_period_bumps_lastsignal(client, make_user, db_sess
     )
 
     assert response.status_code == 200
+    db_session.refresh(user)
+    assert user.auth_lastsignal is not None
+
+
+def test_session_used_within_the_last_minute_does_not_bump_lastsignal(
+    client, make_user, db_session
+):
+    """Sub-1-minute activity is a deliberate no-op, the mirror image of the
+    grace-period test above -- same DB-write-avoidance throttle
+    PersonalAccessToken.last_used_at's own bump uses (see
+    _enforce_idle_timeout). auth_lastsignal is seeded with a distinguishable
+    stale value first, so "unchanged" can't be confused with "never set"."""
+    user = make_user(password="correct-password")
+    login_response = client.post(
+        "/auth/login",
+        data={"username": user.email, "password": "correct-password"},
+    )
+    access_token = login_response.json()["access_token"]
+
+    stale_lastsignal = datetime.now(UTC) - timedelta(hours=1)
+    result = db_session.execute(
+        select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+    )
+    session_row = result.scalar_one()
+    session_row.last_used_at = datetime.now(UTC) - timedelta(seconds=30)
+    user.auth_lastsignal = stale_lastsignal
+    db_session.commit()
+
+    response = client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {access_token}"}
+    )
+
+    assert response.status_code == 200
+    db_session.refresh(user)
+    assert user.auth_lastsignal == stale_lastsignal
