@@ -1,10 +1,13 @@
-"""Scheduled hygiene jobs, registered in app.core.scheduler.
+"""Scheduled hygiene jobs, registered in app.worker.settings.WorkerSettings
+(see app.worker.cron_config for the shared timing catalog).
 
 Same pattern as booking_jobs.py: each function opens its own short-lived
 SessionLocal() (documented exception to the SessionLocal-outside-Depends
 ruff ban, see pyproject.toml's per-file-ignores), and exceptions are
-deliberately NOT caught here -- APScheduler's own executor already logs a
-job's exception and keeps the scheduler running.
+deliberately NOT caught here -- arq's own Worker.run_job() already logs a
+job's exception and keeps the worker running. Their outcome is recorded by
+app.worker.scheduled_jobs._run_and_record(), the async wrapper that
+actually invokes these functions.
 """
 
 from datetime import UTC, datetime, timedelta

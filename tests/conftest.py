@@ -88,7 +88,7 @@ from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
-from app.services import booking_jobs, housekeeping_jobs
+from app.services import booking_jobs, housekeeping_jobs, job_run_service
 from main import app
 
 if engine.dialect.name != "postgresql":
@@ -270,6 +270,7 @@ booking_jobs.SessionLocal = _job_session_factory
 housekeeping_jobs.SessionLocal = _job_session_factory
 mailer.SessionLocal = _job_session_factory
 request_logging.SessionLocal = _job_session_factory
+job_run_service.SessionLocal = _job_session_factory
 
 
 @pytest.fixture

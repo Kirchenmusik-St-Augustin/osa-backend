@@ -15,6 +15,7 @@ from app.db.models.choirjob import Choirjob  # noqa: F401
 from app.db.models.client_user_agent import ClientUserAgent  # noqa: F401
 from app.db.models.fee import Fee  # noqa: F401
 from app.db.models.instrument import Instrument  # noqa: F401
+from app.db.models.job_run import JobRun  # noqa: F401
 from app.db.models.location import Location  # noqa: F401
 from app.db.models.oauth2_binding import Oauth2Binding  # noqa: F401
 from app.db.models.ordinariumwork import Ordinariumwork  # noqa: F401

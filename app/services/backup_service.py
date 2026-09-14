@@ -202,6 +202,14 @@ def run_backup(*, manual: bool = False) -> str:
         [
             pg_dump,
             "--format=custom",
+            # job_runs holds this STAGE's own scheduled-job run history
+            # (see app.db.models.job_run) -- excluded from every backup's
+            # row data (schema still included) so a downsync/restore never
+            # replaces a stage's own history with another stage's. See
+            # run_restore()'s _dump_table_data()/_restore_table_data() for
+            # the other half of this: preserving the target's own rows
+            # across the restore this backup eventually feeds.
+            "--exclude-table-data=public.job_runs",
             f"--host={host}",
             f"--port={port}",
             f"--username={user}",
@@ -494,6 +502,108 @@ def _verify_restore_populated(
         raise BackupError(msg)
 
 
+def _dump_table_data(
+    host: str, user: str, password: str, port: int, dbname: str, *, table: str
+) -> Path:
+    """Dump one table's row data only (--data-only, --format=custom) to a
+    fresh temp file. Used by run_restore() to preserve this stage's own
+    job_runs rows across a restore that's about to wipe the whole schema --
+    every backup excludes job_runs' row data (see run_backup()), so the
+    incoming dump never carries another stage's history to overwrite it
+    with; without this, the wipe would simply lose the current stage's own
+    history instead.
+
+    Generated columns (duration_seconds) are automatically excluded from a
+    --data-only dump by pg_dump itself, nothing to special-case."""
+    pg_dump = _resolve_pg_tool("pg_dump")
+    with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
+        tmp_path = tmp.name
+    _run_pg_subprocess(
+        [
+            pg_dump,
+            "--format=custom",
+            "--data-only",
+            f"--table={table}",
+            f"--file={tmp_path}",
+            f"--host={host}",
+            f"--port={port}",
+            f"--username={user}",
+            f"--dbname={dbname}",
+        ],
+        env=_build_pg_env(password),
+        tool_name="pg_dump",
+    )
+    return Path(tmp_path)
+
+
+def _restore_table_data(
+    host: str, user: str, password: str, port: int, dbname: str, *, dump_path: Path
+) -> None:
+    """Reinsert a table's previously dumped rows (see _dump_table_data())
+    via pg_restore --data-only. The set_updated_at trigger is BEFORE
+    UPDATE only (see alembic/versions/67c882c8cca9), so it never fires
+    during this INSERT-only reload -- --disable-triggers isn't needed."""
+    pg_restore = _resolve_pg_tool("pg_restore")
+    _run_pg_subprocess(
+        [
+            pg_restore,
+            "--data-only",
+            f"--host={host}",
+            f"--port={port}",
+            f"--username={user}",
+            f"--dbname={dbname}",
+            str(dump_path),
+        ],
+        env=_build_pg_env(password),
+        tool_name="pg_restore",
+    )
+
+
+def _preserve_job_runs_before_wipe(
+    host: str, user: str, password: str, port: int, dbname: str
+) -> Path | None:
+    """Best-effort wrapper around _dump_table_data() for run_restore(): a
+    failure to preserve this stage's own job_runs history must never abort
+    the restore itself, which is the actually important operation. Returns
+    None (rather than raising) on failure, so the caller can simply skip
+    the corresponding _restore_preserved_job_runs() call afterward."""
+    try:
+        return _dump_table_data(
+            host, user, password, port, dbname, table="public.job_runs"
+        )
+    except BackupError:
+        logger.exception(
+            "Could not preserve this stage's own job_runs history before "
+            "the restore -- continuing without it."
+        )
+        return None
+
+
+def _restore_preserved_job_runs(
+    host: str,
+    user: str,
+    password: str,
+    port: int,
+    dbname: str,
+    *,
+    dump_path: Path | None,
+) -> None:
+    """Best-effort counterpart to _preserve_job_runs_before_wipe() -- a
+    no-op when nothing was preserved (dump_path is None, either because
+    preservation itself failed, or a stage's very first restore ever, where
+    job_runs may not even exist yet). A failure here must never fail the
+    restore either -- it already succeeded by the time this runs."""
+    if dump_path is None:
+        return
+    try:
+        _restore_table_data(host, user, password, port, dbname, dump_path=dump_path)
+    except BackupError:
+        logger.exception(
+            "Could not reinsert this stage's preserved job_runs history "
+            "after the restore -- the restore itself still succeeded."
+        )
+
+
 def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
     """Download a Koofr backup and restore it into the live Postgres database.
 
@@ -549,6 +659,14 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
         raise BackupError(msg) from exc
 
     host, db_user, db_password, port, dbname = _parse_db_url(database_url)
+
+    # Preserve this stage's own job_runs history before the schema wipe
+    # below discards it -- every backup excludes job_runs' row data (see
+    # run_backup()), so without this step the wipe would simply lose it.
+    job_runs_dump_path = _preserve_job_runs_before_wipe(
+        host, db_user, db_password, port, dbname
+    )
+
     with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
         tmp.write(response.content)
         tmp_path = tmp.name
@@ -569,9 +687,18 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
             env=_build_pg_env(db_password),
             tool_name="pg_restore",
         )
+        # Verified BEFORE job_runs is reinserted below -- otherwise a
+        # completely failed main restore (zero rows in every real table)
+        # could still pass this check on the strength of job_runs' own
+        # preserved rows alone, masking the actual failure.
         _verify_restore_populated(host, db_user, db_password, port, dbname)
+        _restore_preserved_job_runs(
+            host, db_user, db_password, port, dbname, dump_path=job_runs_dump_path
+        )
     finally:
         Path(tmp_path).unlink()
+        if job_runs_dump_path is not None:
+            job_runs_dump_path.unlink(missing_ok=True)
 
     engine.dispose()
     logger.info("Restore complete from: %s", backup_name)
