@@ -1,13 +1,18 @@
-import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.human_names import normalize_givenname, normalize_surname
 from app.core.security import get_password_hash, verify_password
 from app.db.models.user import User
-from app.schemas.profile import ProfileUpdateRequest
 from app.schemas.validators import PASSWORD_POLICY_MESSAGE
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import Session
+
+    from app.schemas.profile import ProfileUpdateRequest
 
 
 class WrongCurrentPasswordError(Exception):

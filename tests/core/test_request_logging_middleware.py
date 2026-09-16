@@ -1,14 +1,17 @@
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.db.models.request_log import RequestLog
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 @pytest.fixture(autouse=True)

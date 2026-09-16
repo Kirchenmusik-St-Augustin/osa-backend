@@ -1,10 +1,10 @@
 import itertools
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
 from app.db.models.booking_log import BookingLog
@@ -16,6 +16,9 @@ from app.db.models.performance import Performance
 from app.schemas.artist import ArtistRequest
 from app.schemas.performance import PerformanceRequest, PerformanceSetupInput
 from app.services import artist_service, booking_jobs, performance_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 _schedule_counter = itertools.count(2)
 

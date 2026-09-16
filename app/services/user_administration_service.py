@@ -1,11 +1,15 @@
-import uuid
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.core.security import generate_random_password, get_password_hash
 from app.db.models.user import User
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
+    from sqlalchemy.orm import Session
 
 _SEARCH_RESULT_LIMIT = 20
 

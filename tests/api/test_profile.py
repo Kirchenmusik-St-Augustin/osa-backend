@@ -1,6 +1,8 @@
 import uuid
+from typing import TYPE_CHECKING
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 
 def _unique(base: str = "Profile") -> str:

@@ -1,7 +1,10 @@
-import pytest
+from typing import TYPE_CHECKING
 
 from app.core.config import get_settings
 from app.worker.cron_config import build_cron_catalog
+
+if TYPE_CHECKING:
+    import pytest
 
 _ALWAYS_ON_JOB_ID = "purge_stale_booking_requests"
 _PRODUCTION_ONLY_JOB_IDS = {

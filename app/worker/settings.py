@@ -6,11 +6,9 @@ either of these itself anymore.
 """
 
 import logging
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from arq.connections import RedisSettings
 from arq.cron import CronJob, cron
-from arq.typing import WorkerCoroutine
 
 from app.core.arq_pool import build_redis_settings
 from app.core.config import get_settings
@@ -38,6 +36,10 @@ from app.worker.tasks import (
     send_user_message_email_task,
     send_verification_email_task,
 )
+
+if TYPE_CHECKING:
+    from arq.connections import RedisSettings
+    from arq.typing import WorkerCoroutine
 
 logger = logging.getLogger(__name__)
 

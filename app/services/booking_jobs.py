@@ -13,9 +13,8 @@ recorded by app.worker.scheduled_jobs._run_and_record(), the async wrapper
 that actually invokes these functions.
 """
 
-import uuid
-from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select
 
@@ -27,6 +26,10 @@ from app.db.models.booking_request import BookingRequest
 from app.db.models.performance import Performance
 from app.db.models.user import User
 from app.services import performance_service
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
 
 
 def purge_stale_booking_requests() -> None:

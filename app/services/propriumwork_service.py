@@ -1,8 +1,6 @@
-import uuid
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.db.models.artist import Artist
 from app.db.models.performance_proprium import PerformanceProprium
@@ -13,6 +11,12 @@ from app.schemas.propriumwork import (
     PropriumworkSearchResult,
 )
 from app.services.artist_service import label_for
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
+    from sqlalchemy.orm import Session
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 60

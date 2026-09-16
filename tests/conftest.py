@@ -62,17 +62,16 @@ if _dbname not in _ALLOWED_TEST_DBS:
 os.environ["DATABASE_URL"] = _TEST_DATABASE_URL  # consulted by alembic/env.py too
 
 import uuid
-from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import event, select, text
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from alembic import command
@@ -90,6 +89,11 @@ from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
 from app.services import booking_jobs, housekeeping_jobs, job_run_service
 from main import app
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+    from sqlalchemy.engine import Connection
 
 if engine.dialect.name != "postgresql":
     msg = f"Test suite requires PostgreSQL, got dialect {engine.dialect.name!r}."
@@ -411,7 +415,7 @@ _SAVEPOINT_PREFIXES = ("SAVEPOINT", "RELEASE SAVEPOINT", "ROLLBACK TO SAVEPOINT"
 
 
 @pytest.fixture
-def count_queries() -> Callable[[], Iterator["QueryCounter"]]:
+def count_queries() -> Callable[[], Iterator[QueryCounter]]:
     """Yield a factory for a context manager that counts executed SQL
     statements, e.g. `with count_queries() as counter: ...; assert
     counter.count <= N` -- used to assert N+1 query patterns don't

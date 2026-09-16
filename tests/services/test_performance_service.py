@@ -1,11 +1,10 @@
 import itertools
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.datetime_utils import local_now
@@ -19,7 +18,6 @@ from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.propriumwork import Propriumwork
-from app.db.models.user import User
 from app.db.models.voice import Voice
 from app.schemas.artist import ArtistRequest
 from app.schemas.performance import (
@@ -30,6 +28,13 @@ from app.schemas.performance import (
     PerformanceSetupInput,
 )
 from app.services import artist_service, performance_service
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.orm import Session
+
+    from app.db.models.user import User
 
 _schedule_counter = itertools.count(2)
 

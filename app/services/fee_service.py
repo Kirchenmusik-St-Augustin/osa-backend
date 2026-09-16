@@ -1,10 +1,14 @@
-import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db.models.fee import Fee
 from app.schemas.fee import FeeRequest, FeeResponse
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import Session
 
 
 class FeeNotFoundError(Exception):

@@ -1,9 +1,6 @@
-import uuid
-from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.db.models.artist import Artist
 from app.db.models.instrument import Instrument
@@ -24,6 +21,12 @@ from app.schemas.ordinariumwork import (
 )
 from app.services.artist_service import label_for
 from app.services.coreelement_service import list_coreelements
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
+    from sqlalchemy.orm import Session
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 60

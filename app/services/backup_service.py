@@ -39,9 +39,9 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from xml.etree import ElementTree
 
 import requests
@@ -50,6 +50,9 @@ from sqlalchemy.engine import make_url
 from app.core.config import get_settings, require_setting
 from app.core.datetime_utils import local_now
 from app.db.database import engine
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

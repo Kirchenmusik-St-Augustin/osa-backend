@@ -1,5 +1,3 @@
-import uuid
-from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
@@ -30,6 +28,9 @@ from app.services.user_position_service import (
 )
 
 if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
     from app.db.models.role import Role
 
 _SEARCH_RESULT_LIMIT = 20

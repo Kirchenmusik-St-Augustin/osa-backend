@@ -1,9 +1,7 @@
-import uuid
 from datetime import date, datetime
-from typing import cast, overload
+from typing import TYPE_CHECKING, cast, overload
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import (
     ensure_tz_aware,
@@ -11,7 +9,6 @@ from app.core.datetime_utils import (
     local_day_bounds_utc,
 )
 from app.core.human_names import label_for_name
-from app.core.json_types import JsonObject, JsonValue
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import RequestLog
 from app.db.models.user import User
@@ -22,6 +19,13 @@ from app.schemas.request_log import (
     RequestLogUserDetailOutput,
     RequestLogUserSummaryOutput,
 )
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import Session
+
+    from app.core.json_types import JsonObject, JsonValue
 
 
 class RequestLogUserNotFoundError(Exception):

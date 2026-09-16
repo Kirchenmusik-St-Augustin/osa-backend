@@ -15,16 +15,20 @@ otherwise-theoretical overview -- see app.services.job_run_service.
 """
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from arq.cron import next_cron
-from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.datetime_utils import get_app_timezone
-from app.db.models.job_run import JobRun
 from app.schemas.scheduler import JobRunOutput, ScheduledJobOutput
 from app.services.job_run_service import get_latest_run_per_job
 from app.worker.cron_config import CronSchedule, build_cron_catalog
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from app.db.models.job_run import JobRun
 
 _TRIGGER_FIELDS = ("month", "day", "weekday", "hour", "minute", "second")
 

@@ -1,7 +1,7 @@
 import logging
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from subprocess import CalledProcessError
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,6 +9,9 @@ import requests
 
 from app.services import backup_service
 from app.services.backup_service import BackupError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 PG_URL = "postgresql://user:secret@localhost:5432/testdb"
 NON_POSTGRES_URL = "mysql://user:secret@localhost:3306/testdb"

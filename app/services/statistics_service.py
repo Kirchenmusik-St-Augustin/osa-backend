@@ -1,5 +1,6 @@
+from typing import TYPE_CHECKING
+
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.core import mailer
 from app.db.models.ordinariumwork import Ordinariumwork
@@ -8,6 +9,9 @@ from app.db.models.propriumwork import Propriumwork
 from app.db.models.score import Score
 from app.db.models.user import User
 from app.schemas.statistics import StatisticsEmailOutput, StatisticsOutput
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _count(db: Session, model: type) -> int:

@@ -1,10 +1,12 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import patch
-
-from sqlalchemy.orm import Session
 
 from app.db.models.job_run import JobRun
 from app.services.backup_service import BackupError
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _auth_headers(client, make_user, *, administrator: bool = False) -> dict[str, str]:

@@ -39,6 +39,7 @@ def test_create_access_token_roundtrip():
     payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
     assert payload["sub"] == "user@example.test"
     assert payload["jti"] == jti
+    assert uuid.UUID(jti).version == 7
 
 
 def test_create_access_token_respects_jti_override():

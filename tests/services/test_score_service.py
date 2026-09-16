@@ -1,10 +1,13 @@
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.schemas.score import ScoreRequest
 from app.services import score_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str = "Werk") -> str:

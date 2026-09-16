@@ -33,7 +33,7 @@ class ProfileUpdateRequest(StrictInputModel):
         return value
 
     @model_validator(mode="after")
-    def _validate_password_change(self) -> "ProfileUpdateRequest":
+    def _validate_password_change(self) -> ProfileUpdateRequest:
         # Mirrors Legacy's controller-level short-circuit
         # (`$validated['change_password'] && strlen($validated['password'])`)
         # -- password/password_confirmation are only validated (charset,

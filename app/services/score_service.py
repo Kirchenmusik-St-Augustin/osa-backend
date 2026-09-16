@@ -1,7 +1,6 @@
-import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.core.human_names import label_for_name, normalize_givenname, normalize_surname
 from app.db.models.score import Score
@@ -12,6 +11,11 @@ from app.schemas.score import (
     ScoreSearchResult,
 )
 from app.services.score_fields import SCORE_FIELDS
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import Session
 
 _SEARCH_RESULT_LIMIT = 50
 

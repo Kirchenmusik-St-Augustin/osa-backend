@@ -1,7 +1,6 @@
 import uuid
 from datetime import UTC, datetime
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
@@ -9,7 +8,11 @@ from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
-from app.db.models.user import User
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from app.db.models.user import User
 
 
 def _unique(base: str) -> str:

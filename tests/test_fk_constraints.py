@@ -16,13 +16,12 @@ real Alembic migrations (see conftest.py's session-scoped _create_schema
 fixture), same as tests/test_schema_hardening.py."""
 
 import uuid
-from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
@@ -41,10 +40,16 @@ from app.db.models.propriumelement import Propriumelement
 from app.db.models.propriumwork import Propriumwork
 from app.db.models.request_log import RequestLog
 from app.db.models.role import Role
-from app.db.models.user import User
 from app.db.models.user_position import UserPosition
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.orm import Session
+
+    from app.db.models.user import User
 
 
 def _unique(base: str) -> str:

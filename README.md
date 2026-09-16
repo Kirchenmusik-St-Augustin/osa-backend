@@ -5,8 +5,9 @@ system for the church musicians of Kirchenmusik St. Augustin.
 
 ## Tech Stack
 
-- **Runtime:** Python 3.12, FastAPI, SQLAlchemy (sync — deliberately not
-  async, see `app/db/database.py`), Pydantic v2, APScheduler
+- **Runtime:** Python 3.14, FastAPI, SQLAlchemy (sync — deliberately not
+  async, see `app/db/database.py`), Pydantic v2, arq (background/scheduled
+  jobs, see [Scheduler](#scheduler) below)
 - **Database:** PostgreSQL (structurally identical to the legacy schema —
   a 1:1 transfer, not yet the full schema redesign)
 - **Backup:** Koofr (WebDAV), see [Scheduler](#scheduler) and
@@ -220,8 +221,9 @@ Besetzungssystem für die Kirchenmusiker von Kirchenmusik St. Augustin.
 
 ## Tech-Stack
 
-- **Runtime:** Python 3.12, FastAPI, SQLAlchemy (synchron — bewusst nicht
-  async, siehe `app/db/database.py`), Pydantic v2, APScheduler
+- **Runtime:** Python 3.14, FastAPI, SQLAlchemy (synchron — bewusst nicht
+  async, siehe `app/db/database.py`), Pydantic v2, arq (Hintergrund-/
+  Scheduled-Jobs, siehe [Scheduler](#scheduler-1) unten)
 - **Datenbank:** PostgreSQL (strukturgleich zum Legacy-Schema — ein
   1:1-Übertrag, noch nicht das volle Schema-Redesign)
 - **Backup:** Koofr (WebDAV), siehe [Scheduler](#scheduler-1) und

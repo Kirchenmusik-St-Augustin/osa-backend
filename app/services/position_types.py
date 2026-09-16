@@ -1,10 +1,13 @@
-import uuid
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
-from app.db.models.position_columns_mixin import PositionColumns
 from app.db.models.voice import Voice
+
+if TYPE_CHECKING:
+    import uuid
+
+    from app.db.models.position_columns_mixin import PositionColumns
 
 # Legacy's Relation::morphMap polymorphic target for `position_type` --
 # shared by Performance/PerformancePosition (Schritt 5), User/UserPosition

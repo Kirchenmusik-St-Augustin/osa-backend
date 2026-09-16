@@ -1,8 +1,6 @@
-import uuid
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.db.models.user import User
 from app.db.models.user_position import UserPosition
@@ -10,7 +8,14 @@ from app.schemas.coreelement import CoreelementType
 from app.schemas.performance import PositionRefOutput
 from app.schemas.userdirectory import UserDirectoryAbilitiesOutput
 from app.services import coreelement_service
-from app.services.position_types import PositionType
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
+    from sqlalchemy.orm import InstrumentedAttribute, Session
+
+    from app.services.position_types import PositionType
 
 # UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
 # identical _BOOKING_POSITION_COLUMNS for the full rationale.

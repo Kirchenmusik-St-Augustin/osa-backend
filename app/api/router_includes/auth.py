@@ -204,7 +204,7 @@ def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONRe
         access_token, new_secret = auth_service.refresh_session(
             db, session_id, refresh_secret
         )
-    except (ValueError, InvalidSessionError):
+    except ValueError, InvalidSessionError:
         response = JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": "Session abgelaufen oder ungültig."},
