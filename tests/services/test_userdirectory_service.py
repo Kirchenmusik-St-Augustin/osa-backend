@@ -1,10 +1,12 @@
 import uuid
 from datetime import UTC, datetime
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
 from app.db.models.choirjob import Choirjob
 from app.services import user_position_service, userdirectory_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str) -> str:

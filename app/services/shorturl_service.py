@@ -1,13 +1,17 @@
-import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.shorturl import Shorturl
 from app.schemas.shorturl import ShorturlListResponse, ShorturlRequest, ShorturlResponse
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import Session
 
 
 class ShorturlNotFoundError(Exception):

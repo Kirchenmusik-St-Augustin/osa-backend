@@ -1,9 +1,9 @@
 import uuid
 from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import RequestLog
@@ -12,6 +12,9 @@ from app.services.request_log_service import (
     RequestLogNotFoundError,
     RequestLogUserNotFoundError,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str) -> str:

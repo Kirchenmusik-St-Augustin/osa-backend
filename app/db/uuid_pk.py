@@ -9,10 +9,13 @@ extension required) -- the same "database manages its own defaults"
 convention already used for `created_at`/`updated_at` (see
 app.db.models.coreelement_mixin), not a Python-side UUID library."""
 
-import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 from sqlalchemy.orm import Mapped, mapped_column
+
+if TYPE_CHECKING:
+    import uuid
 
 
 def uuid_pk() -> Mapped[uuid.UUID]:

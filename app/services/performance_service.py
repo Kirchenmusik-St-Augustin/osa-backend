@@ -1,10 +1,8 @@
-import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, extract, func, select
-from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.datetime_utils import local_now
@@ -46,6 +44,12 @@ from app.services.position_types import (
     position_key,
     position_kwargs,
 )
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
+    from sqlalchemy.orm import Session
 
 _SCHEDULE_TOO_EARLY = "Aufführungs-Datum muss frühestens morgen sein."
 _REHEARSAL_TOO_EARLY = "Proben-Datum muss frühestens morgen sein."

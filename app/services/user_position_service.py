@@ -1,7 +1,6 @@
-import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.db.models.user_position import UserPosition
 from app.services.position_types import (
@@ -10,6 +9,11 @@ from app.services.position_types import (
     position_key,
     position_kwargs,
 )
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import InstrumentedAttribute, Session
 
 # UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
 # identical _BOOKING_POSITION_COLUMNS for the full rationale.

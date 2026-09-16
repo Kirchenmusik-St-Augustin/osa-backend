@@ -214,6 +214,19 @@ def test_refresh_session_rotates_secret(db_session, make_user):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
+def test_refresh_session_bumps_auth_lastsignal(db_session, make_user):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    assert created.auth_lastsignal is None  # not touched by login itself
+
+    auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+    db_session.refresh(created)
+    assert created.auth_lastsignal is not None
+
+
 def test_refresh_session_rejects_unknown_session(db_session):
     with pytest.raises(InvalidSessionError):
         auth_service.refresh_session(db_session, "no-such-session", "whatever")

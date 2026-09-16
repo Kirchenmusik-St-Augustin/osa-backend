@@ -1,15 +1,20 @@
-import uuid
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from app.core.human_names import label_for_name, normalize_givenname, normalize_surname
 from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumwork import Propriumwork
-from app.schemas.artist import ArtistRequest
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Sequence
+
+    from sqlalchemy.orm import Session
+
+    from app.schemas.artist import ArtistRequest
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 32

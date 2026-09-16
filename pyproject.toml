@@ -1,11 +1,11 @@
 [project]
 name = "osa-backend"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = [
@@ -58,6 +58,19 @@ mark-parentheses = false
 # linear FastAPI endpoints without enforcing "helper spaghetti".
 max-complexity = 8
 
+[tool.ruff.lint.flake8-type-checking]
+# Python 3.14's deferred annotation evaluation (PEP 649) makes the TC
+# rules assume it's always safe to hide an annotation-only import behind
+# `if TYPE_CHECKING:` -- but these three base classes all build their
+# runtime behavior (SQLAlchemy's mapper configuration, Pydantic's
+# validator schema) by resolving every field's annotation to a real
+# object at class-definition time, deferred evaluation or not. Hiding a
+# field's type behind TYPE_CHECKING still breaks that resolution with a
+# NameError, just later than under eager evaluation.
+runtime-evaluated-base-classes = [
+    "app.db.database.Base", "pydantic.BaseModel", "pydantic_settings.BaseSettings",
+]
+
 [tool.ruff.lint.per-file-ignores]
 # Tests are allowed to be more robust and repetitive. TID251: tests
 # deliberately drive Settings through monkeypatch.setenv()/patch.dict(
@@ -70,13 +83,30 @@ max-complexity = 8
 # app.core.config.get_settings().
 "alembic/**" = ["F401", "UP035", "ANN", "PLR0915", "TID251"]
 "scripts/**" = ["T201", "FBT", "PLR0915"]
-# Declarative models use `from __future__ import annotations`, so SQLAlchemy
-# resolves `Mapped[...]` annotations at mapper-configure time by evaluating
-# the stringified annotation against the module's real (non-TYPE_CHECKING)
-# globals. Hiding stdlib types like `datetime`/`Decimal` behind
-# `TYPE_CHECKING` breaks that resolution with a runtime `NameError` —
-# verified empirically, not just theoretically, before adding this ignore.
-"app/db/models/**" = ["TC003"]
+# SQLAlchemy's declarative mapper configuration resolves every `Mapped[...]`
+# class attribute annotation to a real object -- deferred evaluation (PEP
+# 649, Python 3.14's default) only postpones that resolution, it doesn't
+# remove the need for it. `runtime-evaluated-base-classes` below already
+# covers models that inherit `Base` directly, but several model files mix
+# in shared column groups via a plain mixin class (e.g. `CoreelementMixin`,
+# `RepertoireWorkColumns`) that isn't itself a `Base` subclass, so ruff's
+# static base-class matching can't see through to the eventual `Base`
+# subclass and still flags those files -- verified empirically (mixin files
+# still had TC001-3 hits with the base-class exemption in place, but none
+# once this glob covers them too).
+"app/db/models/**" = ["TC001", "TC002", "TC003"]
+# FastAPI resolves every route handler's and every Depends() provider's
+# parameter/return annotations at route-registration time to build request
+# validation and dependency injection -- same reasoning as the models glob
+# above, just for function signatures instead of class attributes. Covers
+# the router modules, the shared Depends() providers, and the permission
+# guards.
+"app/api/**" = ["TC001", "TC002", "TC003"]
+# get_db() is the FastAPI Depends() provider every router imports; main.py
+# wires up routers, middleware, and exception handlers at app-startup time.
+# Same FastAPI-signature-resolution reasoning as app/api/** above.
+"app/db/database.py" = ["TC001", "TC002", "TC003"]
+"main.py" = ["TC001", "TC002", "TC003"]
 # SessionLocal-direct-instantiation exceptions for background-job files
 # without a request context (no Depends(get_db) available there).
 "app/core/mailer.py" = ["TID251"]
@@ -128,7 +158,7 @@ exclude = [
     "alembic",
     "**/__pycache__",
 ]
-pythonVersion = "3.12"
+pythonVersion = "3.14"
 typeCheckingMode = "strict"
 
 useLibraryCodeForTypes = true

@@ -1,11 +1,14 @@
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.core.security import verify_password
 from app.services import user_administration_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str) -> str:

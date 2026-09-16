@@ -1,10 +1,9 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.core import mailer
 from app.core.datetime_utils import local_now
@@ -74,6 +73,9 @@ from app.services.user_position_service import (
     get_qualified_user_ids_batch,
     is_bookable,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import InstrumentedAttribute, Session
 
 # Booking's own WHERE-clause dispatch table: which FK column on Booking
 # corresponds to a given position_type -- the counterpart to

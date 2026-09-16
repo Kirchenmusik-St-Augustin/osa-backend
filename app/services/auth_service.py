@@ -1,6 +1,5 @@
-import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from urllib.parse import urlencode
 
 import jwt
@@ -12,7 +11,6 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import get_settings, require_setting
 from app.core.datetime_utils import ensure_tz_aware
 from app.core.human_names import normalize_givenname, normalize_surname
-from app.core.json_types import JsonObject
 from app.core.security import (
     ALGORITHM,
     REFRESH_TOKEN_LIFETIME_DAYS,
@@ -37,7 +35,12 @@ from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
-from app.schemas.auth import RegisterRequest
+
+if TYPE_CHECKING:
+    import uuid
+
+    from app.core.json_types import JsonObject
+    from app.schemas.auth import RegisterRequest
 
 # Mirrors Legacy's StoreRequest::ensureIsNotRateLimited() (5 attempts / 60s,
 # see legacy/app/Http/Requests/Auth/LoginController/StoreRequest.php).

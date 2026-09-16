@@ -10,8 +10,8 @@ other concurrently-due job in the same worker process.
 """
 
 import traceback
-from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from starlette.concurrency import run_in_threadpool
 
@@ -26,6 +26,9 @@ from app.services.housekeeping_jobs import (
     purge_old_request_logs,
 )
 from app.services.job_run_service import record_job_run
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 async def _run_and_record(job_id: str, func: Callable[[], None]) -> None:

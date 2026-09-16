@@ -1,16 +1,20 @@
+from typing import TYPE_CHECKING
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.human_names import label_for_name
 from app.db.models.role import Role
 from app.db.models.user import User
-from app.schemas.booking import PerformanceShortOutput
 from app.schemas.support import (
     ContactUserOutput,
     MessageToContactpersonRequest,
     RoleWithContactsOutput,
 )
 from app.services import booking_service
+
+if TYPE_CHECKING:
+    from app.schemas.booking import PerformanceShortOutput
 
 
 def get_my_requests_and_bookings(

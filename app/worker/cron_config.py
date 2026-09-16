@@ -17,10 +17,12 @@ job's actual run time.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from arq.typing import WeekdayOptionType
+if TYPE_CHECKING:
+    from arq.typing import WeekdayOptionType
 
-from app.core.config import Settings
+    from app.core.config import Settings
 
 
 @dataclass(frozen=True)

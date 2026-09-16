@@ -12,10 +12,14 @@ mailer.BookingCanceledMailEntry, a module-level frozen dataclass, and
 Redacted, itself a plain frozen dataclass).
 """
 
+from typing import TYPE_CHECKING
+
 from starlette.concurrency import run_in_threadpool
 
 from app.core import mailer
-from app.core.redacted import Redacted
+
+if TYPE_CHECKING:
+    from app.core.redacted import Redacted
 
 
 async def send_new_registration_notice_task(

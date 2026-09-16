@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     koofr_password: str | None = Field(default=None, validation_alias="KOOFR_PASSWORD")
 
     @model_validator(mode="after")
-    def _validate_tier1(self) -> "Settings":
+    def _validate_tier1(self) -> Settings:
         if not self.app_environment or self.app_environment not in _VALID_ENVIRONMENTS:
             _fail(
                 f"APP_ENVIRONMENT='{self.app_environment}' invalid or unset. "

@@ -1,7 +1,10 @@
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from app.db.models.user import User
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from app.db.models.user import User
 
 
 @dataclass(frozen=True)

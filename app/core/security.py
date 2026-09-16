@@ -74,7 +74,7 @@ def create_access_token(
         expire = datetime.now(UTC) + expires_delta
     else:
         expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    token_id = jti_override or str(uuid.uuid4())
+    token_id = jti_override or str(uuid.uuid7())
     to_encode = {
         "exp": expire,
         "iat": datetime.now(UTC),
@@ -109,7 +109,7 @@ def parse_refresh_cookie(cookie_value: str) -> tuple[str, str]:
     session_id, refresh_secret = parts
     # session_id is client-supplied at this point (the cookie the browser
     # sent back) and flows straight into a DB lookup and, on success, right
-    # back into a freshly built cookie -- session_id is always a UUID4
+    # back into a freshly built cookie -- session_id is always a UUID7
     # string on the way out (see create_access_token's jti), so rejecting
     # anything else here closes that loop with an explicit, local check
     # instead of relying on the later DB lookup as an implicit sanitizer.
@@ -151,7 +151,7 @@ def decode_email_verification_token(
 ) -> tuple[uuid.UUID, str]:
     try:
         payload = _email_verification_serializer.loads(token, max_age=max_age_seconds)
-    except (BadSignature, SignatureExpired):
+    except BadSignature, SignatureExpired:
         raise InvalidVerificationTokenError from None
     # A token issued before the primary-key migration carries a plain
     # integer user_id string, which is not parseable as a UUID -- treated

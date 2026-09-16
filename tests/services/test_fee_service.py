@@ -1,10 +1,13 @@
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.schemas.fee import FeeRequest
 from app.services import fee_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str = "Fee") -> str:

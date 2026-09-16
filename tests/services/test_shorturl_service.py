@@ -1,10 +1,13 @@
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.schemas.shorturl import ShorturlRequest
 from app.services import shorturl_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str = "path") -> str:

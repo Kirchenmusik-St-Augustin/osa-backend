@@ -1,10 +1,7 @@
-import uuid
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
@@ -18,7 +15,14 @@ from app.db.models.role import Role
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
-from app.services.position_types import PositionType
+
+if TYPE_CHECKING:
+    import uuid
+    from collections.abc import Callable, Sequence
+
+    from sqlalchemy.orm import InstrumentedAttribute, Session
+
+    from app.services.position_types import PositionType
 
 CoreelementModel = Instrument | Voice | Choirjob | Location | Propriumelement | Role
 

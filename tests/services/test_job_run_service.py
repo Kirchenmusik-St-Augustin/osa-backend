@@ -1,13 +1,16 @@
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
-import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db.models.job_run import JobRun
 from app.services import job_run_service
 from app.services.job_run_service import get_latest_run_per_job, record_job_run
+
+if TYPE_CHECKING:
+    import pytest
+    from sqlalchemy.orm import Session
 
 
 class TestRecordJobRun:

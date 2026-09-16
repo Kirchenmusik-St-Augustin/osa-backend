@@ -1,11 +1,13 @@
 import logging
 from datetime import UTC, datetime
-
-import pytest
+from typing import TYPE_CHECKING
 
 from app.core import logging_config
 from app.core.config import get_settings
 from app.core.logging_config import setup_logging
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_setup_logging_sets_root_level_info():

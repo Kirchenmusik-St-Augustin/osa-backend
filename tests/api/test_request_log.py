@@ -1,9 +1,11 @@
 import uuid
 from datetime import UTC, datetime
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
 from app.db.models.request_log import RequestLog
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str = "Log") -> str:

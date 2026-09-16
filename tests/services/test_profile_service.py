@@ -1,12 +1,15 @@
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.core.security import verify_password
 from app.schemas.profile import ProfileUpdateRequest
 from app.services import profile_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 _CURRENT_PASSWORD = "Passwort123"
 

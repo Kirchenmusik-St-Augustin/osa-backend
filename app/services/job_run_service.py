@@ -6,13 +6,15 @@ overview.
 
 import logging
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
 from app.db.models.job_run import JobRun
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 

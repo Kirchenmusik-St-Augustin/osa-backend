@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 WORKDIR /app
 # Skip writing .pyc files: this app's runtime root filesystem is read-only
 # in production (see osa-deploy's osa-backend Quadlets), and there's
@@ -21,14 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 WORKDIR /build
 COPY requirements.lock .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.lock
 
 FROM base AS dev
 # libatomic1: required by pyright's bundled prebuilt Node.js runtime, which
-# is missing from the python:3.12-slim base image.
+# is missing from the python:3.14-slim base image.
 RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 # Installs from the lock file, not requirements-dev.txt directly -- the

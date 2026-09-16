@@ -1,12 +1,14 @@
 import re
 from datetime import UTC, datetime, timedelta
-
-import pytest
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
 from app.core.config import get_settings
 from app.db.models.job_run import JobRun
 from app.services.scheduler_service import get_scheduled_jobs
+
+if TYPE_CHECKING:
+    import pytest
+    from sqlalchemy.orm import Session
 
 _NEXT_RUN_PATTERN = re.compile(r"^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$")
 _ALWAYS_ON_JOB_ID = "purge_stale_booking_requests"

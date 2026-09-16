@@ -1,7 +1,11 @@
+from typing import TYPE_CHECKING
+
 from sqlalchemy import inspect, text
-from sqlalchemy.orm import Session
 
 from app.schemas.sql_inspector import TableColumnOutput, TableDataOutput
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 class TableNotFoundError(Exception):

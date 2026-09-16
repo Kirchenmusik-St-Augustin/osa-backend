@@ -1,10 +1,14 @@
-import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import extract, select
-from sqlalchemy.orm import Session
 
 from app.db.models.sent_email import SentEmail
 from app.schemas.sent_email import SentEmailShortOutput, SentEmailShowOutput
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.orm import Session
 
 
 class SentEmailNotFoundError(Exception):

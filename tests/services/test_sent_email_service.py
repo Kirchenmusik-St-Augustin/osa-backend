@@ -1,12 +1,15 @@
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.db.models.sent_email import SentEmail
 from app.services import sent_email_service
 from app.services.sent_email_service import SentEmailNotFoundError
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str) -> str:

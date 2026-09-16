@@ -29,7 +29,7 @@ settings = get_settings()
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     logger.info(
         "*** osa-backend starting - environment: %s ***", settings.app_environment
     )

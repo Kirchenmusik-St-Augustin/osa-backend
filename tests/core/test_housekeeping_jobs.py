@@ -1,13 +1,16 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.request_log import RequestLog
 from app.services import housekeeping_jobs
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str) -> str:

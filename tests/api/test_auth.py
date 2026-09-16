@@ -1,14 +1,17 @@
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy import select
 
 from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.sent_email import SentEmail
 from app.services import auth_service
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_login_success_sets_refresh_cookie_and_returns_access_token(client, make_user):

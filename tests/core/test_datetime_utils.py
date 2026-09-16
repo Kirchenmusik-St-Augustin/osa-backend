@@ -1,7 +1,6 @@
 from datetime import UTC, date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
-
-import pytest
 
 from app.core.config import get_settings
 from app.core.datetime_utils import (
@@ -10,6 +9,9 @@ from app.core.datetime_utils import (
     local_day_bounds_utc,
     local_now,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_get_app_timezone_returns_the_configured_zone():

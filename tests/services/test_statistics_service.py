@@ -1,11 +1,13 @@
 from datetime import UTC, datetime
-
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
 from app.core import mailer
 from app.db.models.sent_email import SentEmail
 from app.schemas.score import ScoreRequest
 from app.services import score_service, statistics_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 class TestGetStatistics:

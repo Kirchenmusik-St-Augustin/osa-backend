@@ -1,8 +1,8 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
 from app.db.models.instrument import Instrument
@@ -16,6 +16,9 @@ from app.schemas.ordinariumwork import (
 )
 from app.schemas.performance import PerformanceRequest, PerformanceSetupInput
 from app.services import artist_service, ordinariumwork_service, performance_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 def _unique(base: str = "Name") -> str:

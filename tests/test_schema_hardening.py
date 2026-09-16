@@ -19,20 +19,18 @@ session-scoped _create_schema fixture) -- these tests verify actual
 migration output, not just model intent."""
 
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import inspect, select, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import DataError, IntegrityError
-from sqlalchemy.orm import Session
 
 from app.db.database import engine
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
-from app.db.models.choirjob import Choirjob
 from app.db.models.fee import Fee
 from app.db.models.instrument import Instrument
 from app.db.models.job_run import JobRun
@@ -43,9 +41,16 @@ from app.db.models.performance import Performance
 from app.db.models.request_log import RequestLog
 from app.db.models.role import Role
 from app.db.models.score import Score
-from app.db.models.user import User
 from app.db.models.user_role import UserRole
-from app.db.models.voice import Voice
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.orm import Session
+
+    from app.db.models.choirjob import Choirjob
+    from app.db.models.user import User
+    from app.db.models.voice import Voice
 
 
 def _make_ordinariumwork(db_session: Session) -> Ordinariumwork:

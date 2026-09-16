@@ -1,7 +1,11 @@
+from typing import TYPE_CHECKING
+
 import pytest
-from sqlalchemy.orm import Session
 
 from app.services import user_position_service
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 class TestGetPositionIdsForUser:

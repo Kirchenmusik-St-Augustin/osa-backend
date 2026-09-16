@@ -1,11 +1,11 @@
 import itertools
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.core.datetime_utils import local_now
 from app.core.security import get_password_hash
@@ -47,6 +47,9 @@ from app.services import (
     performance_service,
 )
 from app.services.user_position_service import create_user_position
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 _schedule_counter = itertools.count(2)
 _id_counter = itertools.count(700_000)
