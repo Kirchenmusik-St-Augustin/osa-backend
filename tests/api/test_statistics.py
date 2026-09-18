@@ -13,7 +13,7 @@ class TestPermissionGuard:
         assert response.status_code == 401
 
     def test_any_authenticated_user_may_call_it(self, client, make_user):
-        # 1:1 Legacy: no Policy/Gate exists for Statistics at all.
+        # No permission gate beyond being logged in.
         headers = _auth_headers(client, make_user)
         response = client.get("/statistics", headers=headers)
         assert response.status_code == 200

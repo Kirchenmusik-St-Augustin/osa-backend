@@ -37,10 +37,8 @@ class TestListRolesWithContacts:
     def test_contacts_sorted_by_surname_then_givenname(
         self, db_session: Session, make_user
     ):
-        # Legacy's `User` model carries a global `OrderBySurnameGivenname`
-        # scope applied to EVERY User query, including this
-        # belongsToMany(Role -> User) load -- the dropdown is alphabetical
-        # in Legacy regardless of `user_roles` insertion order.
+        # The dropdown is alphabetical regardless of `user_roles` insertion
+        # order.
         role_name = _unique("scores")
         third = make_user(roles=[role_name])
         third.surname, third.givenname = "ZEHETNER", "Anna"

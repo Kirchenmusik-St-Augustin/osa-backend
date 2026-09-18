@@ -35,7 +35,7 @@ def test_user_with_no_roles_and_no_admin_flag_gets_only_open_permission(
 
     permissions = calculate_permissions(user)
 
-    # performanceChangeUserStatus has no role gate at all in Legacy.
+    # performanceChangeUserStatus has no role gate at all.
     assert permissions == ["performanceChangeUserStatus"]
 
 

@@ -69,8 +69,8 @@ class TestSchemaValidation:
             )
 
     def test_password_fields_are_ignored_when_not_changing_password(self):
-        # Legacy's controller-level short-circuit -- an arbitrary/invalid
-        # password value is harmless when change_password is False.
+        # An arbitrary/invalid password value is harmless when
+        # change_password is False.
         request = ProfileUpdateRequest(
             surname="Muster",
             givenname="Max",
@@ -192,7 +192,7 @@ class TestUpdateProfile:
     def test_email_case_change_counts_as_changed_raw_comparison(
         self, db_session: Session, make_user
     ):
-        # Legacy compares raw strings (`!==`), not case-normalized.
+        # Raw strings are compared, not case-normalized.
         # Local-part casing specifically (not the domain): Pydantic's
         # EmailStr already lowercases the domain itself, so only a
         # local-part-only case change actually reaches update_profile()

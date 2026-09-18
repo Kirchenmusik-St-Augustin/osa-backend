@@ -8,9 +8,9 @@ from app.db.uuid_pk import uuid_pk
 
 
 class RepertoireWorkColumns:
-    """Shared columns for Legacy's Ordinariumwork/Propriumwork models --
-    both are 100% identical in the Legacy schema (name/description/
-    demanding/artist_id/duration/timestamps). Ordinariumwork additionally
+    """Shared columns for the Ordinariumwork/Propriumwork models -- both
+    have an identical shape (name/description/demanding/artist_id/
+    duration/timestamps). Ordinariumwork additionally
     has a Positions sub-resource (ordinariumwork_positions, see
     ordinariumwork_position.py) that Propriumwork doesn't have.
     `artist_id` is an ON DELETE RESTRICT foreign key as of the FK-hardening

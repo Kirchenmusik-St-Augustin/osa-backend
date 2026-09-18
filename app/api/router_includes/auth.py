@@ -108,12 +108,11 @@ def login(
     """Authenticate with email + password, receive a JWT access token plus
     an httponly refresh cookie.
 
-    Exact German error texts are hard Legacy parity (lang/de/auth.php):
     "Anmeldedaten unbekannt." covers BOTH unknown email and wrong password
-    (Laravel's Auth::attempt() fails generically for both -- there is no
-    separate "Passwort falsch." message in the login flow, that string
-    belongs to the unrelated self-service change-password form). Lockout
-    threshold/window (5 attempts / 60s) also hard parity, see
+    (the login fails generically for both, which prevents account
+    enumeration -- there is no separate "Passwort falsch." message in the
+    login flow, that string belongs to the unrelated self-service
+    change-password form). Lockout threshold/window (5 attempts / 60s), see
     auth_service.check_login_throttle.
     """
     ip_address = _client_ip(request)
@@ -189,8 +188,7 @@ def login(
 @limiter.limit("10/minute")  # type: ignore[reportUntypedFunctionDecorator]
 def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONResponse:
     """Exchange the refresh-token cookie for a new access token, rotating
-    the refresh secret on every use. No Legacy equivalent (Legacy has no
-    JWT refresh concept at all) -- per-IP rate limit only."""
+    the refresh secret on every use. Per-IP rate limit only."""
     _ensure_trusted_origin(request)
     cookie_value = request.cookies.get("refresh_token")
     if not cookie_value:
@@ -237,12 +235,10 @@ def get_current_user_profile(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> UserProfileResponse:
-    """No Legacy route equivalent -- Legacy's Inertia setup injects the
-    user into every server-rendered page's shared props, a pure SPA has
-    no such channel. The frontend calls this once after login/on boot to
-    populate its auth store (navbar display, permission-gated UI,
-    Schritt 7's email-kill-switch warning icon -- same lifecycle as
-    `permissions`, no separate polling endpoint)."""
+    """The frontend calls this once after login/on boot to populate its auth
+    store (navbar display, permission-gated UI, email-kill-switch warning
+    icon -- same lifecycle as `permissions`, no separate polling
+    endpoint)."""
     kill_switch = mailer.get_kill_switch_status(db)
     return UserProfileResponse(
         id=current_user.id,
@@ -282,12 +278,11 @@ async def register(
     db: Annotated[Session, Depends(get_db)],
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> JSONResponse:
-    """Register + auto-login (mirrors Legacy's `Auth::login($user)` right
-    after `User::create()`), then notify the disponent address in the
-    background -- registration itself must not wait on (or fail because
-    of) mail delivery. No auth/permission dependency exists on this
-    endpoint (it must work logged-out), so there is no dependency-ordering
-    concern here, unlike resend_verification_email below."""
+    """Register + auto-login right after user creation, then notify the disponent
+    address in the background -- registration itself must not wait on (or fail because
+    of) mail delivery. No auth/permission dependency exists on this endpoint (it must
+    work logged-out), so there is no dependency-ordering concern here, unlike
+    resend_verification_email below."""
     try:
         user, access_token, session_id, refresh_secret = await run_in_threadpool(
             _register_sync, data, db
@@ -327,11 +322,10 @@ async def resend_verification_email(
     current_user: Annotated[User, Depends(get_current_user)],
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> dict[str, str]:
-    """1:1 Legacy's `POST verify-email` (EmailVerificationController::send()).
-    Deliberately uses get_current_user, not get_verified_user -- an
-    unverified user must be able to reach exactly this endpoint. No-op
-    (still 200) if already verified, matching Legacy's own idempotent
-    `hasVerifiedEmail()` short-circuit. current_user is declared BEFORE
+    """Re-sends the verification mail. Deliberately uses get_current_user,
+    not get_verified_user -- an unverified user must be able to reach
+    exactly this endpoint. Idempotent: no-op (still 200) if already
+    verified. current_user is declared BEFORE
     arq_pool on purpose: FastAPI resolves Depends() in declaration order,
     and an invalid/expired bearer token must be rejected (401) before this
     request ever pays for creating/reusing the ARQ pool connection."""
@@ -356,10 +350,9 @@ def verify_email(
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
     """Self-contained via the token alone (no prior login required) --
-    the token already encodes+signs the target user, playing the same
-    role Legacy's Laravel Signed Route + auth-middleware combination did.
-    Auto-logs the user in afterwards, since Legacy's equivalent flow
-    always already had an active session at this point."""
+    the token already encodes+signs the target user. Auto-logs the user in
+    afterwards, since the link is typically opened in a fresh browser
+    context without an active session."""
     try:
         user = auth_service.verify_email(db, data.token)
     except ValueError as exc:
@@ -397,10 +390,7 @@ async def forgot_password(
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> dict[str, str]:
     """Always responds 200 regardless of whether the email is registered
-    -- prevents account enumeration (1:1 Legacy UX, even though Legacy's
-    own server-side validation actually leaks this via a distinct
-    "passwords.user" error; the neutral-response behavior is the
-    hardening, not a Legacy replication). No auth/permission dependency
+    -- prevents account enumeration. No auth/permission dependency
     exists on this endpoint (must work logged-out), so unlike
     resend_verification_email above there is no dependency-ordering
     concern here -- db and arq_pool are the only two dependencies and
@@ -442,13 +432,10 @@ def google_callback(
     data: GoogleCallbackRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
-    """Direct login via an existing Google binding. No Legacy-equivalent
-    redirect/callback dance (Socialite's server-side OAuth code exchange
-    needs session-stored CSRF `state`, which doesn't cleanly exist in a
-    stateless-JWT backend) -- uses Google Identity Services' ID-token
-    ("credential") flow instead, 1:1 the simpler pattern already proven
-    for this exact use case. Same business capability (log in if already
-    linked), leaner mechanism."""
+    """Direct login via an existing Google binding. Uses Google Identity
+    Services' ID-token ("credential") flow rather than a server-side OAuth
+    redirect/callback dance, which would need a session-stored CSRF `state`
+    that doesn't cleanly exist in a stateless-JWT backend."""
     try:
         user = auth_service.authenticate_google_user(db, data.credential)
     except AccountNotLinkedError:
@@ -495,8 +482,8 @@ def disconnect_oauth2_binding(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> dict[str, str]:
-    """IDOR-fixed replacement for Legacy's `oauth2disconnect($id)` -- see
-    auth_service.unlink_oauth_binding for the vulnerability this closes.
+    """Unlinks an OAuth binding, restricted to the caller's own bindings --
+    see auth_service.unlink_oauth_binding for the IDOR protection.
     """
     try:
         auth_service.unlink_oauth_binding(db, binding_id, current_user.id)

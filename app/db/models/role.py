@@ -13,9 +13,7 @@ if TYPE_CHECKING:
 
 
 class Role(Base):
-    """Mirrors legacy `roles` (Phase 1 structural parity), with one
-    additive DB-level rename layered on top in the Quick-Wins hardening
-    slice (2026-09): the `order` column is `sort_order` at the DB level
+    """Application role. The `order` column is `sort_order` at the DB level
     (Postgres always requires `order` to be double-quoted as an
     identifier); the Python attribute/ORM-facing name stays `order` via
     mapped_column's explicit column-name argument (same alias pattern as

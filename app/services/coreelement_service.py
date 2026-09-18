@@ -55,9 +55,8 @@ class CoreelementNotFoundError(Exception):
 
 
 class CoreelementValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's per-type
-    SaveRequest error bags -- 1:1 auth_service.RegistrationConflictError
-    pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as auth_service.RegistrationConflictError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -65,8 +64,7 @@ class CoreelementValidationError(Exception):
 
 
 class CoreelementInUseError(Exception):
-    """Raised when delete is blocked by a dependent row -- mirrors
-    Legacy's HasDependencies check (DestroyRequest::withValidator)."""
+    """Raised when delete is blocked by a dependent row."""
 
 
 @dataclass(frozen=True)
@@ -92,8 +90,7 @@ class CoreelementTypeConfig:
 
 
 def _role_has_dependent_users(db: Session, role: CoreelementModel) -> bool:
-    """Only Role had a real dependency target from the start (`user_roles`,
-    built in Schritt 2/Auth)."""
+    """A Role is in use while any `user_roles` row references it."""
     count = db.execute(
         select(func.count()).select_from(UserRole).where(UserRole.role_id == role.id)
     ).scalar_one()
@@ -104,15 +101,13 @@ def _make_position_dependency_check(
     position_type: PositionType,
 ) -> Callable[[Session, CoreelementModel], bool]:
     """Instrument/Voice/Choirjob can be referenced by an Ordinariumwork's
-    Positions setup (Schritt 4 -- choirjobs never actually match here,
+    Positions setup (choirjobs never actually match here,
     OrdinariumworkPosition has no choirjob_id column at all, so that check
     is skipped entirely for position_type='choirjobs' rather than issuing a
     query that could only ever return zero) AND/OR a Performance's
-    Positions setup (Schritt 5, all three types). Legacy's own
-    Instrument/Voice/Choirjob $dependencies also list `users`
-    (user_positions) -- that table doesn't exist in osa-backend yet (User
-    domain, a later Schritt), deferred the same way this check itself was
-    deferred before Schritt 4/5 landed."""
+    Positions setup (all three types). `user_positions` references are not
+    checked here -- their RESTRICT foreign keys reject such a delete at the
+    database level."""
 
     def _check(db: Session, item: CoreelementModel) -> bool:
         ordinariumwork_count = 0
@@ -318,9 +313,8 @@ def create_coreelement(
     if errors:
         raise CoreelementValidationError(errors)
 
-    # (existing_max or 0) + 1 mirrors Legacy's `<Model>::max('order') + 1`
-    # exactly, including its NULL-on-empty-table quirk (PHP coerces
-    # null + 1 to 1, not 0, for the very first row of a type).
+    # max() over an empty table is NULL, so `(existing_max or 0) + 1` gives
+    # the very first row of a type order 1.
     existing_max = db.execute(select(func.max(config.model.order))).scalar_one()
     obj = config.model(
         name=data.name.strip(),
@@ -350,8 +344,8 @@ def update_coreelement(
     if errors:
         raise CoreelementValidationError(errors)
 
-    # Legacy's update() never touches `order` -- reordering only happens
-    # through the dedicated move endpoint below.
+    # An update never touches `order` -- reordering only happens through
+    # the dedicated move endpoint below.
     obj.name = data.name.strip()
     for spec in config.extra_fields:
         setattr(obj, spec.name, getattr(data, spec.name).strip())
@@ -381,11 +375,9 @@ def move_coreelement(
     element_id: uuid.UUID,
     direction: Literal["up", "down"],
 ) -> Sequence[CoreelementModel]:
-    """Two-row order swap, replacing Legacy's HasCoreelementFeatures::move()
-    (loads the entire table, then reindexes and re-saves EVERY row on
-    every single click -- an O(n) anti-pattern flagged for modernization).
-    No-op at either boundary, mirroring Legacy's disabled up/down buttons
-    at the list's ends."""
+    """Two-row order swap (only the two affected rows are written, the rest
+    of the list is never reindexed). No-op at either boundary of the
+    list."""
     items = list(list_coreelements(db, type_))
     index = next((i for i, item in enumerate(items) if item.id == element_id), None)
     if index is None:

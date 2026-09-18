@@ -179,7 +179,7 @@ class TestSendMessageToContactperson:
     def test_silent_noop_for_unverified_recipient_still_returns_200(
         self, client, make_user, fake_arq_pool
     ):
-        # Legacy quirk regression test (see support_service.
+        # Regression test (see support_service.
         # send_message_to_contactperson's docstring): missing email
         # verification silently drops the send, but the endpoint still
         # answers 200 -- no leak of who's verified vs. not.

@@ -9,12 +9,11 @@ from app.db.uuid_pk import uuid_pk
 
 
 class BookingRequest(Base):
-    """Mirrors legacy `booking_requests` exactly (Phase 1). A user's open
-    request to be booked for a Performance -- `notbooked_at` is set once
-    that request was explicitly rejected on the Cast page ("zurückweisen",
-    userBookingStatus() status 5) rather than being fulfilled. Cleared back
-    to NULL every time the Cast page is re-saved (see booking_service's
-    `_apply_notbooked`, a 1:1 port of `Performance::notbooked()`).
+    """A user's open request to be booked for a Performance --
+    `notbooked_at` is set once that request was explicitly rejected on the
+    Cast page ("zurückweisen", the REJECTED booking status) rather than
+    being fulfilled. Cleared back to NULL every time the Cast page is
+    re-saved (see booking_service's `_apply_notbooked`).
 
     `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09): `created_at` is populated by

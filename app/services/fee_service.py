@@ -16,9 +16,9 @@ class FeeNotFoundError(Exception):
 
 
 class FeeValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 coreelement_service.CoreelementValidationError
-    pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as
+    coreelement_service.CoreelementValidationError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -54,8 +54,8 @@ def _to_response(fee: Fee) -> FeeResponse:
 
 
 def list_fees(db: Session) -> list[FeeResponse]:
-    # Legacy's `Fee::OrderByName` global scope -- alphabetical, since `fees`
-    # has no `order` column (see app.db.models.fee.Fee docstring).
+    # Alphabetical, since `fees` has no `order` column (see
+    # app.db.models.fee.Fee docstring).
     fees = db.execute(select(Fee).order_by(Fee.name)).scalars().all()
     return [_to_response(fee) for fee in fees]
 
@@ -84,9 +84,8 @@ def update_fee(db: Session, fee_id: uuid.UUID, data: FeeRequest) -> FeeResponse:
 
 
 def delete_fee(db: Session, fee_id: uuid.UUID) -> None:
-    # No has_dependencies check -- Legacy's own DestroyRequest has an empty
-    # rules() too, since bookings.fee/booking_logs.fee are plain integer
-    # copies of a Fee's amount, never an FK to fees.id.
+    # No has_dependencies check -- bookings.fee/booking_logs.fee are plain
+    # integer copies of a Fee's amount, never an FK to fees.id.
     fee = _get_or_404(db, fee_id)
     db.delete(fee)
     db.commit()

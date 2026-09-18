@@ -9,12 +9,11 @@ from app.db.uuid_pk import uuid_pk
 
 
 class SentEmail(Base):
-    """Mirrors legacy `sent_emails` exactly (Phase 1). `mail_from` maps to
-    the actual `from` column (a reserved Python keyword) via
-    mapped_column's explicit column-name argument. `headers` is
-    repurposed as a free-text "template key" marker (e.g.
-    "password-reset") by the mailer, not real MIME headers -- matches
-    legacy's actual usage of the column, not a schema change.
+    """Log of every mail sent (or suppressed). `mail_from` maps to the
+    actual `from` column (a reserved Python keyword) via mapped_column's
+    explicit column-name argument. `headers` is used as a free-text
+    "template key" marker (e.g. "password-reset") by the mailer, not real
+    MIME headers.
 
     `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09): `created_at` is populated by

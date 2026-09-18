@@ -124,7 +124,7 @@ def _make_performance(db_session: Session) -> Performance:
 
 class TestRestrictForeignKeys:
     """Two representative columns, not all eleven -- performances.
-    location_id (a freshly-added FK on a Phase-1-legacy table) and
+    location_id (a newly-added FK on an existing table) and
     user_roles.role_id (an existing FK that only got its ondelete=
     retrofitted), covering both "brand new constraint" and "ondelete=
     added to an existing one"."""

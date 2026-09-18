@@ -81,14 +81,12 @@ def get_requests_and_bookings(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> list[PerformanceShortOutput]:
-    """Admin-side counterpart to /support/requests-and-bookings (Schritt 7,
-    Selfadmin) -- Legacy's `.../users/{user}/requestsAndBookings` link on
-    the Show page, backed by the same generic booking_service function,
+    """Admin-side counterpart to /support/requests-and-bookings (the Show
+    page's link), backed by the same generic booking_service function,
     scoped to an arbitrary `user_id` instead of the caller. `upcoming_only=
-    False` here (unlike the Selfadmin caller) -- Legacy's
-    `System\\UserController::requestsAndBookings()` calls the model method
-    with its bare, ALL-history default (see
-    get_upcoming_requests_and_bookings_for_user's docstring)."""
+    False` here (unlike the Selfadmin caller): the admin sees the user's
+    ALL-history (see get_upcoming_requests_and_bookings_for_user's
+    docstring)."""
     try:
         user_service.get_user(db, user_id)
     except UserNotFoundError:

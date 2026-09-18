@@ -7,11 +7,10 @@ from app.schemas.base import StrictInputModel
 
 
 class CoreelementType(StrEnum):
-    """URL path segment + coreelement_service registry key for Legacy's six
-    `HasCoreelementFeatures` lookup tables (Instrument/Voice/Choirjob/
-    Location/Role/Propriumelement), administered through one generic
-    endpoint instead of six near-identical modules -- Legacy itself already
-    does this via a single `type`-prop-driven Vue page (Schritt 3)."""
+    """URL path segment + coreelement_service registry key for the six
+    lookup tables (Instrument/Voice/Choirjob/Location/Role/
+    Propriumelement), administered through one generic endpoint instead of
+    six near-identical modules."""
 
     instrument = "instrument"
     voice = "voice"
@@ -22,9 +21,8 @@ class CoreelementType(StrEnum):
 
 
 class CoreelementRequest(StrictInputModel):
-    """Superset request body, mirroring Legacy's own generic
-    Coreelement/Index.vue form (`defaultValues` holds every possible field,
-    "however ignored by other types"). Which fields are required/forbidden
+    """Superset request body holding every possible field (ignored by the
+    types that don't use it). Which fields are required/forbidden
     and name/label uniqueness all vary by CoreelementType and are checked
     in coreelement_service against COREELEMENT_CONFIG, since they depend on
     `element_type` -- a sibling *path* parameter the request body itself
@@ -44,10 +42,9 @@ class CoreelementRequest(StrictInputModel):
     description: str | None = Field(default=None, min_length=3, max_length=250)
     address: str | None = Field(default=None, min_length=3, max_length=60)
     color: str | None = Field(default=None, min_length=3, max_length=6)
-    # Osa-only addition (not part of Legacy's schema, outside the
-    # structural 1:1 transfer's scope) -- only instrument/voice/choirjob
-    # accept this, everyone else forbids it, same "extra field, forbidden per type"
-    # treatment as label/description/address/color, see
+    # Only instrument/voice/choirjob accept this, everyone else forbids it,
+    # same "extra field, forbidden per type" treatment as
+    # label/description/address/color, see
     # coreelement_service.CoreelementTypeConfig.has_active_field.
     active: bool | None = None
 

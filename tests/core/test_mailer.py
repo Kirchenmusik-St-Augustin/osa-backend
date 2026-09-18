@@ -32,9 +32,8 @@ def test_format_ymd_timestamp():
 
 
 def test_format_short_date_pads_month_but_not_day():
-    # PHP's `j. m. Y` (Legacy's own format string): day without leading
-    # zeros, month WITH leading zeros -- a single-digit month must not be
-    # conflated with the day's no-padding rule.
+    # Day without leading zeros, month WITH leading zeros -- a single-digit
+    # month must not be conflated with the day's no-padding rule.
     assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 03. 2026"
 
 
@@ -80,8 +79,8 @@ def test_kill_switch_ignores_emails_outside_rolling_window(
 
 
 def test_kill_switch_fails_safe_to_active_on_db_error():
-    """1:1 Legacy's SentEmail::ensureThresholdCompliance(): a failed count
-    query must never silently look like "mail sending is fine"."""
+    """A failed count query must never silently look like "mail sending is
+    fine"."""
     broken_session = MagicMock()
     broken_session.execute.side_effect = SQLAlchemyError("boom")
 

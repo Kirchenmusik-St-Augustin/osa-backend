@@ -84,7 +84,7 @@ _TIMESTAMPTZ_COLUMNS: list[tuple[str, str, bool]] = [
     ("user_positions", "updated_at", True),
     ("user_roles", "created_at", True),
     ("user_roles", "updated_at", True),
-    # 1 created_at-only table (no updated_at, structural 1:1 legacy).
+    # 1 created_at-only table (no updated_at).
     ("password_reset_tokens", "created_at", True),
     # 13 additional business-event UTC columns -- no server_default/
     # trigger, stay Python-managed via datetime.now(UTC), only the storage

@@ -354,8 +354,8 @@ class TestListBackups:
     def test_extracts_basenames_even_from_absolute_webdav_paths(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """Regression test for the Legacy bug this module deliberately does
-        NOT replicate (see backup_service's module docstring): Koofr's
+        """Regression test for the double-prefixing pitfall this module
+        deliberately avoids (see backup_service's module docstring): Koofr's
         PROPFIND response returns absolute WebDAV hrefs, not bare
         filenames -- list_backups() must still resolve to correct
         basenames, and cleanup_old_backups()/run_restore() must be able to

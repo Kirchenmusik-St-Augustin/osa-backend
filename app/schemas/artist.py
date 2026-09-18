@@ -2,13 +2,13 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import StrictInputModel
+from app.schemas.base import OptionalText, StrictInputModel
 
 
 class ArtistRequest(StrictInputModel):
     surname: str = Field(min_length=3, max_length=32)
     givenname: str = Field(min_length=3, max_length=32)
-    description: str | None = None
+    description: OptionalText = None
     birthyear: int | None = None
     deathyear: int | None = None
     composer: bool = False

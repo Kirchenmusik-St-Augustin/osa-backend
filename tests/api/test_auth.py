@@ -1,17 +1,14 @@
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy import select
 
 from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.sent_email import SentEmail
 from app.services import auth_service
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_login_success_sets_refresh_cookie_and_returns_access_token(client, make_user):
@@ -42,9 +39,9 @@ def test_login_unknown_email_returns_generic_german_message(client):
 def test_login_wrong_password_returns_same_generic_message_as_unknown_email(
     client, make_user
 ):
-    """Hard Legacy parity: lang/de/auth.php's `failed` string covers BOTH
-    cases identically -- there is no separate "Passwort falsch." message in
-    the login flow (that belongs to the unrelated change-password form)."""
+    """The generic `failed` message covers BOTH cases identically -- there
+    is no separate "Passwort falsch." message in the login flow (that
+    belongs to the unrelated change-password form)."""
     user = make_user(password="correct-password")
 
     response = client.post(
@@ -268,9 +265,9 @@ def test_get_current_user_rejects_locked_account_mid_session(
     )
     access_token = login_response.json()["access_token"]
 
-    # Locked *after* login -- Legacy's global BlockLocked middleware rejects
-    # an already-logged-in, now-locked user on their NEXT request, not just
-    # at login time. Our get_current_user dependency must do the same.
+    # Locked *after* login -- an already-logged-in, now-locked user must be
+    # rejected on their NEXT request, not just at login time (the
+    # get_current_user dependency).
     user.auth_locked = True
     db_session.commit()
 
@@ -359,7 +356,39 @@ def test_register_rejects_weak_password(client):
 
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert any("Richtlinien" in err["msg"] for err in detail)
+    password_errors = [err for err in detail if err["loc"] == ["body", "password"]]
+    assert len(password_errors) == 1
+    assert "zwischen 8 und 16 Zeichen" in password_errors[0]["msg"]
+    assert "mindestens eine Ziffer" in password_errors[0]["msg"]
+    assert "Richtlinien" not in password_errors[0]["msg"]
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/auth/verify-email", {"token": ""}),
+        (
+            "/auth/reset-password",
+            {
+                "email": "nobody@example.com",
+                "token": "",
+                "password": "Passw0rd1",
+                "password_confirmation": "Passw0rd1",
+            },
+        ),
+        ("/auth/google/callback", {"credential": ""}),
+    ],
+)
+def test_required_token_and_credential_fields_reject_empty_strings(
+    client, path, payload
+):
+    response = client.post(path, json=payload)
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any(
+        err["loc"][0] == "body" and err["type"] == "string_too_short" for err in detail
+    )
 
 
 def test_register_rejects_mismatched_password_confirmation(client):
@@ -481,9 +510,9 @@ def test_unverified_user_is_rejected_by_a_verified_gated_endpoint(client, make_u
     )
     access_token = login_response.json()["access_token"]
 
-    # /profile is a direct-Depends(get_verified_user) endpoint (1:1 Legacy's
-    # `content.` route group), not a require_permission(...) one -- exercises
-    # the other half of the gate's wiring.
+    # /profile is a direct-Depends(get_verified_user) endpoint, not a
+    # require_permission(...) one -- exercises the other half of the gate's
+    # wiring.
     response = client.get(
         "/profile", headers={"Authorization": f"Bearer {access_token}"}
     )

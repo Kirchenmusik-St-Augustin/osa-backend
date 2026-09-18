@@ -289,8 +289,8 @@ class TestListDaysWithUsersForMonth:
         assert all(user.id not in [item.id for item in g.users] for g in result)
 
     def test_includes_a_soft_deleted_user(self, db_session: Session, make_user):
-        # Legacy's index() branch explicitly uses withTrashed() -- a user
-        # who got soft-deleted after the fact must still show up here.
+        # A user who got soft-deleted after the fact must still show up
+        # here.
         user = make_user()
         user.deleted_at = datetime.now(UTC)
         db_session.commit()
@@ -355,8 +355,6 @@ class TestListDaysWithUsersForMonth:
     def test_sorted_by_surname_then_givenname_within_a_day(
         self, db_session: Session, make_user
     ):
-        # Legacy's `User` model carries a global `OrderBySurnameGivenname`
-        # scope applied to EVERY User query, including this whereIn lookup.
         # Surnames prefixed via _unique() -- `users` has a real UNIQUE
         # (surname, givenname) constraint, and the shared test-session
         # DB isn't rolled back between tests/files.
@@ -394,10 +392,8 @@ class TestListDaysWithUsersForMonth:
     def test_label_is_space_separated_without_a_comma(
         self, db_session: Session, make_user
     ):
-        # Deliberate Legacy inconsistency vs. list_entries_for_user_day()'s
-        # comma-format `username` below: Index.vue's pug template renders
-        # the raw `{{ user.surname }} {{ user.givenname }}` fields directly,
-        # not the comma-format `name` accessor.
+        # Deliberately unlike list_entries_for_user_day()'s comma-format
+        # `username` below.
         user = make_user()
         user.surname, user.givenname = _unique("ZWICKENPFLUG"), "Doris"
         db_session.commit()
@@ -570,8 +566,8 @@ class TestGet:
         self, db_session: Session, make_user
     ):
         # Deliberate asymmetry vs. list_days_with_users_for_month/
-        # list_entries_for_user_day: Legacy's Show resource does a PLAIN
-        # (non-withTrashed) User::find().
+        # list_entries_for_user_day: the Show lookup excludes soft-deleted
+        # users.
         user = make_user()
         user.deleted_at = datetime.now(UTC)
         db_session.commit()

@@ -37,16 +37,14 @@ _SEARCH_RESULT_LIMIT = 20
 
 
 class UserNotFoundError(Exception):
-    """Raised when `user_id` doesn't exist among non-deleted users -- 1:1
-    Legacy's implicit route-model-binding on a SoftDeletes model without
-    `->withTrashed()` (System::UserController, unlike
-    Administrator::UserAdministrationController, see
+    """Raised when `user_id` doesn't exist among non-deleted users (unlike
+    the administration domain, which also sees soft-deleted users, see
     user_administration_service.py)."""
 
 
 class UserValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 fee_service.FeeValidationError pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as fee_service.FeeValidationError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -54,10 +52,8 @@ class UserValidationError(Exception):
 
 
 class AdministratorProtectedError(Exception):
-    """update/destroy targeting a user with administrator=True -- 1:1
-    Legacy's `abort_if($user->administrator, 501, ...)` in
-    System::UserController::update()/destroy(). No exception even when the
-    acting user is themselves an administrator."""
+    """update/destroy targeting a user with administrator=True. No
+    exception even when the acting user is themselves an administrator."""
 
 
 class UserInUseError(Exception):
@@ -84,13 +80,10 @@ def _position_refs_for_user(
 
 
 def _is_deletable(db: Session, user_id: uuid.UUID) -> bool:
-    """`!(hasDependencies || upcoming confirmed bookings)`. Legacy's
-    HasDependencies trait on User only lists `roles` (NOT the Instrument/
-    Voice/Choirjob assignments in `user_positions`) -- an assigned
-    Instrument alone never blocks delete. `requestsAndBookings(true, true)`
-    (upcomingOnly, bookingsOnly) additionally blocks delete for a future
-    CONFIRMED Booking -- an open BookingRequest without a Booking does
-    NOT block it."""
+    """A user is deletable unless they hold a role or a future CONFIRMED
+    Booking. The Instrument/Voice/Choirjob assignments in `user_positions`
+    never block a delete, and neither does an open BookingRequest without a
+    Booking."""
     has_role = (
         db.execute(
             select(func.count())
@@ -166,13 +159,10 @@ def _get_or_404(db: Session, user_id: uuid.UUID) -> User:
 
 
 def search_users(db: Session, query: str) -> Sequence[User]:
-    """Real indexed DB query, replacing Legacy's `User::search()`
-    in-memory-filter anti-pattern -- 1:1 artist_service.search_artists.
-    Matches against "SURNAME, Givenname" (with the comma), mirroring
-    Legacy's `Str::containsAll(strtolower($user->name))` against the
-    HasHumanNames `name` virtual attribute. Excludes soft-deleted users --
-    Administrator::UserAdministrationController has the withTrashed()
-    variant (user_administration_service.py)."""
+    """Filtered in the database (not in memory), same technique as
+    artist_service.search_artists. Matches against "SURNAME, Givenname"
+    (with the comma). Excludes soft-deleted users --
+    user_administration_service.py has the variant that includes them."""
     words = [word for word in query.lower().split() if word]
     if not words:
         return []
@@ -275,14 +265,12 @@ def _apply_administrator_grant(
     user: User, *, desired: bool, current_user: User
 ) -> None:
     """The administrator flag may only be GRANTED by a real administrator --
-    1:1 the roles pattern (_sync_roles_if_administrator), a silent no-op for
-    anyone else. Deliberately one-way: revoking is not implemented here
-    because it's unreachable through the app anyway -- once granted, the
-    target row is immediately protected by update_user()'s
-    AdministratorProtectedError guard, matching Legacy's existing
-    "administrators can not be updated" protection (Legacy itself has no
-    path to grant the status in the first place; this is an intentional
-    divergence)."""
+    same pattern as the roles (_sync_roles_if_administrator), a silent
+    no-op for anyone else. Deliberately one-way: revoking is not
+    implemented here because it's unreachable through the app anyway --
+    once granted, the target row is immediately protected by
+    update_user()'s AdministratorProtectedError guard ("administrators can
+    not be updated")."""
     if desired and current_user.administrator:
         user.administrator = True
 
@@ -290,13 +278,12 @@ def _apply_administrator_grant(
 def _sync_roles_if_administrator(
     db: Session, user_id: uuid.UUID, role_ids: list[uuid.UUID], current_user: User
 ) -> None:
-    """Roles may only be assigned/removed by a real administrator -- 1:1
-    Legacy's System::UserController::save(): "this controller should be
-    accessible by role:disponent and administrator. But roles must only be
-    saved by administrator" -- a silent no-op for anyone else, not a
-    validation error, since the field is accepted from every caller
-    (defense-in-depth: the frontend already hides the Rollen picker from
-    non-administrators, this is the server-side backstop)."""
+    """Roles may only be assigned/removed by a real administrator, although
+    the user endpoints are accessible to disponents too -- a silent no-op
+    for anyone else, not a validation error, since the field is accepted
+    from every caller (defense-in-depth: the frontend already hides the
+    Rollen picker from non-administrators, this is the server-side
+    backstop)."""
     if not current_user.administrator:
         return
 
@@ -364,8 +351,8 @@ def update_user(
 
     # Asymmetric with profile_service.update_profile() by design: an admin
     # changing someone ELSE's email resets verification but does NOT send a
-    # new verification mail (1:1 Legacy quirk) -- only the user's own
-    # Selfadmin-Profil edit does that.
+    # new verification mail -- only the user's own Selfadmin-Profil edit
+    # does that.
     if data.email != user.email:
         user.email_verified_at = None
 

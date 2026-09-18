@@ -338,10 +338,8 @@ class TestRequestsAndBookings:
     def test_includes_past_performances_unlike_the_selfadmin_endpoint(
         self, client, make_user, make_instrument, db_session
     ):
-        # Legacy's System::UserController::requestsAndBookings() calls the
-        # bare `$user->requestsAndBookings()` ($upcomingOnly defaults to
-        # false), unlike /support/requests-and-bookings, which stays
-        # upcoming-only.
+        # The admin-side per-user view returns the user's ALL-history,
+        # unlike /support/requests-and-bookings, which stays upcoming-only.
         headers = _auth_headers(client, make_user)
         target = make_user()
         performance = _make_past_performance(db_session)

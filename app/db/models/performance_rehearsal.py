@@ -9,10 +9,9 @@ from app.db.uuid_pk import uuid_pk
 
 
 class PerformanceRehearsal(Base):
-    """A single rehearsal slot (date/time + free-text location, NOT an FK
-    to the Location model -- Legacy stores this as a plain string) for a
-    Performance. Always fully replaced (delete-all, recreate) on every
-    Performance save, never diffed -- see performance_service.py.
+    """A single rehearsal slot (date/time + free-text location, NOT an FK to the
+    Location model) for a Performance. Always fully replaced (delete-all, recreate) on
+    every Performance save, never diffed -- see performance_service.py.
 
     `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09): `created_at` is populated by

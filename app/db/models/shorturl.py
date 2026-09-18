@@ -9,8 +9,7 @@ from app.db.uuid_pk import uuid_pk
 
 
 class Shorturl(Base):
-    """Mirrors legacy `shorturls` exactly (Phase 1). A standalone
-    redirect-link lookup table, resolved both by the authenticated
+    """A standalone redirect-link lookup table, resolved both by the authenticated
     management UI (`/shorturls`, role `shorturls`) and by the public,
     unauthenticated `go.`-subdomain redirect service (see
     app/api/router_includes/go.py) -- no FK from or to any other table.

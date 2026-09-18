@@ -15,11 +15,10 @@ class ClientUserAgent(Base):
     HTTP request, and the constraint is what makes the IntegrityError-based
     race handling there actually correct rather than just optimistic.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the FK-hardening
-    follow-up slice (2026-09): `created_at` is populated by the database's
-    own DEFAULT now(), `updated_at` by the shared set_updated_at() BEFORE
-    UPDATE trigger, same as every other non-Legacy-mirrored table -- this
-    table has no update path in practice (rows are only ever inserted, via
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
+    the database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger -- this table has no update
+    path in practice (rows are only ever inserted, via
     get-or-create), so `updated_at` stays NULL for the lifetime of a row."""
 
     __tablename__ = "client_user_agents"

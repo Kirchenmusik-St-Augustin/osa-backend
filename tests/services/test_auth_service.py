@@ -318,7 +318,7 @@ def test_logout_user_deletes_session_and_sets_lastlogout(db_session, make_user):
 
 
 def test_logout_user_ignores_garbage_token(db_session):
-    # Must not raise -- Legacy's logout() is a best-effort cleanup.
+    # Must not raise -- logout is a best-effort cleanup.
     auth_service.logout_user(db_session, "not-a-real-jwt")
 
 
@@ -505,7 +505,7 @@ def test_verify_email_rejects_pre_migration_integer_user_id_token(db_session):
     error a user sees for any other bad link, not an unhandled
     exception (see the token's 60-minute TTL: a link emailed shortly
     before a cutover can still be clicked shortly after it)."""
-    legacy_token = security._email_verification_serializer.dumps(
+    integer_id_token = security._email_verification_serializer.dumps(
         {
             "user_id": "42",
             "email_hash": security.hash_email_for_verification("nobody@example.test"),
@@ -513,7 +513,7 @@ def test_verify_email_rejects_pre_migration_integer_user_id_token(db_session):
     )
 
     with pytest.raises(ValueError, match="ungültig oder abgelaufen"):
-        auth_service.verify_email(db_session, legacy_token)
+        auth_service.verify_email(db_session, integer_id_token)
 
 
 def test_verify_email_rejects_token_after_email_changed(db_session, make_user):
@@ -823,10 +823,9 @@ def test_unlink_oauth_binding_removes_owned_binding(db_session, make_user):
 def test_unlink_oauth_binding_rejects_binding_owned_by_another_user(
     db_session, make_user
 ):
-    """IDOR regression test: Legacy's `oauth2disconnect($id)` looked up
-    the binding by ID alone, with no ownership check at all -- any
-    logged-in user could delete any other user's Google link. This must
-    now be rejected instead, and rejected the SAME way as a not-found ID
+    """IDOR regression test: unlinking must check ownership -- otherwise
+    any logged-in user could delete any other user's Google link by
+    guessing an ID. It must be rejected the SAME way as a not-found ID
     (uniform 404 at the router level, no enumeration signal)."""
     victim = make_user()
     attacker = make_user()

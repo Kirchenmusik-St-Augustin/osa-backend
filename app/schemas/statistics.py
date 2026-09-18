@@ -13,7 +13,7 @@ class StatisticsEmailOutput(BaseModel):
 
 
 class StatisticsOutput(BaseModel):
-    """1:1 Legacy's `StatisticsController::statistics()`."""
+    """Row counts shown on the Statistics page."""
 
     users: int
     performances: int

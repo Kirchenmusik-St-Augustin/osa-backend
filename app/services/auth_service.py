@@ -42,8 +42,7 @@ if TYPE_CHECKING:
     from app.core.json_types import JsonObject
     from app.schemas.auth import RegisterRequest
 
-# Mirrors Legacy's StoreRequest::ensureIsNotRateLimited() (5 attempts / 60s,
-# see legacy/app/Http/Requests/Auth/LoginController/StoreRequest.php).
+# Login lockout: 5 failed attempts per 60s window.
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_THROTTLE_WINDOW_SECONDS = 60
 
@@ -59,8 +58,7 @@ def log_auth_event(
     user_agent: str | None = None,
     payload: JsonObject | None = None,
 ) -> None:
-    """1:1 port of Legacy's `AuthLog::log()` (app/Models/AuthLog.php) --
-    write-only audit row, keyed by the raw submitted email string, not
+    """Write-only audit row, keyed by the raw submitted email string, not
     `user_id`. Commits immediately: the log must survive even if the
     caller's own transaction later fails."""
     db.add(
@@ -80,14 +78,11 @@ def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None
     """Returns seconds remaining if the email+IP pair is currently
     rate-limited, None if the login attempt may proceed.
 
-    Mirrors Legacy's asymmetric Laravel RateLimiter semantics (hit on
-    failure, cleared on success, key = lower(email)+ip) via a derived query
-    over AuthLog instead of a separate counter/cache -- deliberately a
-    sliding 60s window bounded by the most recent successful login for this
-    exact key (an approximation of Laravel's fixed-window-with-clear-on-
-    success cache semantics, not a bit-exact replication -- see the
-    Schritt-2 plan for the full reasoning). No new table, reuses the audit
-    trail as the source of truth (lean, DRY)."""
+    Asymmetric semantics (hit on failure, cleared on success, key =
+    lower(email)+ip) implemented as a derived query over AuthLog instead of
+    a separate counter/cache -- deliberately a sliding 60s window bounded by
+    the most recent successful login for this exact key. No new table,
+    reuses the audit trail as the source of truth (lean, DRY)."""
     now = datetime.now(UTC)
     window_start = now - timedelta(seconds=LOGIN_THROTTLE_WINDOW_SECONDS)
     normalized_email = email.lower()
@@ -134,9 +129,9 @@ def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None
 def authenticate_user(
     db: Session, email: str, password: str
 ) -> tuple[User | None, AuthFailureReason | Literal["ok"]]:
-    """Case-sensitive email match, matching Legacy's actual DB comparison
-    (no case-insensitive collation on `users.email`) -- deliberately NOT
-    lowercased here, unlike the throttle key above."""
+    """Case-sensitive email match (no case-insensitive collation on
+    `users.email`) -- deliberately NOT lowercased here, unlike the throttle
+    key above."""
     result = db.execute(
         select(User)
         .options(selectinload(User.roles))
@@ -280,10 +275,9 @@ class RegistrationConflictError(Exception):
 def check_registration_conflicts(
     db: Session, *, surname: str, givenname: str, email: str
 ) -> None:
-    """Case-insensitive duplicate check, including soft-deleted users
-    (User.deleted_at is deliberately NOT filtered out -- mirrors Legacy's
-    `User::withTrashed()` check), so a deleted user's name/email can't be
-    silently reused for a new registration."""
+    """Case-insensitive duplicate check, including soft-deleted users (User.deleted_at
+    is deliberately NOT filtered out), so a deleted user's name/email can't be silently
+    reused for a new registration."""
     errors: list[tuple[str, str]] = []
 
     name_taken = db.execute(
@@ -309,9 +303,8 @@ def check_registration_conflicts(
 
 
 def register_user(db: Session, data: RegisterRequest) -> User:
-    """Persists the new User row. Auto-login (mirrors Legacy's
-    `Auth::login($user)` right after `User::create()`) is the router's
-    job via create_user_session(), not this function's."""
+    """Persists the new User row. Auto-login is the router's job via
+    create_user_session(), not this function's."""
     check_registration_conflicts(
         db, surname=data.surname, givenname=data.givenname, email=data.email
     )
@@ -366,8 +359,7 @@ def verify_email(db: Session, token: str) -> User:
     if user is None or not user.email:
         raise ValueError(invalid_msg)
     if hash_email_for_verification(user.email) != email_hash:
-        # Email changed since the link was issued -- mirrors Legacy's
-        # EmailVerificationRequest::authorize() sha1(email) re-check.
+        # Email changed since the link was issued.
         raise ValueError(invalid_msg)
 
     if user.email_verified_at is None:
@@ -440,7 +432,7 @@ def execute_password_reset(
         raise ValueError(msg)
 
     user.auth_password = get_password_hash(new_password)
-    # Mirrors Legacy: a successful reset also verifies the email address.
+    # A successful reset also verifies the email address.
     user.email_verified_at = datetime.now(UTC)
 
     db.execute(
@@ -571,12 +563,11 @@ def link_google_account(
 def unlink_oauth_binding(
     db: Session, binding_id: uuid.UUID, current_user_id: uuid.UUID
 ) -> None:
-    """IDOR-fixed replacement for Legacy's `oauth2disconnect($id)` (which
-    looked up `Oauth2Binding::find($id)` with NO ownership check -- any
-    logged-in user could delete anyone else's Google link by iterating
-    IDs). The lookup now filters on local_id too; not-found and
-    not-owned both raise the same error -> one uniform 404, no
-    enumeration signal."""
+    """Unlinks a Google binding, restricted to the caller's own bindings
+    (IDOR protection: a logged-in user must not be able to delete anyone
+    else's Google link by iterating IDs). The lookup filters on local_id;
+    not-found and not-owned both raise the same error -> one uniform 404,
+    no enumeration signal."""
     binding = db.execute(
         select(Oauth2Binding).where(
             Oauth2Binding.id == binding_id, Oauth2Binding.local_id == current_user_id

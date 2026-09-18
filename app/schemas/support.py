@@ -6,8 +6,8 @@ from app.schemas.base import LenientUuid, StrictInputModel
 
 
 class ContactUserOutput(BaseModel):
-    """1:1 Legacy's `User\\Short` resource -- `has_email` mirrors
-    `hasVerifiedEmail()`, not merely "an email is set"."""
+    """Contact person of a role -- `has_email` means the email is
+    VERIFIED, not merely "an email is set"."""
 
     id: uuid.UUID
     givenname: str
@@ -16,7 +16,7 @@ class ContactUserOutput(BaseModel):
 
 
 class RoleWithContactsOutput(BaseModel):
-    """1:1 Legacy's `Role\\ShowWithUsers` resource."""
+    """A role together with its contact users."""
 
     id: uuid.UUID
     name: str
@@ -26,14 +26,11 @@ class RoleWithContactsOutput(BaseModel):
 
 
 class MessageToContactpersonRequest(StrictInputModel):
-    """Legacy's `MessageToContactpersonRequest` rules (`'message' =>
-    ['required', 'min:3']`), plus an upper bound Legacy itself never had:
-    the message is embedded unmodified into an email body, so a
+    """The message is embedded unmodified into an email body, so a
     max_length caps how much text a single request can push through the
-    mail pipeline. `recipient_id` is required here (unlike Legacy's own
-    unvalidated-if-absent `exists:` rule, see
-    support_service.send_message_to_contactperson's docstring for why
-    that Legacy quirk is not worth replicating literally)."""
+    mail pipeline. `recipient_id` is required; an unknown or unverified
+    recipient is a silent no-op, see
+    support_service.send_message_to_contactperson."""
 
     recipient_id: LenientUuid
     message: str = Field(min_length=3, max_length=2000)

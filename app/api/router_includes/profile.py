@@ -30,9 +30,8 @@ def get_profile(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> UserResponse:
-    """Reuses user_service.get_user() -- Legacy's ProfileController::show()
-    renders the exact same `User\\Show` resource as
-    System::UserController::show(), just scoped to the caller's own id."""
+    """Reuses user_service.get_user() -- the same resource as the admin-side
+    user detail, just scoped to the caller's own id."""
     return user_service.get_user(db, current_user.id)
 
 
@@ -68,8 +67,7 @@ async def update_profile(
         ) from None
 
     # Asymmetric with user_service.update_user() by design: a user changing
-    # THEIR OWN email gets a new verification mail (1:1 Legacy's
-    # `sendEmailVerificationNotification()` call), unlike an admin editing
+    # THEIR OWN email gets a new verification mail, unlike an admin editing
     # someone else's account. `user.email` is guaranteed non-None here --
     # ProfileUpdateRequest.email is a required EmailStr, not Optional.
     if email_changed and user.email is not None:

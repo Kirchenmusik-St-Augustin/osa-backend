@@ -39,7 +39,7 @@ class RegisterRequest(StrictInputModel):
 
 
 class VerifyEmailRequest(StrictInputModel):
-    token: str
+    token: str = Field(min_length=1)
 
 
 class ForgotPasswordRequest(StrictInputModel):
@@ -48,7 +48,7 @@ class ForgotPasswordRequest(StrictInputModel):
 
 class ResetPasswordRequest(StrictInputModel):
     email: EmailStr
-    token: str
+    token: str = Field(min_length=1)
     password: str
     password_confirmation: str
 
@@ -64,13 +64,13 @@ class ResetPasswordRequest(StrictInputModel):
 
 
 class GoogleCallbackRequest(StrictInputModel):
-    credential: str
+    credential: str = Field(min_length=1)
 
 
 class GoogleLinkRequest(StrictInputModel):
-    credential: str
+    credential: str = Field(min_length=1)
     email: EmailStr
-    password: str = Field(max_length=128)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class EmailKillSwitchStatusOutput(BaseModel):

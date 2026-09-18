@@ -28,9 +28,8 @@ depends_on: str | Sequence[str] | None = None
 # maintenance-window migration -- see that migration's own module
 # docstring for why this is split into two steps.
 #
-# `password_reset_tokens` is the one table with no integer primary key
-# at all (its PK is `email`, mirroring legacy's own columnless-id shape)
-# -- excluded from `_PK_TABLES`, and no table has a foreign key into it.
+# `password_reset_tokens` is the one table with no integer primary key at all (its PK is
+# `email`) -- excluded from `_PK_TABLES`, and no table has a foreign key into it.
 _PK_TABLES: list[str] = [
     "artists",
     "auth_logs",

@@ -19,14 +19,12 @@ from app.db.database import SessionLocal
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.request_log import RequestLog
 
-# 1:1 Legacy's OsaScheduleDeleteOldDbLogRecords hardcoded literal (never a
-# config value there either).
+# Fixed retention for request_logs rows (deliberately not a config value).
 _REQUEST_LOG_RETENTION_DAYS = 40
 
 
 def purge_expired_password_reset_tokens() -> None:
-    """Port of Laravel's stock `auth:clear-resets` command -- sweeps
-    password_reset_tokens rows that were requested but never used/completed
+    """Sweeps password_reset_tokens rows that were requested but never used/completed
     and simply expired. auth_service.request_password_reset()/
     execute_password_reset() already delete a row opportunistically on the
     next request/successful reset, but nothing previously flushed a row
@@ -53,8 +51,8 @@ def purge_expired_password_reset_tokens() -> None:
 
 
 def purge_old_request_logs() -> None:
-    """Port of `osa:schedule:delete-old-db-log-records` --
-    `RequestLog::where('created_at', '<=', now()->subDays(40))->delete()`."""
+    """Deletes request_logs rows older than the retention period (40 days,
+    see _REQUEST_LOG_RETENTION_DAYS)."""
     cutoff = datetime.now(UTC) - timedelta(days=_REQUEST_LOG_RETENTION_DAYS)
     db = SessionLocal()
     try:

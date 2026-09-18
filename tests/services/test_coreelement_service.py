@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 def _unique(base: str = "Element") -> str:
     """Every test gets its own collision-free name -- tests/conftest.py's
-    shared test DB has no per-test rollback (1:1 make_user's uuid-based
-    emails for the same reason), and coreelement names are globally unique
+    shared test DB has no per-test rollback (same reason as make_user's
+    uuid-based emails), and coreelement names are globally unique
     per type, unlike Users."""
     return f"{base}-{uuid.uuid4().hex[:8]}"
 

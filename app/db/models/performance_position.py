@@ -19,9 +19,9 @@ from app.db.uuid_pk import uuid_pk
 class PerformancePosition(PositionColumns, Base):
     """Pivot row: which Instrument/Voice/Choirjob a Performance needs, and
     in what quantity. Unlike OrdinariumworkPosition, Performance's position
-    polymorphy legitimately includes ALL THREE types -- confirmed live:
-    Legacy's Performance uses instruments/voices/choirjobs, only
-    Ordinariumwork excludes choirjobs.
+    polymorphy legitimately includes ALL THREE types
+    (instruments/voices/choirjobs) -- only Ordinariumwork excludes
+    choirjobs.
 
     `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09): `created_at` is populated by

@@ -22,9 +22,8 @@ def get_my_requests_and_bookings(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[PerformanceShortOutput]:
-    """No permission gate beyond being logged in -- 1:1 Legacy's
-    SupportController (every user manages only their own requests/
-    bookings)."""
+    """No permission gate beyond being logged in -- every user manages only
+    their own requests/bookings."""
     return support_service.get_my_requests_and_bookings(db, current_user)
 
 
@@ -33,8 +32,7 @@ def get_contactpersons(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[RoleWithContactsOutput]:
-    """No permission gate beyond being logged in -- 1:1 Legacy's GET branch
-    of messageToContactperson()."""
+    """No permission gate beyond being logged in."""
     return support_service.list_roles_with_contacts(db)
 
 
@@ -51,8 +49,8 @@ async def send_message_to_contactperson(
     current_user: Annotated[User, Depends(get_verified_user)],
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
 ) -> dict[str, str]:
-    """Always responds 200 -- 1:1 Legacy's silent no-op for a missing/
-    unverified recipient (see support_service.send_message_to_contactperson's
+    """Always responds 200 -- a missing/unverified recipient is a silent
+    no-op (see support_service.send_message_to_contactperson's
     docstring). get_verified_user is declared before arq_pool on purpose --
     see profile.py's update_profile for why."""
     result = await run_in_threadpool(

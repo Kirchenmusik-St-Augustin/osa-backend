@@ -10,27 +10,16 @@ from app.db.uuid_pk import uuid_pk
 
 
 class PersonalAccessToken(Base):
-    """Backs the JWT refresh flow by reusing legacy's `personal_access_tokens`
-    table -- a dead, unused Sanctum artifact in Legacy (0 rows in prod).
-    Legacy's generic/dead columns are repurposed: `token` holds the JWT-ID
-    (jti), `abilities` (nullable TEXT, same as legacy) holds the refresh
-    token hash, `expires_at` holds the refresh token's expiry.
-    `refresh_token_hash` is a hybrid property so callers keep reading/
-    writing a meaningful name while the underlying `abilities` column stays
-    legacy-shaped.
+    """Backs the JWT refresh flow, one row per issued refresh token. The
+    table's generic columns are repurposed: `token` holds the JWT-ID
+    (jti), `abilities` (nullable TEXT) holds the refresh token hash,
+    `expires_at` holds the refresh token's expiry. `refresh_token_hash` is
+    a hybrid property so callers keep reading/writing a meaningful name
+    while the underlying `abilities` column keeps its generic name.
 
-    As of the polymorphy-redesign slice (2026-09), the former
-    `tokenable_type`/`tokenable_id` polymorphic pair (Laravel's generic
-    `morphTo`, byte-for-byte carried over from legacy in Phase 1) is
-    replaced by a real `user_id` column with an ON DELETE CASCADE foreign
-    key: `tokenable_type` never held anything but the constant "User" in
-    this application (the JWT refresh flow only ever issues tokens to
-    Users, and nothing in this codebase ever branched on it), so the
-    generic polymorphic shape carried no actual behavior, only an
-    unenforced reference. `user_id` was already the name every caller used
-    for this column (see auth_service.py, app/api/deps.py) via a hybrid
-    property aliasing the old `tokenable_id` -- it is now the real column
-    name, and that alias is gone.
+    `user_id` is a real column with an ON DELETE CASCADE foreign key to
+    `users.id` -- the JWT refresh flow only ever issues tokens to Users, so
+    no polymorphic owner type is needed.
 
     `id`/`user_id` are UUIDv7 (server-generated via Postgres's native
     `uuidv7()`, see app.db.uuid_pk) as of the UUID-migration slice

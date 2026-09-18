@@ -19,8 +19,8 @@ class ShorturlNotFoundError(Exception):
 
 
 class ShorturlValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 fee_service.FeeValidationError pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as fee_service.FeeValidationError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -28,13 +28,10 @@ class ShorturlValidationError(Exception):
 
 
 def ensure_scheme(url: str) -> str:
-    """Prepends "http://" if `url` has no scheme of its own. 1:1 Legacy's
-    `ShorturlController::ensureScheme()` -- Legacy duplicates this exact
-    logic a second time inline in `GoController::go()` at redirect time;
-    here it is one shared function, called from both the save path
-    (create_shorturl/update_shorturl) and the redirect path
-    (resolve_and_record_hit) below, same net behavior without the
-    duplication."""
+    """Prepends "http://" if `url` has no scheme of its own. One shared
+    function, called from both the save path (create_shorturl/
+    update_shorturl) and the redirect path (resolve_and_record_hit)
+    below."""
     if not urlparse(url).scheme:
         return f"http://{url}"
     return url
@@ -75,17 +72,15 @@ def _to_response(shorturl: Shorturl) -> ShorturlResponse:
 
 
 def list_shorturls(db: Session) -> list[ShorturlResponse]:
-    # 1:1 Legacy's `Shorturl::all()->sortBy('path')`.
+    # Alphabetical by path.
     shorturls = db.execute(select(Shorturl).order_by(Shorturl.path)).scalars().all()
     return [_to_response(shorturl) for shorturl in shorturls]
 
 
 def list_shorturls_with_prefix(db: Session) -> ShorturlListResponse:
-    # `urlprefix` mirrors Legacy's hardcoded `'urlprefix' =>
-    # 'https://go.hochamt.at/'` in ShorturlController::index() -- built
-    # from Settings.shorturl_domain instead so dev (go.hochamt.at.dev.
-    # schimpl.cc) vs. prod (go.hochamt.at) is a config difference, not a
-    # code difference.
+    # `urlprefix` is built from Settings.shorturl_domain so dev
+    # (go.hochamt.at.dev.schimpl.cc) vs. prod (go.hochamt.at) is a config
+    # difference, not a code difference.
     return ShorturlListResponse(
         urlprefix=f"https://{get_settings().shorturl_domain}/",
         items=list_shorturls(db),
@@ -93,8 +88,8 @@ def list_shorturls_with_prefix(db: Session) -> ShorturlListResponse:
 
 
 def create_shorturl(db: Session, data: ShorturlRequest) -> ShorturlResponse:
-    # `lstrip` only -- 1:1 Legacy's `ltrim($validated['path'], '/')`,
-    # strips leading slashes only, not trailing/embedded ones.
+    # `lstrip` only -- strips leading slashes only, not trailing/embedded
+    # ones.
     path = data.path.lstrip("/")
     errors = _validate(db, path, exclude_id=None)
     if errors:
@@ -126,8 +121,7 @@ def update_shorturl(
 
 
 def delete_shorturl(db: Session, shorturl_id: uuid.UUID) -> None:
-    # No has_dependencies check -- Legacy's own DestroyRequest has an empty
-    # rules() too, no other table references shorturls.id.
+    # No has_dependencies check -- no other table references shorturls.id.
     shorturl = _get_or_404(db, shorturl_id)
     db.delete(shorturl)
     db.commit()
@@ -135,11 +129,10 @@ def delete_shorturl(db: Session, shorturl_id: uuid.UUID) -> None:
 
 def resolve_and_record_hit(db: Session, path: str) -> str | None:
     """Looks up `path` for the public go-redirect endpoint. On a hit,
-    records the click (counter/latestcall_at, 1:1 GoController::go()) and
-    returns the normalized target URL; returns None on a miss (the router
-    turns that into a 404). No special-casing for any particular path
-    value (e.g. Legacy's "listAll") -- see app.api.router_includes.go for
-    why that public dump was deliberately not ported."""
+    records the click (counter/latestcall_at) and returns the normalized
+    target URL; returns None on a miss (the router turns that into a 404).
+    No special-casing for any particular path value (e.g. "listAll") -- see
+    app.api.router_includes.go for why there is no public dump path."""
     result = db.execute(select(Shorturl).where(Shorturl.path == path))
     shorturl = result.scalar_one_or_none()
     if shorturl is None:

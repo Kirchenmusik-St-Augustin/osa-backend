@@ -104,22 +104,18 @@ _SPARTE_ENUM = Enum(
 
 
 class Score(Base):
-    """Mirrors legacy `scores` exactly (Phase 1) -- a physical sheet-music
-    archive card catalog (NOT a digital/PDF archive: no file storage
-    anywhere in this domain), one row per work. Legacy's own `Score::
-    $fields` config array (see app.services.score_service.SCORE_FIELDS,
-    the single source of truth reused for both validation and the
-    frontend's field metadata) is the authoritative field list -- this
-    model just mirrors the raw column shapes. No `has_dependencies`/delete
-    concept: Legacy's own route registration excludes `destroy` entirely
-    (`Route::resource(...)->except(['destroy'])`, its controller method is
-    dead code, "as an archive should archive things") -- this port has no
-    delete endpoint or service function at all, not even a stub.
+    """A physical sheet-music archive card catalog (NOT a digital/PDF
+    archive: no file storage anywhere in this domain), one row per work.
+    The field config (see app.services.score_service.SCORE_FIELDS, the
+    single source of truth reused for both validation and the frontend's
+    field metadata) is the authoritative field list -- this model just
+    mirrors the raw column shapes. No `has_dependencies`/delete concept:
+    an archive archives things, so there is no delete endpoint or service
+    function at all, not even a stub.
 
-    `inhalt`/`sparte`/the 12 `*art` columns are native Postgres ENUMs as
-    of the enum-hardening slice (2026-09), replacing what used to be 14
-    CheckConstraints -- `Mapped[str]` is unchanged, every existing string
-    comparison/lookup on these columns keeps working.
+    `inhalt`/`sparte`/the 12 `*art` columns are native Postgres ENUMs --
+    `Mapped[str]` keeps every string comparison/lookup on these columns
+    working.
 
     `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
     audit-trigger hardening slice (2026-09): `created_at` is populated by
@@ -139,8 +135,7 @@ class Score(Base):
     config means no per-field business logic is duplicated 94 times
     despite the flat column count -- normalizing would only add joins on
     every access with no relational benefit. This table also has zero
-    foreign keys in either direction (confirmed against the live schema)
-    and stays that way by design: the instrumentation headcounts
+    foreign keys in either direction, by design: the instrumentation headcounts
     deliberately do NOT reference the shared instruments table other
     domains use, keeping this table fully self-contained."""
 
@@ -169,9 +164,7 @@ class Score(Base):
 
     # -- Holdings per part-type: verl(ag)/art/zust(and)/anz(ahl). "orch"
     # is the ONLY group with no `anz` column at all -- "orgel" does have
-    # one, confirmed by the real schema (a first read of it mistakenly
-    # assumed both lacked it; caught live via Playwright, since Legacy's
-    # own Score/Show.vue genuinely displays an Orgel-Stimme "Anzahl" cell).
+    # one.
     part1verl: Mapped[str | None] = mapped_column()
     part1art: Mapped[str | None] = mapped_column(_ART_ENUM)
     part1zust: Mapped[str | None] = mapped_column()

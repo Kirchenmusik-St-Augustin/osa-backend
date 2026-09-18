@@ -37,12 +37,11 @@ _NAME_LENGTH_ERROR = (
     f"Muss zwischen {_NAME_MIN_LENGTH} und {_NAME_MAX_LENGTH} Zeichen lang sein."
 )
 
-# Legacy's Relation::morphMap restricts Ordinariumwork positions to these
-# two types (OrdinariumworkPosition structurally excludes 'choirjobs' --
-# it has no choirjob_id column at all, confirmed by 1677 live rows, zero
-# choirjobs, before this table even had that column to exclude). Narrower
-# than app.services.position_types.PositionType (3-way), so kept local
-# rather than importing/reusing that shared alias.
+# Ordinariumwork positions are restricted to these two types
+# (OrdinariumworkPosition structurally excludes 'choirjobs' -- it has no
+# choirjob_id column at all). Narrower than
+# app.services.position_types.PositionType (3-way), so kept local rather
+# than importing/reusing that shared alias.
 OrdinariumworkPositionType = Literal["instruments", "voices"]
 
 _POSITION_MODELS: dict[OrdinariumworkPositionType, type[Instrument | Voice]] = {
@@ -81,8 +80,8 @@ class OrdinariumworkNotFoundError(Exception):
 
 
 class OrdinariumworkValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 auth_service.RegistrationConflictError pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as auth_service.RegistrationConflictError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -91,9 +90,7 @@ class OrdinariumworkValidationError(Exception):
 
 class OrdinariumworkInUseError(Exception):
     """Raised when delete is blocked by a Performance referencing this
-    Ordinariumwork -- Legacy's only HasDependencies target (`performances`),
-    retrofitted now that Schritt 5 built that domain (was deferred before,
-    mirroring the Instrument/Voice retrofit in coreelement_service.py)."""
+    Ordinariumwork."""
 
 
 def _get_or_404(db: Session, ordinariumwork_id: uuid.UUID) -> Ordinariumwork:
@@ -171,9 +168,8 @@ def _validate(
 def _sync_positions(
     db: Session, ordinariumwork_id: uuid.UUID, data: OrdinariumworkRequest
 ) -> None:
-    """Mirrors Legacy's `Ordinariumwork::setup()` sync() semantics: rows
-    not in the new setup are removed, existing ones get their quantity
-    updated, new ones are inserted."""
+    """Sync semantics: rows not in the new setup are removed, existing ones
+    get their quantity updated, new ones are inserted."""
     existing = (
         db.execute(
             select(OrdinariumworkPosition).where(
@@ -227,12 +223,9 @@ def _to_response(db: Session, ordinariumwork: Ordinariumwork) -> OrdinariumworkR
 def search_ordinariumworks(
     db: Session, query: str
 ) -> Sequence[OrdinariumworkSearchResult]:
-    """Real indexed-ish DB query, replacing Legacy's
-    `Ordinariumwork::search()` anti-pattern (loads the entire table into
-    PHP, filters in memory, then a dead `sortBy('artist_name')` call that
-    never actually sorted since that attribute doesn't exist on the model
-    -- an obvious oversight, corrected here with a real ORDER BY instead
-    of replicated verbatim)."""
+    """Filtered and sorted in the database (not in memory): every
+    whitespace-separated word in `query` must appear in the work's name or
+    its artist's name."""
     words = [word for word in query.lower().split() if word]
     if not words:
         return []
@@ -257,13 +250,10 @@ def search_ordinariumworks(
 
 
 def get_available_positions(db: Session) -> OrdinariumworkAvailablePositionsOutput:
-    """Instrument/Voice dropdown source for the setup editor -- mirrors
-    Legacy's `Instrument::all()`/`Voice::all()` embedded directly in
-    Ordinariumwork's ShowForm resource (gated by ordinariumworkMaintain,
-    not instrumentMaintain/voiceMaintain -- Legacy performs zero
-    cross-model authorization here). Reuses coreelement_service's
-    `order`-column ordering for consistency with the Coreelement admin
-    pages (Schritt 3)."""
+    """Instrument/Voice dropdown source for the setup editor -- gated by
+    ordinariumworkMaintain, not instrumentMaintain/voiceMaintain (no
+    cross-model authorization). Reuses coreelement_service's `order`-column
+    ordering for consistency with the Coreelement admin pages."""
     instruments = list_coreelements(db, CoreelementType.instrument, active_only=True)
     voices = list_coreelements(db, CoreelementType.voice, active_only=True)
     return OrdinariumworkAvailablePositionsOutput(
@@ -322,14 +312,7 @@ def get_ordinariumwork(
 
 def get_setup(db: Session, ordinariumwork_id: uuid.UUID) -> OrdinariumworkSetupOutput:
     """Output order follows the Instrument/Voice's own `order` column, not
-    pivot-row insertion order -- Legacy's Instrument/Voice models carry a
-    global `OrderByOrder` scope (HasCoreelementFeatures trait) that applies
-    to EVERY query against them, including the `morphedByMany` relation
-    query behind `Ordinariumwork::setup()`. Confirmed live against
-    production data (2026-07-29): a real Ordinariumwork's Instrumente table
-    showed Konzertmeister/Violine 1/Violine 2/Violoncello/Contrabass/Orgel
-    in exactly their coreelement `order` sequence (0/1/2/4/6/31), not their
-    `id` sequence (18/35/2/4/5/1, unrelated) or pivot-row insertion order."""
+    the id sequence or pivot-row insertion order."""
     _get_or_404(db, ordinariumwork_id)
     positions = (
         db.execute(

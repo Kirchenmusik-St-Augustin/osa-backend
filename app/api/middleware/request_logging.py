@@ -26,10 +26,9 @@ _SKIP_LOG_HEADER = "x-skip-request-log"
 
 
 async def _extract_request_input(request: Request) -> JsonObject:
-    """Best-effort read of the request body as a dict -- mirrors Legacy's
-    `$request->all()`, which handles both JSON bodies and form-encoded
-    bodies (our own login endpoint uses OAuth2PasswordRequestForm, i.e.
-    x-www-form-urlencoded, not JSON)."""
+    """Best-effort read of the request body as a dict, handling both JSON
+    bodies and form-encoded bodies (our own login endpoint uses
+    OAuth2PasswordRequestForm, i.e. x-www-form-urlencoded, not JSON)."""
     content_type = request.headers.get("content-type", "")
     body = await request.body()
     if not body:
@@ -52,8 +51,7 @@ async def _extract_request_input(request: Request) -> JsonObject:
 
 
 def _try_parse_json(body: bytes) -> JsonValue:
-    # Mirrors Legacy's `json_decode($response->content())` -- returns None
-    # for any non-JSON (or empty) response body, same as PHP's json_decode.
+    # Returns None for any non-JSON (or empty) response body.
     if not body:
         return None
     try:
@@ -63,9 +61,9 @@ def _try_parse_json(body: bytes) -> JsonValue:
 
 
 def _forwarded_ips(request: Request) -> list[str]:
-    # Mirrors Legacy's `$request->ips()` (full X-Forwarded-For chain, most
-    # recent proxy last) -- Starlette has no built-in equivalent, so this
-    # is read directly off the header, falling back to the direct peer.
+    # Full X-Forwarded-For chain, most recent proxy last -- Starlette has no
+    # built-in equivalent, so this is read directly off the header, falling
+    # back to the direct peer.
     header = request.headers.get("x-forwarded-for")
     if not header:
         return [request.client.host] if request.client else []
@@ -73,10 +71,9 @@ def _forwarded_ips(request: Request) -> list[str]:
 
 
 def _memory_usage_bytes() -> int:
-    # Approximates Legacy's `memory_get_usage()` (live PHP heap) with the
-    # process's peak resident set size -- a different metric, but the field
-    # is purely informational (no business logic reads it), and Linux
-    # containers report ru_maxrss in KiB.
+    # Process's peak resident set size -- the field is purely informational
+    # (no business logic reads it), and Linux containers report ru_maxrss in
+    # KiB.
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 
 
@@ -128,10 +125,9 @@ def _resolve_user_id(db: Session, auth_header: str | None) -> uuid.UUID | None:
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """1:1 port of Legacy's `RequestLogging` middleware (`terminate()` hook,
-    global on the `web` group -- every request gets logged, not just
-    Administrator-domain ones). See app.services.request_log_service for
-    the exclusion rules and redaction logic."""
+    """Logs every request (not just Administrator-domain ones). See
+    app.services.request_log_service for the exclusion rules and redaction
+    logic."""
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]

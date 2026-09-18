@@ -9,16 +9,13 @@ from app.db.uuid_pk import uuid_pk
 
 
 class Oauth2Binding(Base):
-    """Mirrors legacy `oauth2_bindings` exactly (Phase 1 -- no renames, no
-    schema changes). `local_id` is an ON DELETE CASCADE foreign key into
-    `users.id` as of the FK-hardening slice (2026-09) -- an OAuth2 binding
-    has no meaning independent of the local user it authenticates.
+    """Link between a local user and an external OAuth2 identity. `local_id`
+    is an ON DELETE CASCADE foreign key into `users.id` -- an OAuth2
+    binding has no meaning independent of the local user it authenticates.
 
-    `bound_at`/`lastuse_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09) -- stay Python-managed via
-    datetime.now(UTC) (this table has no created_at/updated_at pair, so
-    no server_default/trigger applies here), only their storage type
-    changed."""
+    `bound_at`/`lastuse_at` are TIMESTAMPTZ and Python-managed via
+    datetime.now(UTC) (this table has no created_at/updated_at pair, so no
+    server_default/trigger applies here)."""
 
     __tablename__ = "oauth2_bindings"
     __table_args__ = (UniqueConstraint("provider", "remote_id"),)

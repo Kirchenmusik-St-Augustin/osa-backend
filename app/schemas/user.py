@@ -3,7 +3,7 @@ import uuid
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import LenientUuid, StrictInputModel
+from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
 from app.schemas.performance import PositionRefOutput
 from app.schemas.validators import PHONE_PATTERN
 
@@ -37,22 +37,17 @@ class UserFormOptionsOutput(BaseModel):
 
 
 class UserRequest(StrictInputModel):
-    """Mirrors Legacy's Content/System/UserController SaveRequest. Email is
-    deliberately Optional -- `users.email` is DB-nullable and Legacy's own
-    `required_if:doReset,true` rule is dead code (the `doReset` field is
-    never sent by the frontend), so the real, observable business result is
-    that email stays optional here too. `roles` is accepted from every
-    caller but only actually persisted for a real administrator -- see
-    user_service.update_user().
-    `administrator` follows the same pattern -- a deliberate divergence
-    from Legacy (which has no such field/path at all): only an acting
-    administrator can grant it, and only ever grant (see
+    """Admin-side user create/update body. Email is deliberately Optional
+    -- `users.email` is DB-nullable. `roles` is accepted from every caller
+    but only actually persisted for a real administrator -- see
+    user_service.update_user(). `administrator` follows the same pattern:
+    only an acting administrator can grant it, and only ever grant (see
     user_service._apply_administrator_grant())."""
 
     givenname: str = Field(min_length=3, max_length=32)
     surname: str = Field(min_length=3, max_length=32)
     email: EmailStr | None = Field(default=None, max_length=190)
-    phone: str | None = None
+    phone: OptionalText = None
     auth_locked: bool = False
     instruments: list[LenientUuid] = Field(default_factory=list)
     voices: list[LenientUuid] = Field(default_factory=list)
@@ -70,9 +65,8 @@ class UserRequest(StrictInputModel):
 
 
 class UserResponse(BaseModel):
-    """Covers both Show and the Edit-form's prefill -- 1:1 the pattern
-    already established for Artist (see artist_service.get_artist() /
-    ArtistResponse)."""
+    """Covers both Show and the Edit-form's prefill -- same pattern as
+    Artist (see artist_service.get_artist() / ArtistResponse)."""
 
     id: uuid.UUID
     surname: str

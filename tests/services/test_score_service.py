@@ -2,7 +2,9 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import ValidationError
 
+from app.db.models.score import Score
 from app.schemas.score import ScoreRequest
 from app.services import score_service
 
@@ -32,11 +34,8 @@ class TestGetFieldsConfig:
         assert len(config) == 94
 
     def test_only_orch_has_no_anz_field(self):
-        # Regression test: a first reading of the schema wrongly assumed
-        # BOTH orgel and orch lacked an "anz" column -- caught live via
-        # Playwright against real production data (Score #25 genuinely
-        # shows an Orgel-Stimme "Anzahl" cell). Only "orch" actually lacks
-        # one.
+        # Regression test: "orgel" has an "anz" column (the Show page
+        # displays an Orgel-Stimme "Anzahl" cell), only "orch" lacks one.
         config = score_service.get_fields_config()
         assert "orgelanz" in config
         assert "orchanz" not in config
@@ -51,6 +50,19 @@ class TestGetFieldsConfig:
         assert config["inhalt"].values is not None
         assert "Partitur" in config["inhalt"].values
 
+    def test_required_select_offers_no_blank_option(self):
+        config = score_service.get_fields_config()
+        assert config["inhalt"].required is True
+        assert config["inhalt"].values is not None
+        assert "" not in config["inhalt"].values
+
+    def test_optional_selects_keep_their_blank_option(self):
+        config = score_service.get_fields_config()
+        for name in ("sparte", "part1art", "orchart"):
+            assert config[name].required is False
+            assert config[name].values is not None
+            assert config[name].values[0] == ""
+
 
 class TestGetDefaults:
     def test_numbers_default_to_zero(self):
@@ -62,7 +74,7 @@ class TestGetDefaults:
         defaults = score_service.get_defaults()
         assert defaults["kasten"] == ""
 
-    def test_select_defaults_to_first_value(self):
+    def test_selects_default_to_the_blank_state(self):
         defaults = score_service.get_defaults()
         assert defaults["inhalt"] == ""
         assert defaults["sparte"] == ""
@@ -184,6 +196,58 @@ class TestCreateScore:
         assert result.fields["werk"] == werk
 
 
+class TestBlankOptionalValues:
+    def test_blank_optional_text_and_selects_are_stored_as_null(
+        self, db_session: Session
+    ):
+        created = score_service.create_score(
+            db_session, _payload(surname="Bach", teil="", sparte="", part1art="")
+        )
+        score = db_session.get(Score, created.id)
+        assert score is not None
+        assert score.teil is None
+        assert score.sparte is None
+        assert score.part1art is None
+        assert score.auch is None
+
+    def test_blank_optional_values_are_read_back_as_empty_strings(
+        self, db_session: Session
+    ):
+        created = score_service.create_score(
+            db_session, _payload(surname="Bach", teil="", sparte="")
+        )
+        assert created.fields["teil"] == ""
+        assert created.fields["sparte"] == ""
+
+    def test_whitespace_only_optional_text_counts_as_blank(self, db_session: Session):
+        created = score_service.create_score(
+            db_session, _payload(surname="Bach", bemerkung="   ")
+        )
+        score = db_session.get(Score, created.id)
+        assert score is not None
+        assert score.bemerkung is None
+
+    def test_blank_composer_name_is_stored_as_null(self, db_session: Session):
+        created = score_service.create_score(
+            db_session, _payload(surname="", givenname="")
+        )
+        score = db_session.get(Score, created.id)
+        assert score is not None
+        assert score.surname is None
+        assert score.givenname is None
+
+
+class TestRequiredSelectRejectsBlank:
+    def test_blank_inhalt_is_rejected(self):
+        with pytest.raises(ValidationError) as exc_info:
+            _payload(inhalt="")
+        assert exc_info.value.errors()[0]["loc"] == ("inhalt",)
+
+    def test_unknown_select_value_is_rejected(self):
+        with pytest.raises(ValidationError):
+            _payload(sparte="Bogus")
+
+
 class TestUpdateScore:
     def test_updates_fields(self, db_session: Session):
         created = score_service.create_score(db_session, _payload())
@@ -240,6 +304,6 @@ class TestGetScore:
 
 
 def test_no_delete_function_exists():
-    # Regression guard: Legacy's own route registration excludes destroy
-    # entirely (an "archive" is never deleted) -- this must stay true.
+    # Regression guard: an "archive" is never deleted -- this must stay
+    # true.
     assert not hasattr(score_service, "delete_score")

@@ -775,11 +775,9 @@ class TestGetCastPageAndSaveCast:
     def test_get_cast_page_sorts_bookable_candidates_alphabetically(
         self, db_session: Session
     ):
-        # Legacy sorts these implicitly via User's global
-        # OrderBySurnameGivenname scope, not any explicit orderBy in
-        # Performance::staff() itself -- qualified user ids come out of a
-        # plain Python set on this side, so this is a real regression risk,
-        # not just cosmetic.
+        # Qualified user ids come out of a plain Python set, so the
+        # alphabetical order has to be enforced explicitly -- a real
+        # regression risk, not just cosmetic.
         instrument = _make_instrument(db_session)
         performance_id = _make_performance(db_session, instruments={instrument.id: 1})
         zimmermann = _make_named_user(
@@ -1221,8 +1219,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
     def test_includes_a_rejected_request_too_no_notbooked_filter(
         self, db_session: Session, make_user
     ):
-        # 1:1 Legacy: User::requestsAndBookings() has no filter on
-        # notbooked_at at all.
+        # There is no filter on notbooked_at at all.
         performance_id = _make_performance(db_session)
         user = make_user()
         _make_booking_request(
@@ -1266,10 +1263,8 @@ class TestGetUpcomingRequestsAndBookingsForUser:
     def test_upcoming_only_false_includes_past_performances(
         self, db_session: Session, make_user
     ):
-        # Legacy's System::UserController::requestsAndBookings() (the
-        # admin-side per-user view) calls the bare `$user->
-        # requestsAndBookings()` -- $upcomingOnly defaults to false there,
-        # unlike the Selfadmin caller's `->requestsAndBookings(true)`.
+        # The admin-side per-user view passes upcoming_only=False, unlike
+        # the Selfadmin caller.
         instrument = _make_instrument(db_session)
         performance_id = _make_performance(db_session, instruments={instrument.id: 1})
         _move_to_past(db_session, performance_id)
@@ -1520,12 +1515,12 @@ class TestMessageToCast:
 
         assert [r.id for r in recipients] == [user.id]
 
-    def test_get_message_recipients_type_all_preserves_legacy_category_order(
+    def test_get_message_recipients_type_all_preserves_category_order(
         self, db_session: Session, make_user
     ):
-        """Legacy orders 'alle' recipients by instruments -> voices ->
-        choirjobs, each item's cast in booking order (see Performance::
-        cast()/bookedCast()) -- not by an unordered DB round-trip."""
+        """'alle' recipients are ordered by instruments -> voices ->
+        choirjobs, each item's cast in booking order -- not by an unordered
+        DB round-trip."""
         instrument = _make_instrument(db_session)
         voice = _make_voice(db_session)
         choirjob = _make_choirjob(db_session)
@@ -1640,13 +1635,12 @@ class TestMessageToCast:
     def test_get_message_recipients_has_email_reflects_verification_status(
         self, db_session: Session, make_user
     ):
-        """`has_email` mirrors Legacy's Directory resource `hasEmail` --
-        which IS `hasVerifiedEmail()`, not merely "has any email address"
-        -- so a recipient whose switch is enabled in the MessageToCast UI
-        is always someone who can actually receive the message (matches
-        send_message_to_cast()'s own verified-only filter one-to-one,
-        instead of letting an unverified address look selectable while
-        silently going nowhere)."""
+        """`has_email` means the email is VERIFIED, not merely "has any
+        email address" -- so a recipient whose switch is enabled in the
+        MessageToCast UI is always someone who can actually receive the
+        message (matches send_message_to_cast()'s own verified-only filter
+        one-to-one, instead of letting an unverified address look
+        selectable while silently going nowhere)."""
         unverified_instrument = _make_instrument(db_session)
         unverified_performance_id = _make_performance(
             db_session, instruments={unverified_instrument.id: 1}

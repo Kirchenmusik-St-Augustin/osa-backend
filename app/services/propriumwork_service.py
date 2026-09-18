@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 60
-# Legacy quirk, confirmed 1:1: Propriumwork requires min:1 here, while
-# Ordinariumwork (ordinariumwork_service.py) allows min:0 -- not a typo,
-# the two SaveRequest classes genuinely differ on this bound.
+# Propriumwork requires a duration of at least 1, while Ordinariumwork
+# (ordinariumwork_service.py) allows 0 -- not a typo, the two genuinely
+# differ on this bound.
 _DURATION_MIN = 1
 _DURATION_MAX = 999
 _SEARCH_RESULT_LIMIT = 20
@@ -36,8 +36,8 @@ class PropriumworkNotFoundError(Exception):
 
 
 class PropriumworkValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 auth_service.RegistrationConflictError pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as auth_service.RegistrationConflictError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -46,8 +46,7 @@ class PropriumworkValidationError(Exception):
 
 class PropriumworkInUseError(Exception):
     """Raised when delete is blocked by a Performance referencing this
-    Propriumwork -- Legacy's only HasDependencies target (`performances`),
-    retrofitted now that Schritt 5 built that domain. Unlike Ordinariumwork
+    Propriumwork. Unlike Ordinariumwork
     (a direct `ordinariumwork_id` column on `performances`), a Propriumwork
     is only referenced through the `performance_proprium` pivot table."""
 
@@ -114,11 +113,9 @@ def _to_response(db: Session, propriumwork: Propriumwork) -> PropriumworkRespons
 
 
 def search_propriumworks(db: Session, query: str) -> Sequence[PropriumworkSearchResult]:
-    """Real indexed-ish DB query, replacing Legacy's
-    `Propriumwork::search()` anti-pattern (loads the entire table into
-    PHP, filters in memory, then a dead `sortBy('artist_name')` call that
-    never actually sorted -- an obvious oversight, corrected here with a
-    real ORDER BY instead of replicated verbatim)."""
+    """Filtered and sorted in the database (not in memory): every
+    whitespace-separated word in `query` must appear in the work's name or
+    its artist's name."""
     words = [word for word in query.lower().split() if word]
     if not words:
         return []

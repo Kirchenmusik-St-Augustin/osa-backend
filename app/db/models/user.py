@@ -10,17 +10,14 @@ from app.db.uuid_pk import uuid_pk
 
 
 class User(Base):
-    """Mirrors legacy `users` exactly (Phase 1 -- no renames, no schema
-    changes). Column names stay as-is (auth_password, auth_locked, etc.)
-    even in Python, per the Phase-1 "structure identical" rule.
+    """Application user. Column names stay as-is (auth_password,
+    auth_locked, etc.) in Python as well.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger. `email_verified_at`/
     `auth_lastlogin`/`auth_lastsignal`/`auth_lastlogout`/`deleted_at` are
-    also TIMESTAMPTZ now (same slice) but stay Python-managed via
-    datetime.now(UTC) -- only their storage type changed, no
+    TIMESTAMPTZ too but stay Python-managed via datetime.now(UTC) -- no
     server_default/trigger, per the same rule that keeps every other
     non-created_at/updated_at business-event timestamp Python-managed."""
 

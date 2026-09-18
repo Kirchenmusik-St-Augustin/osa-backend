@@ -40,15 +40,13 @@ _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescap
 
 
 def _format_short_date(value: datetime) -> str:
-    # Legacy's `schedule->format('j. m. Y')` -- PHP's lowercase `j` is the
-    # day WITHOUT leading zeros, but lowercase `m` is the month WITH
-    # leading zeros (unlike `_format_notification_timestamp`'s `n`, which
-    # has none) -- easy to conflate, but `m`/`n` mean opposite things in
-    # PHP's date-format syntax. Rendered in Python rather than as a Jinja
-    # template filter/global -- Jinja's type stubs don't model
-    # arbitrary-callable globals cleanly, and every other value already
-    # reaches these templates pre-formatted the same way (see e.g.
-    # send_password_reset_email's `count=`).
+    # Day WITHOUT leading zeros, month WITH leading zeros (unlike
+    # `_format_notification_timestamp`, where neither has any) -- easy to
+    # conflate. Rendered in Python rather than as a Jinja template
+    # filter/global -- Jinja's type stubs don't model arbitrary-callable
+    # globals cleanly, and every other value already reaches these templates
+    # pre-formatted the same way (see e.g. send_password_reset_email's
+    # `count=`).
     return f"{value.day}. {value.month:02d}. {value.year}"
 
 
@@ -57,8 +55,7 @@ def _format_ymd_timestamp(now: datetime) -> str:
 
 
 def _format_notification_timestamp(now: datetime) -> str:
-    # Legacy's `j. n. Y, H:i` (Laravel/PHP date format) -- day/month without
-    # leading zeros, unlike strftime's %d/%m.
+    # Day/month without leading zeros, unlike strftime's %d/%m.
     return f"{now.day}. {now.month}. {now.year}, {now.strftime('%H:%M')}"
 
 
@@ -83,22 +80,19 @@ class MailKillSwitchStatus:
 
 
 def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
-    """30-day rolling window over `sent_emails`, ported from Legacy's
-    config/mail.php `limit.periodDays`/`limit.allMessagesThreshold` (30 /
-    950): once the summed recipient count (to+cc+bcc) of everything sent
-    in the window reaches the threshold, mail sending switches globally to
-    pure logging -- never a failed request, see _send_templated_email.
-    Public (unlike the private helpers around it) because it also drives
-    the frontend's proactive warning icon/card (GET /auth/me,
-    MessageToContactpersonView, MessageToCastView -- Schritt 7) and the
-    Statistics page's "sent" counter (Schritt 9).
+    """Rolling window (default 30 days) over `sent_emails`: once the summed
+    recipient count (to+cc+bcc) of everything sent in the window reaches the
+    threshold (default 950), mail sending switches globally to pure logging
+    -- never a failed request, see _send_templated_email. Public (unlike
+    the private helpers around it) because it also drives the frontend's
+    proactive warning icon/card (GET /auth/me, MessageToContactpersonView,
+    MessageToCastView) and the Statistics page's "sent" counter.
 
-    Fail-safe, 1:1 Legacy's `SentEmail::ensureThresholdCompliance()`: if the
-    counting query itself fails, treat mail as disabled rather than risk
-    silently missing an over-threshold state. `sent` reports the configured
+    Fail-safe: if the counting query itself fails, treat mail as disabled rather than
+    risk silently missing an over-threshold state. `sent` reports the configured
     threshold itself in that case (the real count is genuinely unknown, but
-    `active=True` already signals "at/over limit" -- reporting anything
-    below threshold there would visually contradict that)."""
+    `active=True` already signals "at/over limit" -- reporting anything below threshold
+    there would visually contradict that)."""
     settings = get_settings()
     try:
         window_start = datetime.now(UTC) - timedelta(
@@ -296,8 +290,8 @@ def send_new_registration_notice(
 
 @dataclass(frozen=True)
 class BookingStatusMailEntry:
-    """One row of a `send_booking_status_email` mail -- 1:1 port of
-    Legacy's `booking_status.blade.php` per-BookingLog panel."""
+    """One row of a `send_booking_status_email` mail -- one per
+    BookingLog transition."""
 
     ordinariumwork_artist_name: str
     ordinariumwork_name: str
@@ -315,7 +309,7 @@ def _booking_status_entry_context(entry: BookingStatusMailEntry) -> dict[str, ob
 def send_booking_status_email(
     to_email: str, entries: list[BookingStatusMailEntry]
 ) -> None:
-    """Port of Legacy's `BookingStatus` mail, sent by the
+    """Booking-status notification, sent by the
     `notify_upcoming_booking_status` scheduled job (see
     app.services.booking_jobs) -- one mail per user, bundling every
     booking-log transition they haven't been notified about yet."""
@@ -332,8 +326,7 @@ def send_booking_status_email(
 
 @dataclass(frozen=True)
 class BookingCanceledMailEntry:
-    """1:1 port of Legacy's `booked_or_standby_canceled.blade.php`
-    template variables."""
+    """Template variables of the `booked_or_standby_canceled` mail."""
 
     ordinariumwork_artist_name: str
     ordinariumwork_name: str
@@ -347,9 +340,8 @@ class BookingCanceledMailEntry:
 def send_booked_or_standby_canceled_email(
     to_emails: list[str], canceling_user_name: str, entry: BookingCanceledMailEntry
 ) -> None:
-    """Port of Legacy's `BookedOrStandbyCanceled` mail -- sent synchronously
-    to every `disponent` user when someone self-cancels a booking/standby
-    (booking_service.change_user_request_status)."""
+    """Cancellation notice -- sent synchronously to every `disponent` user when someone
+    self-cancels a booking/standby (booking_service.change_user_request_status)."""
     now = local_now()
     subject = f"Eine Buchung wurde storniert! ({_format_ymd_timestamp(now)})"
     _send_templated_email(
@@ -365,12 +357,9 @@ def send_booked_or_standby_canceled_email(
 def send_user_message_email(
     to_emails: list[str], sender_name: str, message: str
 ) -> None:
-    """Port of Legacy's `UserMessage` mail/`user_message.blade.php` template
-    -- previously only wired up for the unrelated Selfadmin/Support
-    "message a contact person" feature (Schritt 7 scope), now reused for
-    the Schritt-6 MessageToCast send bugfix (see
-    booking_service.send_message_to_cast). Sent via Bcc (User-confirmed
-    2026-07-31, Datenschutz) --
+    """Free-text message mail, used by both the Selfadmin/Support "message a
+    contact person" feature and MessageToCast (see
+    booking_service.send_message_to_cast). Sent via Bcc (data protection):
     `to_emails` here is a disponent-picked, potentially large group of
     musicians/singers who don't necessarily know each other and have no
     reason to see one another's address, unlike e.g. the small, fixed

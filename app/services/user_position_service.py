@@ -28,7 +28,7 @@ def get_position_ids_for_user(
     db: Session, user_id: uuid.UUID
 ) -> dict[PositionType, set[uuid.UUID]]:
     """A User's own Instrument/Voice/Choirjob qualifications -- one query,
-    used by userBookingStatus()'s bookable-intersection check."""
+    used by the booking status' bookable-intersection check."""
     result: dict[PositionType, set[uuid.UUID]] = {
         position_type: set() for position_type in POSITION_TYPES
     }
@@ -74,12 +74,9 @@ def is_bookable(
     user_position_ids: dict[PositionType, set[uuid.UUID]],
     performance_position_ids: dict[PositionType, set[uuid.UUID]],
 ) -> bool:
-    """Port of `userBookingStatus()`'s bookable check: does the user hold at
-    least one Instrument/Voice/Choirjob qualification that the performance
-    actually needs. Legacy runs a redundant, commutative
-    `array_intersect($a,$b) || array_intersect($b,$a)` check per type --
-    that duplication is not replicated here, a single intersection per type
-    is equivalent."""
+    """The bookable check of the booking status: does the user hold at least
+    one Instrument/Voice/Choirjob qualification that the performance
+    actually needs (a single intersection per type)."""
     return any(
         user_position_ids[position_type] & performance_position_ids[position_type]
         for position_type in POSITION_TYPES
@@ -107,10 +104,8 @@ def create_user_position(
 def sync_user_positions(
     db: Session, *, user_id: uuid.UUID, desired: dict[PositionType, set[uuid.UUID]]
 ) -> None:
-    """Schritt 7: replaces a User's Instrument/Voice/Choirjob assignments
-    with exactly `desired` -- remove-not-in-new/insert-new, 1:1 Legacy's
-    `$user->instruments()->sync(...)`/`->voices()->sync(...)`/
-    `->choirjobs()->sync(...)` (System::UserController::save()). No commit
+    """Replaces a User's Instrument/Voice/Choirjob assignments with exactly
+    `desired` -- remove-not-in-new/insert-new. No commit
     here -- the caller (user_service.create_user/update_user) controls the
     transaction, same convention as ordinariumwork_service._sync_positions."""
     existing = (

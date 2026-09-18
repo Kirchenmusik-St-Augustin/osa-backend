@@ -11,8 +11,8 @@ class UserAdministrationSearchResultOutput(BaseModel):
 
 
 class UserAdministrationDeletedEntryOutput(BaseModel):
-    """Mirrors Legacy's User\\DeletedListEntry resource -- deliberately
-    thinner than the search result (no `label`, a plain `email`)."""
+    """One soft-deleted user in the initial list -- deliberately thinner
+    than the search result (no `label`, a plain `email`)."""
 
     id: uuid.UUID
     surname: str
@@ -21,10 +21,8 @@ class UserAdministrationDeletedEntryOutput(BaseModel):
 
 
 class UserAdministrationDetailOutput(BaseModel):
-    """Mirrors Legacy's User\\ShowAdministration resource -- deliberately
-    thinner than user_service's UserResponse (no phone, no abilities): the
-    Administration domain only ever needs status flags + the three
-    actions."""
+    """Deliberately thinner than user_service's UserResponse (no phone, no abilities):
+    the Administration domain only ever needs status flags + the three actions."""
 
     id: uuid.UUID
     surname: str

@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 
 class StrictInputModel(BaseModel):
@@ -22,3 +22,19 @@ class StrictInputModel(BaseModel):
 # app.schemas.performance's `_LenientDatetime`, shared here because every
 # id field across the whole schema layer needs it.
 LenientUuid = Annotated[uuid.UUID, Field(strict=False)]
+
+
+def _blank_to_none(value: object) -> object:
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+# An optional value that forms submit as an empty (or whitespace-only) string
+# when left blank: normalized to None at the schema boundary, so the service
+# and database layers only ever see a real value or None -- never "" as a
+# stand-in for "no value". Combine with a type, e.g.
+# `Annotated[Literal["a", "b"] | None, BlankToNone]`.
+BlankToNone = BeforeValidator(_blank_to_none)
+
+OptionalText = Annotated[str | None, BlankToNone]

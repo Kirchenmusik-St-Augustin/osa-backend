@@ -273,8 +273,8 @@ def _bridge_column(column: str) -> str:
     return f"{column}_uuid"
 
 
-def _legacy_column(column: str) -> str:
-    return f"{column}_legacy_int"
+def _previous_int_column(column: str) -> str:
+    return f"{column}_previous_int"
 
 
 _FK_COLUMN_NAMES: frozenset[tuple[str, str]] = frozenset(
@@ -419,15 +419,15 @@ def _rename_columns_into_place() -> None:
     here -- then strip the demoted integer columns of both their server
     default and their NOT NULL constraint. Dropping the default alone
     would leave a NOT NULL column no application code writes to any
-    more, so every future INSERT would fail outright; a *_legacy_int
+    more, so every future INSERT would fail outright; a *_previous_int
     value only ever exists for a row that predates the cutover, so NULL
     is the correct steady state going forward. The sequences themselves
     are intentionally left alive for the Phase-C cleanup migration (a
     later, unhurried, zero-downtime step)."""
     for table in _PK_TABLES:
-        op.alter_column(table, "id", new_column_name="id_legacy_int")
+        op.alter_column(table, "id", new_column_name="id_previous_int")
     for table, column, _referent, _ondelete, _not_null in _FK_COLUMNS:
-        op.alter_column(table, column, new_column_name=_legacy_column(column))
+        op.alter_column(table, column, new_column_name=_previous_int_column(column))
 
     for table in _PK_TABLES:
         op.alter_column(table, "id_uuid", new_column_name="id")
@@ -435,10 +435,10 @@ def _rename_columns_into_place() -> None:
         op.alter_column(table, _bridge_column(column), new_column_name=column)
 
     for table in _PK_TABLES:
-        op.alter_column(table, "id_legacy_int", nullable=True, server_default=None)
+        op.alter_column(table, "id_previous_int", nullable=True, server_default=None)
     for table, column, _referent, _ondelete, not_null in _FK_COLUMNS:
         if not_null:
-            op.alter_column(table, _legacy_column(column), nullable=True)
+            op.alter_column(table, _previous_int_column(column), nullable=True)
 
 
 def upgrade() -> None:
@@ -462,7 +462,7 @@ def downgrade() -> None:
     inserted after this migration runs, it has a UUIDv7 identity that
     never had an integer counterpart and can never be mapped back to
     one. A downgrade() that "worked" immediately after upgrade() (while
-    the *_legacy_int columns are still sitting there unused) would be a
+    the *_previous_int columns are still sitting there unused) would be a
     false promise -- it would only fail, silently or catastrophically,
     at the moment it was actually needed, against real post-cutover
     data. The real rollback path is restoring the pre-cutover backup and

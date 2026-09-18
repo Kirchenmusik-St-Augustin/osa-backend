@@ -5,15 +5,11 @@ from app.db.models.coreelement_mixin import CoreelementColumns
 
 
 class Instrument(CoreelementColumns, Base):
-    """`active` is an osa-fastapi-vue-only addition, not part of the
-    original Legacy schema (a deliberate, User-approved exception to the
-    structural 1:1 transfer, 2026-08-21). Lets an
-    instrument be hidden from "add a new position" pickers without
-    breaking historical bookings/booking_logs/performance_positions/
-    ordinariumwork_positions/user_positions references, which is why no
-    row ever gets DELETEd for this (the Legacy schema has zero FK
-    constraints, so a DELETE wouldn't even fail -- it would just orphan
-    those references)."""
+    """`active` lets an instrument be hidden from "add a new position"
+    pickers without breaking historical bookings/booking_logs/
+    performance_positions/ordinariumwork_positions/user_positions
+    references, which is why instruments are archived rather than
+    DELETEd."""
 
     __tablename__ = "instruments"
 

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from app.core.human_names import normalize_givenname, normalize_surname
 from app.core.security import get_password_hash, verify_password
 from app.db.models.user import User
-from app.schemas.validators import PASSWORD_POLICY_MESSAGE
+from app.schemas.validators import PASSWORD_UNCHANGED_MESSAGE
 
 if TYPE_CHECKING:
     import uuid
@@ -16,14 +16,13 @@ if TYPE_CHECKING:
 
 
 class WrongCurrentPasswordError(Exception):
-    """`auth_password` doesn't match the user's actual current password --
-    1:1 Legacy's ValidAuthPassword rule ("Das bestehende Passwort ist
-    falsch.")."""
+    """`auth_password` doesn't match the user's actual current password
+    ("Das bestehende Passwort ist falsch.")."""
 
 
 class ProfileValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's UpdateRequest
-    error bag -- 1:1 user_service.UserValidationError pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as user_service.UserValidationError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -51,10 +50,9 @@ def update_profile(
     a new verification mail (BackgroundTasks needs a request context this
     service deliberately doesn't have), this stays framework-agnostic.
 
-    Order mirrors Legacy: re-auth check first (ValidAuthPassword), then the
-    two composite-unique checks (`Rule::unique()->ignore(self)`), then the
-    "new password differs from the current one" sub-rule that only
-    ValidNewPassword's `auth()->check()` branch can run -- schema-level
+    Order: re-auth check (current password) first, then the two
+    composite-unique checks (ignoring the caller's own row), then the "new
+    password differs from the current one" sub-rule -- schema-level
     validators have no DB access, see app.schemas.profile."""
     if not verify_password(data.auth_password, user.auth_password):
         raise WrongCurrentPasswordError
@@ -74,12 +72,11 @@ def update_profile(
         and data.password is not None
         and verify_password(data.password, user.auth_password)
     ):
-        errors.append(("password", PASSWORD_POLICY_MESSAGE))
+        errors.append(("password", PASSWORD_UNCHANGED_MESSAGE))
     if errors:
         raise ProfileValidationError(errors)
 
-    # Raw string comparison, not case-normalized -- 1:1 Legacy's
-    # `auth()->user()->email !== $validated['email']`.
+    # Raw string comparison, not case-normalized.
     email_changed = data.email != user.email
 
     if data.change_password and data.password:

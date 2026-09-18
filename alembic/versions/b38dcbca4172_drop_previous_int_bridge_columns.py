@@ -1,4 +1,4 @@
-"""drop legacy int bridge columns
+"""drop previous int bridge columns
 
 Revision ID: b38dcbca4172
 Revises: b70c44b3cf7b
@@ -19,8 +19,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 # Phase C of the UUIDv7 primary-key migration -- the delayed cleanup step
-# the cutover migration deliberately left for later. `id_legacy_int` (on
-# every former integer-PK table) and `<column>_legacy_int` (on every
+# the cutover migration deliberately left for later. `id_previous_int` (on
+# every former integer-PK table) and `<column>_previous_int` (on every
 # former integer foreign-key column) were kept around after the cutover
 # as an inert forensic trail: a way to trace a post-migration row back to
 # its pre-migration integer identity if something needed cross-checking
@@ -62,7 +62,7 @@ _PK_TABLES: list[str] = [
     "voices",
 ]
 
-# (table, foreign-key column) pairs whose legacy_int shadow column is
+# (table, foreign-key column) pairs whose previous_int shadow column is
 # being dropped -- unlike the bridge migration that created these
 # columns, no referenced-table information is needed here, since
 # dropping a column requires no join.
@@ -111,12 +111,12 @@ _FK_COLUMNS: list[tuple[str, str]] = [
 def upgrade() -> None:
     """Upgrade schema."""
     for table, column in _FK_COLUMNS:
-        op.drop_column(table, f"{column}_legacy_int")
+        op.drop_column(table, f"{column}_previous_int")
 
     for table in _PK_TABLES:
-        op.drop_column(table, "id_legacy_int")
+        op.drop_column(table, "id_previous_int")
 
-    # Every id_legacy_int sequence is OWNED BY its column (verified
+    # Every id_previous_int sequence is OWNED BY its column (verified
     # against the live database), so Postgres already dropped each one as
     # a side effect of the op.drop_column() call above -- this loop is a
     # defensive, guaranteed-safe no-op that documents intent rather than
@@ -130,7 +130,7 @@ def downgrade() -> None:
     for the reasoning."""
     msg = (
         "This migration cannot be meaningfully reversed: the dropped "
-        "legacy_int columns held historical integer identities that no "
+        "previous_int columns held historical integer identities that no "
         "longer exist anywhere else once removed. Recreating empty "
         "columns would look like a restored forensic trail without "
         "actually being one -- restore the pre-migration backup instead "

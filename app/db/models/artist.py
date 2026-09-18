@@ -9,11 +9,8 @@ from app.db.uuid_pk import uuid_pk
 
 
 class Artist(Base):
-    """Mirrors legacy `artists` exactly (structural 1:1 transfer -- no
-    renames, no schema changes). `surname`/`givenname` are nullable in the
-    real legacy schema even though app-level validation always requires
-    them -- structural
-    parity keeps the model nullable regardless (see coreelement's
+    """A composer and/or conductor. `surname`/`givenname` are nullable in
+    the schema even though app-level validation always requires them (see
     Location.address for the same pattern). `composer`/`conductor` are
     orthogonal boolean flags, not mutually exclusive (an Artist row can be
     both, one, or neither).

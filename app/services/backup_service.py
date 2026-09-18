@@ -1,34 +1,26 @@
-"""PostgreSQL -> Koofr WebDAV backup/restore -- functional equivalent of
-Legacy's OsaScheduleBackupProdDB.php Artisan command, and this module's
-own file-copy-based predecessor.
+"""PostgreSQL -> Koofr WebDAV backup/restore.
 
-Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`,
-User decision 2026-08-13) -- unchanged convention, only the extension
-moved from `.tar.gz` (a tarred file copy) to `.dump` (pg_dump's own
-`--format=custom` output, already a single binary file, nothing to tar).
-Backups created
-before the Postgres cutover keep their old `.tar.gz` names on Koofr and no
-longer match _FILENAME_PATTERN -- same accepted, documented naming break as
-the 2026-08-13 stage-prefix change before it (see git history), not a
-special case this module needs to handle.
+Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`);
+`.dump` is pg_dump's own `--format=custom` output, already a single binary
+file, nothing to tar. Backups that still carry an older `.tar.gz` name on
+Koofr (from a previous file-copy-based backup) no longer match
+_FILENAME_PATTERN -- an accepted, documented naming break, not a special
+case this module needs to handle.
 
 Uses raw WebDAV HTTP verbs via `requests` (already a pinned dependency)
-instead of shelling out to rclone (what the existing restore script does)
-or adding a dedicated WebDAV client library -- no new dependency, no
-subprocess/shell-escaping surface for the upload/download/list/delete side.
-pg_dump/pg_restore/psql themselves are unavoidably subprocesses (no pure-
-Python equivalent exists) -- `_run_pg_subprocess()` surfaces stderr on
-failure (a bare CalledProcessError hides exactly the detail that matters
-for debugging a failed disaster-recovery run).
+instead of shelling out to rclone or adding a dedicated WebDAV client
+library -- no new dependency, no subprocess/shell-escaping surface for the
+upload/download/list/delete side. pg_dump/pg_restore/psql themselves are
+unavoidably subprocesses (no pure-Python equivalent exists) --
+`_run_pg_subprocess()` surfaces stderr on failure (a bare
+CalledProcessError hides exactly the detail that matters for debugging a
+failed disaster-recovery run).
 
-Known, deliberately NOT replicated Legacy bug: Legacy's own
-cleanupOldBackups() passes the WebDAV-absolute paths returned by PROPFIND
-straight into a Laravel Storage disk whose configured `path` is itself a
-root prefix -- an absolute path handed to that disk produces a
-double-prefixed, nonexistent target, so the delete silently no-ops and old
-backups pile up on Koofr. This module never reuses a raw path from a
-listing response: `_parse_backup_filenames()` extracts only the basename,
-and every delete/download URL is rebuilt fresh from
+This module never reuses a raw path from a PROPFIND listing response:
+WebDAV returns absolute paths, which a storage layer that already applies
+a root prefix would double-prefix -- the delete would silently no-op and old
+backups would pile up on Koofr. `_parse_backup_filenames()` extracts only
+the basename, and every delete/download URL is rebuilt fresh from
 koofr_base_uri + koofr_backup_path + basename via `_koofr_url()`.
 """
 
@@ -318,7 +310,7 @@ def _parse_backup_filenames(propfind_xml: str) -> list[str]:
 
     Deliberately extracts ONLY the basename from each href, regardless of
     whether Koofr returns absolute or relative paths -- see this module's
-    docstring for the Legacy bug this sidesteps.
+    docstring for why raw listing paths are never reused.
     """
     root = ElementTree.fromstring(propfind_xml)  # noqa: S314 -- trusted source, see docstring
     names: list[str] = []
@@ -360,7 +352,7 @@ def _parse_backup_stage(name: str) -> str | None:
 
 def cleanup_old_backups(*, dry_run: bool = False) -> list[str]:
     """Delete Koofr backups older than koofr_backup_retention_days
-    (default 28 = Legacy's hardcoded 4 weeks).
+    (default 28 = 4 weeks).
 
     Returns the filenames that were deleted (or, if dry_run=True, that
     WOULD be deleted -- nothing is actually removed in that case). Names

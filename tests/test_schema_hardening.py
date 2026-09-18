@@ -9,7 +9,7 @@ dropped as dead), the TIMESTAMPTZ + audit-trigger slice (every
 genuinely-UTC DateTime column converted to TIMESTAMPTZ, a shared Postgres
 trigger function now maintains `updated_at` on every table that has one),
 and the final cleanup slice of the UUIDv7 primary-key migration (the
-`id_legacy_int`/`*_legacy_int` bridge columns and their owned sequences,
+`id_previous_int`/`*_previous_int` bridge columns and their owned sequences,
 kept around as an inert forensic trail after the cutover, dropped for
 good once no longer needed). Also covers the job_runs table's own
 schema-level guarantees (native ENUMs, a CHECK constraint, a generated
@@ -638,8 +638,8 @@ class TestUpdatedAtTrigger:
     """set_updated_at() BEFORE UPDATE trigger, covering three tables from
     different structural categories: instruments (mixin-based),
     ordinariumwork_positions (individually declared), user_roles
-    (junction table -- the one CLAUDE.md's literal wording would
-    otherwise have excluded, see the model docstring)."""
+    (junction table that nevertheless carries created_at/updated_at, see
+    the model docstring)."""
 
     def test_trigger_exists_on_representative_tables(self, db_session: Session):
         for table_name in ("instruments", "ordinariumwork_positions", "user_roles"):
@@ -770,18 +770,18 @@ class TestClientUserAgentTimestamps:
         assert agent.updated_at > old_updated_at
 
 
-class TestLegacyIntBridgeColumnsDropped:
-    """Phase C of the UUIDv7 primary-key migration: every id_legacy_int/
-    *_legacy_int bridge column and its owned sequence is gone. Checked
+class TestPreviousIntBridgeColumnsDropped:
+    """Phase C of the UUIDv7 primary-key migration: every id_previous_int/
+    *_previous_int bridge column and its owned sequence is gone. Checked
     exhaustively via information_schema in a single query each, rather
     than the representative-sample style used elsewhere in this file --
     completeness is the actual point of this slice."""
 
-    def test_no_legacy_int_columns_remain(self, db_session: Session):
+    def test_no_previous_int_columns_remain(self, db_session: Session):
         rows = db_session.execute(
             text(
                 "SELECT table_name, column_name FROM information_schema.columns "
-                "WHERE column_name LIKE '%\\_legacy\\_int' ESCAPE '\\'"
+                "WHERE column_name LIKE '%\\_previous\\_int' ESCAPE '\\'"
             )
         ).all()
         assert rows == []

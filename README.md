@@ -8,8 +8,8 @@ system for the church musicians of Kirchenmusik St. Augustin.
 - **Runtime:** Python 3.14, FastAPI, SQLAlchemy (sync — deliberately not
   async, see `app/db/database.py`), Pydantic v2, arq (background/scheduled
   jobs, see [Scheduler](#scheduler) below)
-- **Database:** PostgreSQL (structurally identical to the legacy schema —
-  a 1:1 transfer, not yet the full schema redesign)
+- **Database:** PostgreSQL (UUIDv7 primary keys, native enums, CHECK and
+  FK constraints, TIMESTAMPTZ columns)
 - **Backup:** Koofr (WebDAV), see [Scheduler](#scheduler) and
   [Scripts](#scripts) below
 - **Container:** Podman Quadlets (rootless systemd) — quadlets for every
@@ -85,8 +85,7 @@ some constraint changes). The schema has already gone through a full
 Postgres redesign (UUIDv7 primary keys, native enums, CHECK constraints,
 FK constraints with explicit ON DELETE/UPDATE strategies, TIMESTAMPTZ
 columns, a shared `updated_at` trigger function, ...) — new migrations
-should follow that established style rather than the legacy schema's
-original shape.
+should follow that established style.
 
 ## Environment Variables
 
@@ -226,8 +225,8 @@ Besetzungssystem für die Kirchenmusiker von Kirchenmusik St. Augustin.
 - **Runtime:** Python 3.14, FastAPI, SQLAlchemy (synchron — bewusst nicht
   async, siehe `app/db/database.py`), Pydantic v2, arq (Hintergrund-/
   Scheduled-Jobs, siehe [Scheduler](#scheduler-1) unten)
-- **Datenbank:** PostgreSQL (strukturgleich zum Legacy-Schema — ein
-  1:1-Übertrag, noch nicht das volle Schema-Redesign)
+- **Datenbank:** PostgreSQL (UUIDv7-Primärschlüssel, native Enums, CHECK-
+  und FK-Constraints, TIMESTAMPTZ-Spalten)
 - **Backup:** Koofr (WebDAV), siehe [Scheduler](#scheduler-1) und
   [Skripte](#skripte) unten
 - **Container:** Podman Quadlets (rootless systemd) — die Quadlets für
@@ -307,7 +306,7 @@ Postgres-Redesign durchlaufen (UUIDv7-Primärschlüssel, native Enums,
 CHECK-Constraints, FK-Constraints mit expliziten ON-DELETE/UPDATE-
 Strategien, TIMESTAMPTZ-Spalten, eine gemeinsame `updated_at`-Trigger-
 Funktion, ...) — neue Migrationen sollten sich an diesem etablierten Stil
-orientieren statt an der ursprünglichen Form des Legacy-Schemas.
+orientieren.
 
 ## Umgebungsvariablen
 

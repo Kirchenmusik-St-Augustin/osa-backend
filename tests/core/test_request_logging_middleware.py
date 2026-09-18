@@ -84,9 +84,8 @@ def test_uses_run_in_threadpool_so_the_event_loop_is_never_blocked(client):
 
 # --- Isolated middleware tests (minimal ad-hoc app, not the real FastAPI app) ---
 # The skip-header escape hatch has no real caller anywhere in the app today
-# (ported from Legacy as a general-purpose future hook, same as Legacy's own
-# unused-by-any-current-route header) -- tested here directly against the
-# middleware instead of hunting for/adding an artificial real route.
+# (a general-purpose hook) -- tested here directly against the middleware
+# instead of hunting for/adding an artificial real route.
 
 
 def _make_skip_header_app() -> Starlette:

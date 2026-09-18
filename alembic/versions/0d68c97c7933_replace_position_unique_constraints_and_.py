@@ -1,4 +1,4 @@
-"""replace position unique constraints and drop legacy columns
+"""replace position unique constraints and drop old position columns
 
 Revision ID: 0d68c97c7933
 Revises: 7f5f0d1ca83e

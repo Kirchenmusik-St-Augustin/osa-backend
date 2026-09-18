@@ -215,7 +215,7 @@ class TestDeleteArtist:
         """Retrofit regression guard (Schritt 5): Performance.artist_id is
         the CONDUCTOR, a distinct role from Ordinariumwork/Propriumwork's
         composer artist_id, but both point at the same `artists` table and
-        Legacy's own $dependencies treats either role as "in use" alike."""
+        either role counts as "in use" alike."""
         composer = artist_service.create_artist(db_session, _request(composer=True))
         conductor = artist_service.create_artist(db_session, _request(conductor=True))
         ordinariumwork = ordinariumwork_service.create_ordinariumwork(

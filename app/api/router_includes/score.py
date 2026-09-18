@@ -22,9 +22,8 @@ score_router = APIRouter()
 _MAINTAIN = Depends(require_permission("scoreMaintain"))
 _NOT_FOUND_DETAIL = "Nicht gefunden."
 
-# No DELETE route -- Legacy's own route registration excludes `destroy`
-# entirely (Route::resource(...)->except(['destroy'])), see score.py
-# model's docstring. Deliberately no stub here either.
+# No DELETE route -- scores are never deleted, see score.py model's
+# docstring. Deliberately no stub here either.
 
 
 @score_router.get("/fields-config")

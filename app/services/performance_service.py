@@ -67,8 +67,8 @@ class PerformanceNotFoundError(Exception):
 
 
 class PerformanceValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 auth_service.RegistrationConflictError pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as auth_service.RegistrationConflictError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -77,17 +77,14 @@ class PerformanceValidationError(Exception):
 
 class PerformanceInPastError(Exception):
     """Raised when a maintain-type action (edit-data fetch, update, delete)
-    is attempted on a performance whose schedule has already passed --
-    mirrors PerformancePolicy::maintain()'s per-instance past-date lock,
-    now enforced at fetch-time too, not just at save (User-Entscheidung
-    2026-07-29)."""
+    is attempted on a performance whose schedule has already passed -- a
+    per-instance past-date lock, enforced at fetch-time too, not just at
+    save."""
 
 
 class PerformanceInUseError(Exception):
     """Raised when delete is blocked by an existing Booking/BookingRequest
-    row -- mirrors Legacy's HasDependencies check
-    (`Performance::$dependencies = ['bookings', 'bookingrequests']`), added
-    once the Booking domain landed (Schritt 6 plan A.5a)."""
+    row."""
 
 
 def _get_or_404(db: Session, performance_id: uuid.UUID) -> Performance:
@@ -170,10 +167,8 @@ def _validate_rehearsals(data: PerformanceRequest) -> list[tuple[str, str]]:
 def _validate_collision(
     db: Session, data: PerformanceRequest, exclude_id: uuid.UUID | None
 ) -> list[tuple[str, str]]:
-    """Legacy truncates to the HOUR (not the DB's exact-timestamp unique
-    indexes) and, per User-Entscheidung 2026-07-29, now runs on both
-    create AND update (Legacy itself only ran this on create -- a real
-    gap, fixed here)."""
+    """Collision check truncated to the HOUR (not the DB's exact-timestamp
+    unique indexes), run on both create AND update."""
     schedule = data.schedule
     hour_start = schedule.replace(minute=0, second=0, microsecond=0)
     hour_end = hour_start + timedelta(hours=1)
@@ -246,15 +241,12 @@ def _sync_positions(
 ) -> tuple[
     set[tuple[PositionType, uuid.UUID]], dict[tuple[PositionType, uuid.UUID], int]
 ]:
-    """Returns (removed_keys, old_quantities) for
-    booking_service.reconcile_setup_change (Schritt 6 plan A.5b) --
-    old_quantities covers only positions
-    that existed for THIS performance before the update, not every
-    Instrument/Voice/Choirjob row system-wide the way Legacy's setup()
-    does: a position never previously configured here cannot have any
-    pre-existing bookings to reconcile against, so the wider sweep would be
-    inert. create_performance() ignores this return value -- a brand-new
-    performance has no prior cast/bookings to reconcile at all."""
+    """Returns (removed_keys, old_quantities) for booking_service.reconcile_setup_change
+    -- old_quantities covers only positions that existed for THIS performance before the
+    update, not every Instrument/Voice/Choirjob row system-wide: a position never
+    previously configured here cannot have any pre-existing bookings to reconcile
+    against, so the wider sweep would be inert. create_performance() ignores this return
+    value -- a brand-new performance has no prior cast/bookings to reconcile at all."""
     existing = (
         db.execute(
             select(PerformancePosition).where(
@@ -334,9 +326,8 @@ def _sync_proprium(
 def _sync_rehearsals(
     db: Session, performance_id: uuid.UUID, data: PerformanceRequest
 ) -> None:
-    """Legacy always fully replaces rehearsals (delete-all, recreate) on
-    every save, never diffs them -- 1:1 replicated, including the
-    dedup-by-schedule (Legacy: `->unique('schedule')` before createMany)."""
+    """Rehearsals are always fully replaced (delete-all, recreate) on every
+    save, never diffed, deduplicated by schedule."""
     db.execute(
         delete(PerformanceRehearsal).where(
             PerformanceRehearsal.performance_id == performance_id
@@ -661,9 +652,8 @@ def load_performance_batch_data(
 def list_performances_for_month(
     db: Session, year: int, month: int, user_id: uuid.UUID
 ) -> Sequence[PerformanceCalendarItem]:
-    """Real indexed DB query (dialect-portable year/month extract() match),
-    mirroring Legacy's own `Performance::ofMonth()` (already a real query
-    there, not an anti-pattern to fix) -- relies on `schedule` always being
+    """Real indexed DB query (dialect-portable year/month extract() match)
+    -- relies on `schedule` always being
     written as a naive local wall-clock value (Settings.app_timezone, see
     app.core.datetime_utils.local_now()), never UTC-converted, so a plain
     year+month match is reliable. extract() compiles to each dialect's
@@ -687,11 +677,9 @@ def list_performances_for_month(
 
     # Narrow, function-local import: booking_service imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
-    # module level, so a module-level import here would be circular. Port of
-    # the Short resource's `auth_user_booking` accessor (Schritt 6 plan
-    # B.4 correction) -- the calendar's self-service badge/trigger needs
-    # the real status per row, batched N+1-safe across the whole month
-    # instead of Legacy's own per-row query.
+    # module level, so a module-level import here would be circular. The
+    # calendar's self-service badge/trigger needs the real status per row,
+    # batched N+1-safe across the whole month.
     from app.services.booking_service import (  # noqa: PLC0415
         user_booking_status_for_performances,
     )
@@ -910,9 +898,8 @@ def update_performance(
 
     # Narrow, function-local import: booking_service imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
-    # module level, so a module-level import here would be circular. Port
-    # of Performance::setup()'s cast-reconciliation step (Schritt 6 plan
-    # A.5b) -- purges bookings on removed positions and re-evaluates
+    # module level, so a module-level import here would be circular. Cast
+    # reconciliation: purges bookings on removed positions and re-evaluates
     # promote/demote on every remaining position against its old quantity.
     from app.services.booking_service import reconcile_setup_change  # noqa: PLC0415
 
@@ -923,11 +910,10 @@ def update_performance(
 
 
 def _has_bookings_or_requests(db: Session, performance_id: uuid.UUID) -> bool:
-    """Mirrors Legacy's `Performance::$dependencies = ['bookings',
-    'bookingrequests']` -- queries the Booking/BookingRequest models
-    directly (not booking_service) since that's all this needs, avoiding
-    the circular import update_performance's reconcile_setup_change call
-    already has to work around."""
+    """Queries the Booking/BookingRequest models directly (not
+    booking_service) since that's all this needs, avoiding the circular
+    import update_performance's reconcile_setup_change call already has to
+    work around."""
     booking_count = db.execute(
         select(func.count())
         .select_from(Booking)

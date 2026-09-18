@@ -273,7 +273,6 @@ class TestDeletable:
     def test_instrument_assignment_alone_does_not_block_delete(
         self, db_session: Session, make_user
     ):
-        # Legacy's HasDependencies trait on User only lists `roles` --
         # Instrument/Voice/Choirjob qualifications never block delete.
         instrument = _make_instrument(db_session)
         user = make_user()

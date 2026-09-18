@@ -23,11 +23,10 @@ from app.services.coreelement_service import (
 
 coreelement_router = APIRouter()
 
-# All six Legacy Policies (Instrument/Voice/Choirjob/Location/Propriumelement/
-# Role `maintain`) resolve to the exact same condition (administrator-Flag)
-# -- routed through the central PERMISSION_RULES matrix regardless, so a
-# future policy change for a single type is a one-line edit in
-# permission_service.py, not a new branch here.
+# All six maintain abilities (Instrument/Voice/Choirjob/Location/ Propriumelement/Role)
+# resolve to the exact same condition (administrator-Flag) -- routed through the central
+# PERMISSION_RULES matrix regardless, so a future policy change for a single type is a
+# one-line edit in permission_service.py, not a new branch here.
 _PERMISSION_BY_TYPE: dict[CoreelementType, str] = {
     CoreelementType.instrument: "instrumentMaintain",
     CoreelementType.voice: "voiceMaintain",

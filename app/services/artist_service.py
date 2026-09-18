@@ -26,8 +26,8 @@ class ArtistNotFoundError(Exception):
 
 
 class ArtistValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 auth_service.RegistrationConflictError pattern."""
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as auth_service.RegistrationConflictError."""
 
     def __init__(self, errors: list[tuple[str, str]]) -> None:
         self.errors = errors
@@ -36,15 +36,12 @@ class ArtistValidationError(Exception):
 
 class ArtistInUseError(Exception):
     """Raised when delete is blocked by a dependent Ordinariumwork/
-    Propriumwork row -- mirrors Legacy's HasDependencies check. The third
-    Legacy dependency (`performances`) doesn't exist in osa-backend yet
-    (Schritt 5) and is added here once that domain lands."""
+    Propriumwork/Performance row."""
 
 
 def label_for(artist: Artist) -> str:
-    """Mirrors Legacy's HasHumanNames::name() virtual attribute
-    ("SURNAME, Givenname"), used as the display label in search results
-    and embedded in Ordinariumwork/Propriumwork responses."""
+    """Display label ("SURNAME, Givenname"), used in search results and
+    embedded in Ordinariumwork/Propriumwork responses."""
     return label_for_name(artist.surname or "", artist.givenname)
 
 
@@ -99,9 +96,8 @@ def _get_or_404(db: Session, artist_id: uuid.UUID) -> Artist:
 
 def list_composer_artists(db: Session) -> Sequence[Artist]:
     """Dropdown source for Ordinariumwork/Propriumwork's "Komponist" select
-    -- mirrors Legacy's `Artist::ofType('composer')->get()`, which is
-    embedded directly in those controllers' ShowForm resources rather than
-    gated under ArtistController itself (see artistMaintain/
+    -- embedded directly in those entities' form payloads rather than
+    gated by the artist maintain permission itself (see artistMaintain/
     ordinariumworkMaintain/propriumworkMaintain in permission_service.py,
     which share the identical planner/disponent condition)."""
     stmt = (
@@ -113,10 +109,8 @@ def list_composer_artists(db: Session) -> Sequence[Artist]:
 
 
 def search_artists(db: Session, query: str) -> Sequence[Artist]:
-    """Real indexed-ish DB query, replacing Legacy's `Artist::search()`
-    anti-pattern (loads the entire table into PHP, filters in memory).
-    Every whitespace-separated word in `query` must appear somewhere in
-    "surname givenname" (mirrors Legacy's `Str::containsAll` semantics)."""
+    """Filtered in the database (not in memory). Every whitespace-separated
+    word in `query` must appear somewhere in "surname givenname"."""
     words = [word for word in query.lower().split() if word]
     if not words:
         return []
@@ -174,10 +168,7 @@ def get_artist(db: Session, artist_id: uuid.UUID) -> Artist:
 def _artist_has_dependencies(db: Session, artist_id: uuid.UUID) -> bool:
     # Ordinariumwork/Propriumwork's artist_id is the composer; Performance's
     # is the conductor (Dirigent) -- both point at the same `artists` table,
-    # and Legacy's own $dependencies = ['ordinariumworks', 'propriumworks',
-    # 'performances'] treats either role as "in use" alike. Performance
-    # retrofitted once Schritt 5 built that domain (was deferred before,
-    # mirroring the Instrument/Voice retrofit in coreelement_service.py).
+    # and either role counts as "in use" alike.
     for model in (Ordinariumwork, Propriumwork, Performance):
         count = db.execute(
             select(func.count()).select_from(model).where(model.artist_id == artist_id)

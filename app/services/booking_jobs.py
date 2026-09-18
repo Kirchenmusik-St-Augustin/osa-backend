@@ -33,10 +33,8 @@ if TYPE_CHECKING:
 
 
 def purge_stale_booking_requests() -> None:
-    """Replaces Legacy's `Performance::booted()` anti-pattern (ran on EVERY
-    single Model boot, i.e. practically every request touching a
-    Performance) -- deletes open booking_requests for performances whose
-    schedule has already passed. No grace period, exactly like Legacy."""
+    """Deletes open booking_requests for performances whose schedule has
+    already passed. No grace period."""
     db = SessionLocal()
     try:
         db.execute(
@@ -54,8 +52,7 @@ def purge_stale_booking_requests() -> None:
 def _latest_unnotified_entries(
     logs: Sequence[BookingLog],
 ) -> dict[tuple[uuid.UUID, uuid.UUID], BookingLog]:
-    """Port of `BookingLog::checkNotificationForUpcomingPerformances()`'s
-    per-(performance,user) decision: notify only if the latest log entry
+    """Per-(performance,user) decision: notify only if the latest log entry
     for that user on that performance hasn't been notified yet, AND either
     (a) they were previously notified and the booking_type changed since,
     or (b) they were never notified and the latest entry is a 'book'.
@@ -124,8 +121,7 @@ def _capture_entry_data_before_any_commit(
 
 
 def notify_upcoming_booking_status() -> None:
-    """Port of `BookingLog::checkNotificationForUpcomingPerformances()` --
-    one `BookingStatus` mail per user, bundling every not-yet-notified
+    """One booking-status mail per user, bundling every not-yet-notified
     booking-log transition across all of their upcoming performances."""
     db = SessionLocal()
     try:

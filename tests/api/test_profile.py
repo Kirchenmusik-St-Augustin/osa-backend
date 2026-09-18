@@ -147,6 +147,104 @@ class TestUpdateProfile:
         )
         assert login_response.status_code == 200
 
+    def test_weak_new_password_is_reported_on_the_password_field(
+        self, client, make_user
+    ):
+        headers, email = _auth_headers(client, make_user)
+
+        response = client.put(
+            "/profile",
+            json=_payload(
+                email=email,
+                change_password=True,
+                password="short",
+                password_confirmation="short",
+            ),
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        password_errors = [
+            error
+            for error in response.json()["detail"]
+            if error["loc"] == ["body", "password"]
+        ]
+        assert len(password_errors) == 1
+        assert "zwischen 8 und 16 Zeichen" in password_errors[0]["msg"]
+        assert "mindestens eine Ziffer" in password_errors[0]["msg"]
+
+    def test_mismatched_confirmation_is_reported_on_its_own_field(
+        self, client, make_user
+    ):
+        headers, email = _auth_headers(client, make_user)
+
+        response = client.put(
+            "/profile",
+            json=_payload(
+                email=email,
+                change_password=True,
+                password="NeuesPassw0rt",
+                password_confirmation="Anderes1234",
+            ),
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        locations = [tuple(error["loc"]) for error in response.json()["detail"]]
+        assert locations == [("body", "password_confirmation")]
+
+    def test_missing_new_password_is_reported_on_the_password_field(
+        self, client, make_user
+    ):
+        headers, email = _auth_headers(client, make_user)
+
+        response = client.put(
+            "/profile",
+            json=_payload(email=email, change_password=True),
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        messages_by_field = {
+            error["loc"][1]: error["msg"] for error in response.json()["detail"]
+        }
+        # The confirmation is not reported on top: without a valid
+        # password there is nothing to compare it against.
+        assert messages_by_field == {"password": "Dieses Feld ist erforderlich."}
+
+    def test_new_password_equal_to_current_is_reported_on_the_password_field(
+        self, client, make_user
+    ):
+        headers, email = _auth_headers(client, make_user, password="Passwort123")
+
+        response = client.put(
+            "/profile",
+            json=_payload(
+                email=email,
+                change_password=True,
+                password="Passwort123",
+                password_confirmation="Passwort123",
+            ),
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        assert {error["loc"][1] for error in response.json()["detail"]} == {"password"}
+        assert "unterscheiden" in response.json()["detail"][0]["msg"]
+
+    def test_invalid_password_fields_are_ignored_when_not_changing_password(
+        self, client, make_user
+    ):
+        headers, email = _auth_headers(client, make_user)
+
+        response = client.put(
+            "/profile",
+            json=_payload(email=email, password="x", password_confirmation="y"),
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+
     def test_duplicate_name_combo_returns_422_on_both_fields(
         self, client, make_user, db_session
     ):

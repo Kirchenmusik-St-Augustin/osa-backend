@@ -19,9 +19,7 @@ def _count(db: Session, model: type) -> int:
 
 
 def get_statistics(db: Session) -> StatisticsOutput:
-    """1:1 Legacy's `StatisticsController::statistics()` -- six raw
-    `Model::count()` calls. `users` excludes soft-deleted rows, matching
-    Legacy's `User::count()` (default Eloquent scope, no `withTrashed()`)."""
+    """Six raw row counts. `users` excludes soft-deleted rows."""
     users = db.execute(
         select(func.count()).select_from(User).where(User.deleted_at.is_(None))
     ).scalar_one()

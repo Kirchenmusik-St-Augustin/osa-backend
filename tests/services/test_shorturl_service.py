@@ -61,8 +61,7 @@ class TestCreateShorturl:
         assert shorturl.latestcall_at is None
 
     def test_strips_only_leading_slashes(self, db_session: Session):
-        # 1:1 Legacy's ltrim($validated['path'], '/') -- leading only, not
-        # trailing/embedded.
+        # Leading slashes only, not trailing/embedded ones.
         shorturl = shorturl_service.create_shorturl(
             db_session, _request(f"///{_unique('nested/sub')}/")
         )

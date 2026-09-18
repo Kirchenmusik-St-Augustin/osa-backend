@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import LenientUuid, StrictInputModel
+from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
 
 
 class OrdinariumworkPositionInput(StrictInputModel):
@@ -17,7 +17,7 @@ class OrdinariumworkSetupInput(StrictInputModel):
 
 class OrdinariumworkRequest(StrictInputModel):
     name: str = Field(min_length=3, max_length=60)
-    description: str | None = None
+    description: OptionalText = None
     artist_id: LenientUuid
     duration: int | None = Field(default=None, ge=0, le=999)
     demanding: bool = False
@@ -39,10 +39,9 @@ class OrdinariumworkPositionOutput(BaseModel):
     name: str
     quantity: int
     # Lets the frontend flag a setup row whose Instrument/Voice has since
-    # been archived (osa-only `active` addition, outside the structural
-    # 1:1 transfer's scope) -- get_setup() resolves existing rows by id
-    # regardless of active status, so a since-archived position still
-    # shows up here correctly, just visibly marked.
+    # been archived -- get_setup() resolves existing rows by id regardless
+    # of active status, so a since-archived position still shows up here
+    # correctly, just visibly marked.
     active: bool
 
 

@@ -720,8 +720,7 @@ class TestUpdatePerformance:
             )
 
     def test_collision_check_also_runs_on_update(self, db_session: Session):
-        """User-Entscheidung 2026-07-29: unlike Legacy (which only checked
-        this on create), the collision check now also runs on update."""
+        """The collision check runs on update too, not just on create."""
         composer_id = _make_artist(db_session, composer=True)
         first_conductor = _make_artist(db_session, conductor=True)
         second_conductor = _make_artist(db_session, conductor=True)
@@ -902,8 +901,8 @@ class TestUpdatePerformance:
         # Shrinking a quantity does NOT remove the now-standby booking row
         # (its "regular"/"standby" status is derived from order < quantity,
         # not stored) -- only the REMOVED position's booking is actually
-        # purged. This mirrors Legacy exactly: saveCastItem's demote path
-        # only logs the transition, it never deletes on its own.
+        # purged. The demote path only logs the transition, it never
+        # deletes on its own.
         remaining = (
             db_session.execute(
                 select(Booking).where(Booking.performance_id == created.id)

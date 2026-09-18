@@ -190,9 +190,9 @@ class TestCreatePropriumwork:
             _request(uuid.uuid4(), duration=1000)
 
     def test_rejects_zero_duration(self):
-        """Legacy quirk: unlike Ordinariumwork, Propriumwork's duration
-        lower bound is 1, not 0 -- a duration of exactly 0 is invalid. Now
-        caught by PropriumworkRequest's own Field(ge=1)."""
+        """Unlike Ordinariumwork, Propriumwork's duration lower bound is 1,
+        not 0 -- a duration of exactly 0 is invalid (PropriumworkRequest's
+        own Field(ge=1))."""
         with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(ge=1)
             _request(uuid.uuid4(), duration=0)
 
