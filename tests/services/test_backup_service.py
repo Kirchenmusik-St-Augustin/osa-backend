@@ -738,6 +738,9 @@ class TestRunRestore:
         assert "--data-only" in calls[0]
         assert "--table=public.job_runs" in calls[0]
         assert calls[1][0] == FAKE_PSQL
+        # Terminates every other session (only its own excluded), then wipes.
+        assert "pg_terminate_backend(pid)" in calls[1][-1]
+        assert "pid != pg_backend_pid()" in calls[1][-1]
         assert "DROP SCHEMA public CASCADE" in calls[1][-1]
         assert calls[2][0] == FAKE_PG_RESTORE
         assert "--data-only" not in calls[2]
@@ -776,35 +779,6 @@ class TestRunRestore:
             backup_service.run_restore(
                 backup_name="production-2024-01-01_00-00-00.dump", force=True
             )
-
-    def test_wipe_excludes_the_advisory_lock_holding_session(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        """The scheduler's own connection (see
-        app.core.scheduler._acquire_scheduler_lock()) must survive the
-        pre-restore pg_terminate_backend() sweep -- terminating it would
-        silently stop this worker's scheduled jobs until the next
-        restart."""
-        monkeypatch.setenv("DATABASE_URL", PG_URL)
-        monkeypatch.setenv("KOOFR_USER", "user")
-        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
-        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
-        monkeypatch.setattr(
-            backup_service.requests,
-            "get",
-            lambda *_a, **_kw: _FakeResponse(status_code=200, content=b"x"),
-        )
-        monkeypatch.setattr(backup_service, "engine", _FakeEngine())
-        monkeypatch.setattr(
-            backup_service.subprocess, "run", _fake_pg_subprocess_run([])
-        )
-
-        backup_service.run_restore(
-            backup_name="production-2024-01-01_00-00-00.dump", force=True
-        )
-        # No assertion needed beyond "did not raise" -- the SQL text itself
-        # is asserted in test_wipes_schema_then_restores_the_downloaded_dump;
-        # this test documents WHY that exclusion clause exists.
 
     def test_raises_when_pg_restore_fails(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("DATABASE_URL", PG_URL)

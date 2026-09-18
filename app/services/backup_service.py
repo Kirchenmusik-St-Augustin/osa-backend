@@ -413,14 +413,10 @@ def _wipe_public_schema(
     with an open transaction on this database can block. Terminating every
     other session first makes lock acquisition deterministic instead of a
     timing race -- any session still using the old schema is about to get
-    errors the instant it's dropped anyway. The scheduler's own
-    advisory-lock-holding connection (see _acquire_scheduler_lock() in
-    app.core.scheduler) is deliberately spared -- it never touches a
-    table, so it can never conflict with DROP SCHEMA, and terminating it
-    would silently stop this worker's scheduled jobs until the next
-    restart. lock_timeout is a safety net for a new connection arriving in
-    the brief window between the terminate and the DROP SCHEMA -- a fast,
-    clearly logged failure instead of an unbounded hang.
+    errors the instant it's dropped anyway. lock_timeout is a safety net
+    for a new connection arriving in the brief window between the
+    terminate and the DROP SCHEMA -- a fast, clearly logged failure
+    instead of an unbounded hang.
     """
     psql = _resolve_pg_tool("psql")
     _run_pg_subprocess(
@@ -434,8 +430,7 @@ def _wipe_public_schema(
             (
                 "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
                 "WHERE datname = current_database() "
-                "AND pid != pg_backend_pid() "
-                "AND query NOT ILIKE '%pg_try_advisory_lock%'; "
+                "AND pid != pg_backend_pid(); "
                 "SET lock_timeout = '5s'; DROP SCHEMA public CASCADE; "
                 "CREATE SCHEMA public;"
             ),
@@ -606,9 +601,8 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
     overwrites the live database.
 
     Calls engine.dispose() after the restore: _wipe_public_schema() above
-    terminates every other session on this database (except the
-    scheduler's advisory-lock connection), including any this app's own
-    connection pool was holding idle. pool_pre_ping=True (see
+    terminates every other session on this database, including any this
+    app's own connection pool was holding idle. pool_pre_ping=True (see
     app.db.database) would eventually catch and transparently replace each
     of those on next use anyway, but disposing the whole pool immediately
     is simpler than waiting for that to happen one connection at a time.

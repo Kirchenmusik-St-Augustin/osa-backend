@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     koofr_backup_retention_days: int = Field(
         default=28, validation_alias="KOOFR_BACKUP_RETENTION_DAYS"
     )
-    # Job-registration gate (app.core.scheduler.start_scheduler()) -- two
+    # Job-registration gate (app.worker.cron_config.build_cron_catalog()) -- two
     # independent conditions (APP_ENVIRONMENT == "production" AND this
     # flag), not this flag alone: unlike a per-stage-isolated storage
     # bucket, OSA's Koofr path is ONE shared destination across every
@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     # dev/qa process write into it.
     backup_enabled: bool = Field(default=True, validation_alias="BACKUP_ENABLED")
     # Nighttime slot, Europe/Vienna wall-clock via Settings.app_timezone
-    # (see app.core.scheduler.start_scheduler()).
+    # (see app.worker.cron_config.build_cron_catalog()).
     backup_hour: int = Field(default=3, validation_alias="BACKUP_HOUR")
     backup_minute: int = Field(default=0, validation_alias="BACKUP_MINUTE")
 

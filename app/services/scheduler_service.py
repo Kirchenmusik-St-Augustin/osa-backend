@@ -1,10 +1,9 @@
 """Admin Scheduler overview (GET /administrator/scheduler/jobs) -- computes
 a purely theoretical next-run listing directly from app.worker.cron_config's
-shared catalog. Unlike the previous APScheduler-based version of this
-function, this does NOT read the actual arq worker process's live state --
-it can't: arq's cron scheduling is computed in-memory inside whichever
-process is actually running the worker, and nothing publishes that
-externally. Since the worker builds its own cron_jobs= from this exact
+shared catalog. It does NOT read the actual arq worker process's live
+state -- it can't: arq's cron scheduling is computed in-memory inside
+whichever process is actually running the worker, and nothing publishes
+that externally. Since the worker builds its own cron_jobs= from this exact
 same catalog (see app.worker.settings.WorkerSettings), the two displays
 can never disagree in content -- but this endpoint's response no longer
 confirms that the worker container is actually up and running right now,

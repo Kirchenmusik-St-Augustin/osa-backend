@@ -8,10 +8,9 @@ Explicit dataclass fields, not a generic dict[str, int | str]: Pyright
 strict cannot reconcile a loosely-typed dict against arq's own precisely
 per-field-typed cron()/next_cron() signatures. Field names mirror arq's
 own cron() keyword arguments exactly (month/day/weekday/hour/minute/
-second/microsecond) -- note arq's weekday strings differ from
-APScheduler's: 'tues'/'thurs', not APScheduler's 'tue'/'thu'. Irrelevant
-for the one job below using a weekday ('sun' is spelled identically in
-both), but a real trap for any future job using Tuesday/Thursday -- a
+second/microsecond). Watch arq's weekday spellings: 'tues'/'thurs', not
+the usual 'tue'/'thu'. Irrelevant for the one job below using a weekday
+('sun'), but a real trap for any future job using Tuesday/Thursday -- a
 wrong string crashes the worker at startup with ValueError, not at the
 job's actual run time.
 """
@@ -45,9 +44,10 @@ class CronSchedule:
 
 
 def build_cron_catalog(settings: Settings) -> list[CronSchedule]:
-    """Every job the former APScheduler-based start_scheduler() used to
-    register, ported 1:1 -- same gating (is_production/backup_enabled),
-    same cadence values."""
+    """Every scheduled job with its cadence and stage gating:
+    purge_stale_booking_requests runs on every stage, the mail/purge/backup
+    jobs only in production (backup_koofr additionally needs
+    BACKUP_ENABLED), downsync only outside production."""
     is_production = settings.app_environment == "production"
     return [
         CronSchedule(

@@ -13,20 +13,12 @@ time (E402 is already allowed project-wide for exactly this reason, see
 pyproject.toml).
 
 Per-test isolation uses a transaction+SAVEPOINT pattern (db_session
-below), not the earlier "plain get_db()
-generator, data persists across tests" model this suite used against its
-throwaway-per-session file. That original model relied on tests
-picking mutually-unique fixture data (uuid-suffixed emails, monotonic
-`itertools.count()` ids in a few files) to avoid collisions -- against
-real Postgres, with the full suite's actual connection/session traffic
-(the scheduler's advisory lock among it), that discipline alone turned out
-to not be quite enough: a full-suite run occasionally produced a handful
-of failures that never reproduced in isolation or on a second full run,
-consistent with a rare timing-dependent cross-test interaction rather than
-a deterministic bug in any one test. Wrapping every test in its own
-transaction, rolled back afterward regardless of how the test or the code
-under test committed, removes the shared mutable state that a timing
-window could ever act on.
+below): every test is wrapped in its own outer transaction, rolled back
+afterward regardless of how the test or the code under test committed.
+Tests therefore share no mutable database state and never need mutually
+unique fixture data to avoid collisions -- data that persisted across
+tests made a full-suite run occasionally fail in ways that never
+reproduced in isolation.
 """
 
 import os
