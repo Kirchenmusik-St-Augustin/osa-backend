@@ -289,6 +289,19 @@ class TestCreatePerformance:
         assert response.ordinariumwork_id == work.id
         assert response.instrument_defaultfee == 60
 
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "choirjob_defaultfee",
+            "instrument_defaultfee",
+            "voice_defaultfee",
+            "extracost_amount",
+        ],
+    )
+    def test_rejects_out_of_range_money_field(self, field: str):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+            _request(uuid.uuid4(), uuid.uuid4(), **{field: 1000})
+
     def test_rejects_schedule_before_tomorrow(self, db_session: Session):
         composer_id = _make_artist(db_session, composer=True)
         location = _make_location(db_session)
@@ -673,6 +686,26 @@ class TestCreatePerformance:
         )
 
         assert response.location_id == location_b.id
+
+    def test_allows_same_location_at_a_different_hour(self, db_session: Session):
+        # Regression guard for the SQL-side hour-window filter in
+        # _validate_collision (WHERE schedule >= hour_start AND < hour_end)
+        # -- a performance at the SAME location just outside that window
+        # must not be mistaken for a collision.
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        schedule = _unique_schedule()
+        performance_service.create_performance(
+            db_session, _request(location.id, work.id, schedule=schedule)
+        )
+
+        response = performance_service.create_performance(
+            db_session,
+            _request(location.id, work.id, schedule=schedule + timedelta(hours=1)),
+        )
+
+        assert response.location_id == location.id
 
 
 class TestUpdatePerformance:

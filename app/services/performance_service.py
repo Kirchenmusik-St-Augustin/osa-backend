@@ -178,15 +178,14 @@ def _validate_collision(
     hour_start = schedule.replace(minute=0, second=0, microsecond=0)
     hour_end = hour_start + timedelta(hours=1)
 
-    stmt = select(Performance).where(Performance.location_id == data.location_id)
+    stmt = select(Performance).where(
+        Performance.location_id == data.location_id,
+        Performance.schedule >= hour_start,
+        Performance.schedule < hour_end,
+    )
     if exclude_id is not None:
         stmt = stmt.where(Performance.id != exclude_id)
-    same_location = db.execute(stmt).scalars().all()
-    same_hour = [
-        performance
-        for performance in same_location
-        if hour_start <= performance.schedule < hour_end
-    ]
+    same_hour = db.execute(stmt).scalars().all()
 
     errors: list[tuple[str, str]] = []
     if same_hour:

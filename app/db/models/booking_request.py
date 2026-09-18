@@ -36,10 +36,10 @@ class BookingRequest(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("performances.id", ondelete="RESTRICT")
+        ForeignKey("performances.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
+        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     notbooked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime | None] = mapped_column(

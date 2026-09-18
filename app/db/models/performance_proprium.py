@@ -31,13 +31,13 @@ class PerformanceProprium(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("performances.id", ondelete="CASCADE")
+        ForeignKey("performances.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     propriumelement_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("propriumelements.id", ondelete="RESTRICT")
+        ForeignKey("propriumelements.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     propriumwork_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("propriumworks.id", ondelete="RESTRICT")
+        ForeignKey("propriumworks.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

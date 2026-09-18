@@ -93,10 +93,10 @@ class BookingLog(PositionColumns, Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("performances.id", ondelete="SET NULL")
+        ForeignKey("performances.id", ondelete="SET NULL", onupdate="SET NULL")
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
+        ForeignKey("users.id", ondelete="SET NULL", onupdate="SET NULL")
     )
     booking_type: Mapped[str] = mapped_column(booking_type_enum)
     fee: Mapped[int]

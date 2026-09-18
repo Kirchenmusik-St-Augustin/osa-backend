@@ -54,7 +54,7 @@ class PerformancePosition(PositionColumns, Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("performances.id", ondelete="CASCADE")
+        ForeignKey("performances.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     quantity: Mapped[int]
     created_at: Mapped[datetime | None] = mapped_column(

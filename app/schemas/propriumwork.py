@@ -6,10 +6,10 @@ from app.schemas.base import LenientUuid, StrictInputModel
 
 
 class PropriumworkRequest(StrictInputModel):
-    name: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=3, max_length=60)
     description: str | None = None
     artist_id: LenientUuid
-    duration: int | None = None
+    duration: int | None = Field(default=None, ge=1, le=999)
     demanding: bool = False
 
 

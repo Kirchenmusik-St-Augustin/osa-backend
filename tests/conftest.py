@@ -79,6 +79,7 @@ from app.api.middleware import request_logging
 from app.core import mailer
 from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings
+from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
 from app.db.database import engine, get_db
 from app.db.models.choirjob import Choirjob
@@ -115,6 +116,17 @@ def _reset_settings_cache():
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """The slowapi Limiter's in-memory storage is a module-level singleton
+    (app.core.rate_limit.limiter), shared across the whole test session --
+    without a reset, an endpoint's rate-limit counter accumulates across
+    every test that happens to call it, regardless of test order."""
+    limiter.reset()
+    yield
+    limiter.reset()
 
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

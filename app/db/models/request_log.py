@@ -35,10 +35,10 @@ class RequestLog(Base):
     client_ip: Mapped[str]
     client_ips: Mapped[list[str] | None] = mapped_column(JSONB())
     client_user_agent_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("client_user_agents.id", ondelete="SET NULL")
+        ForeignKey("client_user_agents.id", ondelete="SET NULL", onupdate="SET NULL")
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
+        ForeignKey("users.id", ondelete="SET NULL", onupdate="SET NULL")
     )
     request_method: Mapped[str]
     request_path: Mapped[str]

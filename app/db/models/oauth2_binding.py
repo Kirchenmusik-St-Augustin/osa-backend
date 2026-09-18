@@ -28,7 +28,7 @@ class Oauth2Binding(Base):
     remote_id: Mapped[str]
     remote_name: Mapped[str]
     local_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
+        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     lastuse_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

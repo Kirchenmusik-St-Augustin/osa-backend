@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, cast, overload
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.datetime_utils import (
     ensure_tz_aware,
@@ -53,6 +54,7 @@ REDACT_KEYS = frozenset(
         "auth_password",
         "current_password",
         "new_password",
+        "newpw",
         "access_token",
         "refresh_token",
         "token",
@@ -103,9 +105,23 @@ def _get_or_create_client_user_agent(db: Session, user_agent_string: str) -> uui
     existing_id = result.scalar_one_or_none()
     if existing_id is not None:
         return existing_id
-    client_user_agent = ClientUserAgent(string=user_agent_string)
-    db.add(client_user_agent)
-    db.flush()
+    try:
+        with db.begin_nested():
+            client_user_agent = ClientUserAgent(string=user_agent_string)
+            db.add(client_user_agent)
+            db.flush()
+    except IntegrityError:
+        # Lost a TOCTOU race: this table's get-or-create runs on every
+        # HTTP request, so a concurrent request can insert the same new
+        # user_agent_string between the SELECT above and this INSERT.
+        # begin_nested()'s SAVEPOINT already rolled back the failed
+        # insert -- the other request's row is committed by now, so a
+        # plain re-SELECT finds it.
+        return db.execute(
+            select(ClientUserAgent.id).where(
+                ClientUserAgent.string == user_agent_string
+            )
+        ).scalar_one()
     return client_user_agent.id
 
 

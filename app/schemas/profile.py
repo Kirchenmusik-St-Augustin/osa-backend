@@ -22,7 +22,7 @@ class ProfileUpdateRequest(StrictInputModel):
     change_password: bool
     password: str | None = None
     password_confirmation: str | None = None
-    auth_password: str = Field(min_length=1)
+    auth_password: str = Field(min_length=1, max_length=128)
 
     @field_validator("phone")
     @classmethod

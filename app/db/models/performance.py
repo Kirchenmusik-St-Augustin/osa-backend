@@ -66,13 +66,13 @@ class Performance(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     schedule: Mapped[datetime] = mapped_column(DateTime())
     location_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("locations.id", ondelete="RESTRICT")
+        ForeignKey("locations.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     ordinariumwork_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("ordinariumworks.id", ondelete="RESTRICT")
+        ForeignKey("ordinariumworks.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     artist_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("artists.id", ondelete="RESTRICT")
+        ForeignKey("artists.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     description: Mapped[str | None]
     choirjob_defaultfee: Mapped[int] = mapped_column(default=35)

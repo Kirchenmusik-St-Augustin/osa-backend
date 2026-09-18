@@ -22,7 +22,7 @@ from app.schemas.performance import (
 
 class CastMemberInput(StrictInputModel):
     id: LenientUuid
-    fee: int = Field(ge=0)
+    fee: int = Field(ge=0, le=999)
 
 
 class CastSetupItemInput(StrictInputModel):
@@ -225,4 +225,4 @@ class MessageRecipientOutput(BaseModel):
 
 class SendMessageRequest(StrictInputModel):
     recipient_ids: list[LenientUuid] = Field(min_length=1)
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=2000)

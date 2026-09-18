@@ -630,6 +630,28 @@ def test_execute_password_reset_rejects_expired_token(db_session, make_user):
 # ---------------------------------------------------------------------------
 
 
+def test_string_claim_returns_the_value_when_present_and_a_string():
+    assert auth_service._string_claim({"name": "Max"}, "name") == "Max"
+
+
+def test_string_claim_returns_the_default_when_the_key_is_absent():
+    assert auth_service._string_claim({}, "name", default="") == ""
+
+
+def test_string_claim_returns_the_default_when_the_value_is_not_a_string():
+    assert auth_service._string_claim({"name": 123}, "name", default="") == ""
+
+
+def test_string_claim_raises_when_required_and_the_key_is_absent():
+    with pytest.raises(ValueError, match="sub"):
+        auth_service._string_claim({}, "sub")
+
+
+def test_string_claim_raises_when_required_and_the_value_is_not_a_string():
+    with pytest.raises(ValueError, match="sub"):
+        auth_service._string_claim({"sub": 12345}, "sub")
+
+
 def _google_id_info(sub: str | None = None, **overrides: object) -> dict[str, object]:
     defaults: dict[str, object] = {
         "sub": sub or f"google-{uuid.uuid4().hex[:8]}",

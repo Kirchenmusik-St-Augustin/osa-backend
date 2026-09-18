@@ -1,10 +1,12 @@
+import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from app.api.middleware.request_logging import RequestLoggingMiddleware
@@ -12,6 +14,7 @@ from app.db.models.request_log import RequestLog
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+    from starlette.types import Receive, Scope, Send
 
 
 @pytest.fixture(autouse=True)
@@ -112,3 +115,45 @@ def test_does_not_write_a_log_row_when_the_skip_header_is_set(db_session: Sessio
         .count()
     )
     assert count == 0
+
+
+def test_does_not_buffer_the_response_body_when_the_skip_header_is_set():
+    # Regression guard: should_skip() must run BEFORE the body-buffering
+    # loop, not after -- otherwise the skip header only ever avoided the
+    # DB write, not the expensive in-memory buffering itself. Exercises
+    # dispatch() directly (no TestClient/real transport) so the response's
+    # own body_iterator can be observed rather than the bytes it yields.
+    body_iterator_consumed = False
+
+    async def _body_iterator():
+        nonlocal body_iterator_consumed
+        body_iterator_consumed = True
+        yield b'{"ok": true}'
+
+    response = Response(headers={"X-Skip-Request-Log": "1"})
+    response.body_iterator = _body_iterator()  # type: ignore[attr-defined]
+
+    async def _call_next(_request: Request) -> Response:
+        return response
+
+    async def _dummy_app(_scope: Scope, _receive: Receive, _send: Send) -> None:
+        pass
+
+    async def _empty_receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def _run() -> None:
+        middleware = RequestLoggingMiddleware(app=_dummy_app)
+        scope: Scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/skip-me",
+            "headers": [],
+            "query_string": b"",
+        }
+        request = Request(scope, receive=_empty_receive)
+        result = await middleware.dispatch(request, _call_next)
+        assert result is response
+        assert body_iterator_consumed is False
+
+    asyncio.run(_run())

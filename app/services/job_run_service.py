@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.database import SessionLocal
 from app.db.models.job_run import JobRun
@@ -31,12 +32,13 @@ def record_job_run(
     SessionLocal-outside-Depends ban (see pyproject.toml's
     per-file-ignores, same pattern as app.services.booking_jobs).
 
-    Catches Exception broadly and only logs -- the one deliberate, narrowly
-    scoped exception to this project's ban on generic except Exception
-    handling: this function's entire purpose is best-effort observability,
-    and a failure to write an audit row (a DB hiccup, a constraint edge
-    case) must never be the reason a real scheduled job's own
-    success/failure handling breaks.
+    Catches SQLAlchemyError (DB hiccups, constraint/enum violations) and
+    only logs, never raises: this function's entire purpose is best-effort
+    observability, and a failure to write an audit row must never be the
+    reason a real scheduled job's own success/failure handling breaks. A
+    non-DB error here would be a genuine programming bug, not a runtime
+    hiccup, and is deliberately left to propagate instead of being
+    swallowed alongside it.
     """
     try:
         db = SessionLocal()
@@ -53,7 +55,7 @@ def record_job_run(
             db.commit()
         finally:
             db.close()
-    except Exception:
+    except SQLAlchemyError:
         logger.exception("Failed to record job run for %s", job_id)
 
 

@@ -6,12 +6,14 @@ from pydantic import BeforeValidator
 
 from app.core.config import get_settings
 
-# Our DateTime columns are still declared without timezone=True (a real
-# TIMESTAMPTZ migration is a separate, not-yet-started step), so every
-# datetime read back from the DB comes back naive,
-# even though every write goes through datetime.now(UTC). Comparing a naive
-# value against an aware one raises TypeError, so any code comparing a
-# stored timestamp against "now" needs this normalization first.
+# Genuinely-UTC audit/event columns (created_at/updated_at, token/session
+# timestamps, ...) are TIMESTAMPTZ as of the TIMESTAMPTZ + audit-trigger
+# hardening slice (2026-09) and come back timezone-aware from the DB
+# already. ensure_tz_aware() stays as a defensive normalization: comparing
+# a naive value against an aware one raises TypeError, and it protects any
+# remaining code path that might still hand it a naive datetime (a test
+# fixture, a value built in Python before being persisted, ...) without
+# every caller needing to reason about where the value originated.
 #
 # This applies ONLY to genuinely UTC audit columns (created_at/updated_at,
 # token/session timestamps) that are actually written via datetime.now(UTC).

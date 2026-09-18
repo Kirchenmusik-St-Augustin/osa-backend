@@ -139,27 +139,27 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         request_input = await _extract_request_input(request)
         response = await call_next(request)
 
-        response_body = b""
-        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
-            response_body += chunk
-
         skip_header_present = _SKIP_LOG_HEADER in response.headers
-        rebuilt = Response(
-            content=response_body,
-            status_code=response.status_code,
-            headers={
-                key: value
-                for key, value in response.headers.items()
-                if key.lower() != _SKIP_LOG_HEADER
-            },
-            media_type=response.media_type,
-            background=response.background,
-        )
-
+        if skip_header_present:
+            del response.headers[_SKIP_LOG_HEADER]
         if request_log_service.should_skip(
             request.url.path, skip_header_present=skip_header_present
         ):
-            return rebuilt
+            # Unconsumed body_iterator, streamed lazily by whatever ASGI
+            # layer sends this response next -- skipped requests never pay
+            # for the full in-memory buffering below.
+            return response
+
+        response_body = b""
+        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+            response_body += chunk
+        rebuilt = Response(
+            content=response_body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+            background=response.background,
+        )
 
         client_ips = _forwarded_ips(request)
         await run_in_threadpool(

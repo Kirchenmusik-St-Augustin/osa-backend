@@ -413,3 +413,42 @@ class TestNotifyUpcomingBookingStatus:
         # so there's no leftover-data flakiness concern here anymore.
         with patch("app.core.mailer._send_message"):
             booking_jobs.notify_upcoming_booking_status()
+
+    def test_query_count_does_not_scale_with_number_of_performances(
+        self, db_session: Session, make_user, count_queries
+    ):
+        # One user with notify-worthy entries across SEVERAL upcoming
+        # performances, bundled into one combined mail (see this class's
+        # own docstring) -- isolates the batch-loader's query count from
+        # the legitimate per-recipient cost of sending more distinct
+        # mails, which a naive "more performances == more users" setup
+        # would otherwise conflate it with.
+        user = make_user()
+        user.email_verified_at = datetime.now(UTC)
+        db_session.commit()
+
+        def _add_performance_for_user() -> None:
+            performance_id = _make_performance(db_session)
+            _make_log(
+                db_session,
+                performance_id=performance_id,
+                user_id=user.id,
+                booking_type="book",
+            )
+
+        _add_performance_for_user()
+        with (
+            patch("app.core.mailer._send_message"),
+            count_queries() as one_performance,
+        ):
+            booking_jobs.notify_upcoming_booking_status()
+
+        for _ in range(5):
+            _add_performance_for_user()
+        with (
+            patch("app.core.mailer._send_message"),
+            count_queries() as six_performances,
+        ):
+            booking_jobs.notify_upcoming_booking_status()
+
+        assert six_performances.count == one_performance.count

@@ -40,14 +40,16 @@ _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescap
 
 
 def _format_short_date(value: datetime) -> str:
-    # Legacy's `schedule->format('j. m. Y')` -- day/month without leading
-    # zeros, same reasoning as _format_notification_timestamp (strftime's
-    # non-padded %-d/%-m is a glibc-only extension, not portable). Rendered
-    # in Python rather than as a Jinja template filter/global -- Jinja's
-    # type stubs don't model arbitrary-callable globals cleanly, and every
-    # other value already reaches these templates pre-formatted the same
-    # way (see e.g. send_password_reset_email's `count=`).
-    return f"{value.day}. {value.month}. {value.year}"
+    # Legacy's `schedule->format('j. m. Y')` -- PHP's lowercase `j` is the
+    # day WITHOUT leading zeros, but lowercase `m` is the month WITH
+    # leading zeros (unlike `_format_notification_timestamp`'s `n`, which
+    # has none) -- easy to conflate, but `m`/`n` mean opposite things in
+    # PHP's date-format syntax. Rendered in Python rather than as a Jinja
+    # template filter/global -- Jinja's type stubs don't model
+    # arbitrary-callable globals cleanly, and every other value already
+    # reaches these templates pre-formatted the same way (see e.g.
+    # send_password_reset_email's `count=`).
+    return f"{value.day}. {value.month:02d}. {value.year}"
 
 
 def _format_ymd_timestamp(now: datetime) -> str:
@@ -151,9 +153,15 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
     else:
         with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.ehlo()
-            if server.has_extn("STARTTLS"):
-                server.starttls()
-                server.ehlo()
+            if not server.has_extn("STARTTLS"):
+                msg_text = (
+                    f"SMTP server {smtp_host}:{smtp_port} does not offer "
+                    "STARTTLS -- refusing to send credentials and mail in "
+                    "plaintext."
+                )
+                raise RuntimeError(msg_text)
+            server.starttls()
+            server.ehlo()
             if settings.smtp_user.lower() != "null":
                 server.login(settings.smtp_user, settings.smtp_password)
             server.sendmail(from_email, recipients, msg.as_string())

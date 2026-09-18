@@ -31,7 +31,7 @@ class PerformanceRehearsal(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("performances.id", ondelete="CASCADE")
+        ForeignKey("performances.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     schedule: Mapped[datetime] = mapped_column(DateTime())
     comment: Mapped[str | None]

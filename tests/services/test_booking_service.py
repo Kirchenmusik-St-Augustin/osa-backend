@@ -262,6 +262,18 @@ def _qualify(
     )
 
 
+class TestCastMemberInputSchema:
+    def test_rejects_out_of_range_fee(self):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+            CastMemberInput(id=uuid.uuid4(), fee=1000)
+
+
+class TestSendMessageRequestSchema:
+    def test_rejects_oversized_message(self):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(max_length=2000)
+            SendMessageRequest(recipient_ids=[uuid.uuid4()], message="x" * 2001)
+
+
 class TestUserBookingStatus:
     def test_status_0_when_not_qualified_for_any_needed_position(
         self, db_session: Session, make_user

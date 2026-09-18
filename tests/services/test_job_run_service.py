@@ -2,14 +2,15 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from app.db.models.job_run import JobRun
 from app.services import job_run_service
 from app.services.job_run_service import get_latest_run_per_job, record_job_run
 
 if TYPE_CHECKING:
-    import pytest
     from sqlalchemy.orm import Session
 
 
@@ -47,8 +48,9 @@ class TestRecordJobRun:
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):
         def failing_session_local() -> None:
-            msg = "connection refused"
-            raise RuntimeError(msg)
+            statement = "connection"
+            orig = Exception("connection refused")
+            raise OperationalError(statement, {}, orig)
 
         monkeypatch.setattr(job_run_service, "SessionLocal", failing_session_local)
 
@@ -58,6 +60,21 @@ class TestRecordJobRun:
             )
 
         assert "failed to record job run" in caplog.text.lower()
+
+    def test_a_non_db_bug_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch):
+        # Only SQLAlchemyError is best-effort-observability territory -- a
+        # genuine programming bug elsewhere in this function must still
+        # surface instead of being silently logged away with it.
+        def failing_session_local() -> None:
+            msg = "not a DB problem"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(job_run_service, "SessionLocal", failing_session_local)
+
+        with pytest.raises(RuntimeError, match="not a DB problem"):
+            record_job_run(
+                "backup_koofr", datetime.now(UTC), status="failure", output="boom"
+            )
 
 
 class TestGetLatestRunPerJob:

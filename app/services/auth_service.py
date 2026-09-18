@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, NoReturn
+from typing import TYPE_CHECKING, Literal, NoReturn, cast
 from urllib.parse import urlencode
 
 import jwt
@@ -464,23 +464,43 @@ class OauthBindingNotFoundError(Exception):
     the router maps both cases to an identical 404 (no ID enumeration)."""
 
 
-def _verify_google_id_token(credential: str) -> dict[str, Any]:
+def _verify_google_id_token(credential: str) -> JsonObject:
     settings = get_settings()
     client_id = require_setting(settings.google_client_id, "GOOGLE_CLIENT_ID")
     try:
-        return dict(
-            google_id_token.verify_oauth2_token(
-                credential, google_requests.Request(), client_id
-            )
+        # google-auth's verify_oauth2_token() is untyped (effectively
+        # returns Any) -- cast at this boundary once, then narrow each
+        # claim we actually read through _string_claim() below.
+        return cast(
+            "JsonObject",
+            dict(
+                google_id_token.verify_oauth2_token(
+                    credential, google_requests.Request(), client_id
+                )
+            ),
         )
     except ValueError:
         msg = "Ungültiger oder abgelaufener Google-Token."
         raise ValueError(msg) from None
 
 
+def _string_claim(payload: JsonObject, key: str, *, default: str | None = None) -> str:
+    """Type-narrows one claim of a decoded Google ID token into a genuine,
+    runtime-checked str. Raises if the claim is absent or not a string and
+    no default is given -- Google's own verification guarantees standard
+    claims are well-formed, but the type checker has no way to know that."""
+    value = payload.get(key)
+    if isinstance(value, str):
+        return value
+    if default is not None:
+        return default
+    msg = f"Google-ID-Token-Claim {key!r} fehlt oder ist kein String."
+    raise ValueError(msg)
+
+
 def authenticate_google_user(db: Session, credential: str) -> User:
     id_info = _verify_google_id_token(credential)
-    google_id = id_info["sub"]
+    google_id = _string_claim(id_info, "sub")
 
     binding = db.execute(
         select(Oauth2Binding).where(
@@ -514,8 +534,8 @@ def link_google_account(
         raise ValueError(msg)
 
     id_info = _verify_google_id_token(credential)
-    google_id = id_info["sub"]
-    google_name = id_info.get("name", "")
+    google_id = _string_claim(id_info, "sub")
+    google_name = _string_claim(id_info, "name", default="")
 
     existing = db.execute(
         select(Oauth2Binding).where(

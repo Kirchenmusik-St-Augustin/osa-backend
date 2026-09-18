@@ -61,13 +61,13 @@ class OrdinariumworkPosition(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     ordinariumwork_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("ordinariumworks.id", ondelete="CASCADE")
+        ForeignKey("ordinariumworks.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     instrument_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("instruments.id", ondelete="RESTRICT")
+        ForeignKey("instruments.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     voice_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("voices.id", ondelete="RESTRICT")
+        ForeignKey("voices.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     quantity: Mapped[int]
     created_at: Mapped[datetime | None] = mapped_column(

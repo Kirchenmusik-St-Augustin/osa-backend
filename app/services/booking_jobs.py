@@ -16,7 +16,7 @@ that actually invokes these functions.
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.core import mailer
 from app.core.datetime_utils import local_now
@@ -104,6 +104,25 @@ def _latest_unnotified_entries(
     return result
 
 
+def _capture_entry_data_before_any_commit(
+    entries_by_user: dict[uuid.UUID, list[tuple[uuid.UUID, BookingLog]]],
+) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, list[uuid.UUID]]]:
+    """Reads entry.id/entry.booking_type once, before
+    mailer.send_booking_status_email()'s own internal db.commit() (see
+    _log_sent_email) expires every object in the session's identity map --
+    reading either attribute again afterwards would force one extra
+    refresh SELECT per entry, scaling with the number of notify-worthy
+    entries (found live while adding this module's query-count regression
+    test)."""
+    booking_type_by_entry_id: dict[uuid.UUID, str] = {}
+    entry_ids_by_user: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for user_id, pairs in entries_by_user.items():
+        entry_ids_by_user[user_id] = [entry.id for _performance_id, entry in pairs]
+        for _performance_id, entry in pairs:
+            booking_type_by_entry_id[entry.id] = entry.booking_type
+    return booking_type_by_entry_id, entry_ids_by_user
+
+
 def notify_upcoming_booking_status() -> None:
     """Port of `BookingLog::checkNotificationForUpcomingPerformances()` --
     one `BookingStatus` mail per user, bundling every not-yet-notified
@@ -144,6 +163,10 @@ def notify_upcoming_booking_status() -> None:
         if not entries_by_user:
             return
 
+        booking_type_by_entry_id, entry_ids_by_user = (
+            _capture_entry_data_before_any_commit(entries_by_user)
+        )
+
         users_by_id = {
             user.id: user
             for user in db.execute(
@@ -152,15 +175,29 @@ def notify_upcoming_booking_status() -> None:
             .scalars()
             .all()
         }
-        performance_details = {
-            performance_id: performance_service.get_performance_detail(
-                db, performance_id
+        # N+1-safe: one query for the Performance rows themselves, then
+        # performance_service's shared batch loader for
+        # Location/Ordinariumwork/Artist -- a fixed number of queries
+        # regardless of how many performances are involved, instead of
+        # get_performance_detail()'s ~5 queries PER performance_id (same
+        # loader booking_service.py uses for its own performance listing).
+        needed_performance_ids = {
+            performance_id
+            for pairs in entries_by_user.values()
+            for performance_id, _entry in pairs
+        }
+        performances = (
+            db.execute(
+                select(Performance).where(Performance.id.in_(needed_performance_ids))
             )
-            for performance_id in {
-                performance_id
-                for pairs in entries_by_user.values()
-                for performance_id, _entry in pairs
-            }
+            .scalars()
+            .all()
+        )
+        performance_batch = performance_service.load_performance_batch_data(
+            db, performances
+        )
+        schedule_by_performance = {
+            performance.id: performance.schedule for performance in performances
         }
 
         now = datetime.now(UTC)
@@ -170,25 +207,36 @@ def notify_upcoming_booking_status() -> None:
                 continue
             mail_entries = [
                 mailer.BookingStatusMailEntry(
-                    ordinariumwork_artist_name=performance_details[
+                    ordinariumwork_artist_name=performance_batch[
                         performance_id
                     ].ordinariumwork_artist_name,
-                    ordinariumwork_name=performance_details[
+                    ordinariumwork_name=performance_batch[
                         performance_id
                     ].ordinariumwork_name,
-                    schedule=performance_details[performance_id].schedule,
-                    location_name=performance_details[performance_id].location.name,
-                    location_address=performance_details[
-                        performance_id
-                    ].location.address,
+                    schedule=schedule_by_performance[performance_id],
+                    location_name=performance_batch[performance_id].location.name,
+                    location_address=performance_batch[performance_id].location.address,
                     user_name=f"{user.surname}, {user.givenname}",
-                    booked=entry.booking_type == "book",
+                    booked=booking_type_by_entry_id[entry.id] == "book",
                 )
                 for performance_id, entry in pairs
             ]
             mailer.send_booking_status_email(user.email, mail_entries)
-            for _performance_id, entry in pairs:
-                entry.notified_at = now
+            # Bulk UPDATE by id instead of assigning entry.notified_at on
+            # each (by now possibly session-expired) ORM object -- avoids
+            # the same per-entry refresh-SELECT the booking_type capture
+            # above avoids, and collapses what would be one UPDATE per
+            # entry into one per user. synchronize_session=False: none of
+            # these BookingLog objects are read again in this function, so
+            # there is nothing to keep in sync -- without it, the ORM's
+            # default "auto" strategy falls back to a per-row SELECT before
+            # the UPDATE to figure out which loaded objects to refresh.
+            db.execute(
+                update(BookingLog)
+                .where(BookingLog.id.in_(entry_ids_by_user[user_id]))
+                .values(notified_at=now)
+                .execution_options(synchronize_session=False)
+            )
         db.commit()
     finally:
         db.close()

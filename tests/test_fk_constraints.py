@@ -463,3 +463,82 @@ class TestUserRolesOndelete:
             .all()
         )
         assert remaining == []
+
+
+class TestOnUpdateForeignKeys:
+    """The ON UPDATE hardening slice (2026-09): every FK constraint in the
+    schema now carries an explicit `onupdate=` mirroring its own
+    `ondelete=` -- previously defaulted to Postgres's NO ACTION. UUIDv7
+    primary keys are never actually updated by any application code (see
+    app.db.uuid_pk), so this is a defense-in-depth rule-compliance fix,
+    not a live behavioral concern -- these three representative columns
+    (one per RESTRICT/CASCADE/SET NULL shape, covering the same three
+    cases as the ON DELETE classes above) exercise it directly via a raw
+    UPDATE of the parent's primary key, the only way to actually trigger
+    ON UPDATE at all."""
+
+    def test_updating_a_referenced_location_id_is_rejected(self, db_session: Session):
+        location = _make_location(db_session)
+        ordinariumwork = _make_ordinariumwork(db_session)
+        db_session.add(
+            Performance(
+                schedule=datetime(2099, 1, 1, 12, 0, 0),  # noqa: DTZ001
+                location_id=location.id,
+                ordinariumwork_id=ordinariumwork.id,
+            )
+        )
+        db_session.flush()
+
+        with pytest.raises(IntegrityError, match="foreign key constraint"):
+            db_session.execute(
+                text("UPDATE locations SET id = :new_id WHERE id = :id"),
+                {"new_id": uuid.uuid4(), "id": location.id},
+            )
+        db_session.rollback()
+
+    def test_updating_an_ordinariumwork_id_cascades_to_its_positions(
+        self, db_session: Session
+    ):
+        ordinariumwork = _make_ordinariumwork(db_session)
+        instrument = _make_instrument(db_session)
+        position = OrdinariumworkPosition(
+            ordinariumwork_id=ordinariumwork.id, instrument_id=instrument.id, quantity=1
+        )
+        db_session.add(position)
+        db_session.flush()
+
+        new_id = uuid.uuid4()
+        db_session.execute(
+            text("UPDATE ordinariumworks SET id = :new_id WHERE id = :id"),
+            {"new_id": new_id, "id": ordinariumwork.id},
+        )
+        db_session.commit()
+        db_session.expire(position)
+
+        assert position.ordinariumwork_id == new_id
+
+    def test_updating_a_performance_id_nulls_out_booking_log_performance_id(
+        self, db_session: Session, make_user: Callable[..., User]
+    ):
+        performance = _make_performance(db_session)
+        user = make_user()
+        instrument = _make_instrument(db_session)
+        log = BookingLog(
+            performance_id=performance.id,
+            user_id=user.id,
+            booking_type="book",
+            instrument_id=instrument.id,
+            fee=0,
+        )
+        db_session.add(log)
+        db_session.flush()
+
+        db_session.execute(
+            text("UPDATE performances SET id = :new_id WHERE id = :id"),
+            {"new_id": uuid.uuid4(), "id": performance.id},
+        )
+        db_session.commit()
+        db_session.expire(log)
+
+        assert log.performance_id is None
+        assert log.user_id == user.id

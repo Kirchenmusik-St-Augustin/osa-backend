@@ -81,10 +81,12 @@ podman exec osa-backend alembic revision --autogenerate -m "describe the change"
 
 Always review the generated migration before committing it — autogenerate
 can miss things Alembic doesn't detect on its own (renamed columns,
-some constraint changes). The current schema is still a structural 1:1
-transfer of the legacy schema (same tables/columns/types) — a real
-Postgres schema redesign (UUID PKs, native enums, CHECK constraints,
-audit triggers, ...) is a separate, not-yet-started step.
+some constraint changes). The schema has already gone through a full
+Postgres redesign (UUIDv7 primary keys, native enums, CHECK constraints,
+FK constraints with explicit ON DELETE/UPDATE strategies, TIMESTAMPTZ
+columns, a shared `updated_at` trigger function, ...) — new migrations
+should follow that established style rather than the legacy schema's
+original shape.
 
 ## Environment Variables
 
@@ -300,10 +302,12 @@ podman exec osa-backend alembic revision --autogenerate -m "Änderung beschreibe
 
 Die generierte Migration immer vor dem Committen durchlesen — Autogenerate
 erkennt nicht alles zuverlässig selbst (umbenannte Spalten, manche
-Constraint-Änderungen). Das aktuelle Schema ist weiterhin ein struktureller
-1:1-Übertrag des Legacy-Schemas (gleiche Tabellen/Spalten/Typen) — ein
-echtes Postgres-Schema-Redesign (UUID-PKs, native Enums, CHECK-Constraints,
-Audit-Trigger, ...) ist ein separater, noch nicht begonnener Schritt.
+Constraint-Änderungen). Das Schema hat bereits ein vollständiges
+Postgres-Redesign durchlaufen (UUIDv7-Primärschlüssel, native Enums,
+CHECK-Constraints, FK-Constraints mit expliziten ON-DELETE/UPDATE-
+Strategien, TIMESTAMPTZ-Spalten, eine gemeinsame `updated_at`-Trigger-
+Funktion, ...) — neue Migrationen sollten sich an diesem etablierten Stil
+orientieren statt an der ursprünglichen Form des Legacy-Schemas.
 
 ## Umgebungsvariablen
 

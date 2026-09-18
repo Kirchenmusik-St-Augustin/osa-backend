@@ -45,10 +45,10 @@ class PerformanceRequest(StrictInputModel):
     ordinariumwork_id: LenientUuid
     artist_id: LenientUuid | None = None
     description: str | None = None
-    choirjob_defaultfee: int = Field(ge=0)
-    instrument_defaultfee: int = Field(ge=0)
-    voice_defaultfee: int = Field(ge=0)
-    extracost_amount: int | None = Field(default=None, ge=0)
+    choirjob_defaultfee: int = Field(ge=0, le=999)
+    instrument_defaultfee: int = Field(ge=0, le=999)
+    voice_defaultfee: int = Field(ge=0, le=999)
+    extracost_amount: int | None = Field(default=None, ge=0, le=999)
     extracost_description: str | None = None
     setup: PerformanceSetupInput
     proprium: list[PerformancePropriumEntryInput] = Field(default_factory=list)

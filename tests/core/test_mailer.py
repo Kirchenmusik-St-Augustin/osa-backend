@@ -31,8 +31,11 @@ def test_format_ymd_timestamp():
     assert mailer._format_ymd_timestamp(now) == "2026-03-05 09:07"
 
 
-def test_format_short_date_has_no_leading_zeros():
-    assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 3. 2026"
+def test_format_short_date_pads_month_but_not_day():
+    # PHP's `j. m. Y` (Legacy's own format string): day without leading
+    # zeros, month WITH leading zeros -- a single-digit month must not be
+    # conflated with the day's no-padding rule.
+    assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 03. 2026"
 
 
 def test_format_notification_timestamp_has_no_leading_zeros():
@@ -239,17 +242,24 @@ def test_send_message_uses_starttls_when_available(monkeypatch: pytest.MonkeyPat
     assert mock_server.ehlo.call_count == 2
 
 
-def test_send_message_skips_starttls_when_unavailable(monkeypatch: pytest.MonkeyPatch):
+def test_send_message_refuses_to_send_when_starttls_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Silently falling back to plaintext would leak SMTP login credentials
+    # (and the mail body) to anyone on the network path -- a server that
+    # stops offering STARTTLS must fail the send, not degrade quietly.
     monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
     monkeypatch.setenv("SMTP_PORT", "587")
 
     with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
         mock_server = mock_smtp.return_value.__enter__.return_value
         mock_server.has_extn.return_value = False
-        mailer._send_message(MagicMock(), ["a@example.test"])
+        with pytest.raises(RuntimeError, match="STARTTLS"):
+            mailer._send_message(MagicMock(), ["a@example.test"])
 
     mock_server.starttls.assert_not_called()
-    assert mock_server.ehlo.call_count == 1
+    mock_server.login.assert_not_called()
+    mock_server.sendmail.assert_not_called()
 
 
 def test_send_message_skips_login_when_user_is_null_sentinel(
@@ -261,7 +271,7 @@ def test_send_message_skips_login_when_user_is_null_sentinel(
 
     with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
         mock_server = mock_smtp.return_value.__enter__.return_value
-        mock_server.has_extn.return_value = False
+        mock_server.has_extn.return_value = True
         mailer._send_message(MagicMock(), ["a@example.test"])
 
     mock_server.login.assert_not_called()

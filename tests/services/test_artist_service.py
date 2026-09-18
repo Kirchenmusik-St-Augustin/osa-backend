@@ -99,13 +99,12 @@ class TestCreateArtist:
 
         assert (artist.surname, artist.givenname) == ("MUSTER", "Mary Jane")
 
-    def test_rejects_short_surname(self, db_session: Session):
-        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
-            artist_service.create_artist(db_session, _request(surname="ab"))
-
-        assert exc_info.value.errors == [
-            ("surname", "Muss zwischen 3 und 32 Zeichen lang sein.")
-        ]
+    def test_rejects_short_surname(self):
+        # Now caught by ArtistRequest's own Field(min_length=3) before the
+        # service's _validate() ever runs -- the schema boundary was
+        # tightened to match the service's pre-existing 3-32 constant.
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+            _request(surname="ab")
 
     def test_rejects_duplicate_surname_givenname_combination(self, db_session: Session):
         surname, givenname = _unique("Dup"), _unique("Licate")

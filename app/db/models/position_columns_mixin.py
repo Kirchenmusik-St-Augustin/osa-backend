@@ -29,11 +29,11 @@ class PositionColumns:
     instruments/voices/choirjobs' own primary key type."""
 
     instrument_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("instruments.id", ondelete="RESTRICT")
+        ForeignKey("instruments.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     voice_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("voices.id", ondelete="RESTRICT")
+        ForeignKey("voices.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     choirjob_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("choirjobs.id", ondelete="RESTRICT")
+        ForeignKey("choirjobs.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )

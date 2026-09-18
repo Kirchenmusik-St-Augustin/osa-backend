@@ -16,10 +16,10 @@ class OrdinariumworkSetupInput(StrictInputModel):
 
 
 class OrdinariumworkRequest(StrictInputModel):
-    name: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=3, max_length=60)
     description: str | None = None
     artist_id: LenientUuid
-    duration: int | None = None
+    duration: int | None = Field(default=None, ge=0, le=999)
     demanding: bool = False
     setup: OrdinariumworkSetupInput
 

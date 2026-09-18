@@ -275,7 +275,9 @@ def _register_sync(data: RegisterRequest, db: Session) -> tuple[User, str, str, 
 
 
 @auth_router.post("/register")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 async def register(
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
     data: RegisterRequest,
     db: Annotated[Session, Depends(get_db)],
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
@@ -347,8 +349,11 @@ async def resend_verification_email(
 
 
 @auth_router.post("/verify-email")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def verify_email(
-    data: VerifyEmailRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: VerifyEmailRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
     """Self-contained via the token alone (no prior login required) --
     the token already encodes+signs the target user, playing the same
@@ -384,7 +389,9 @@ def _forgot_password_sync(data: ForgotPasswordRequest, db: Session) -> str | Non
 
 
 @auth_router.post("/forgot-password")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 async def forgot_password(
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
     data: ForgotPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
     arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
@@ -412,8 +419,11 @@ async def forgot_password(
 
 
 @auth_router.post("/reset-password")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def reset_password(
-    data: ResetPasswordRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: ResetPasswordRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
     try:
         auth_service.execute_password_reset(db, data.email, data.token, data.password)
@@ -426,8 +436,11 @@ def reset_password(
 
 
 @auth_router.post("/google/callback")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def google_callback(
-    data: GoogleCallbackRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: GoogleCallbackRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
     """Direct login via an existing Google binding. No Legacy-equivalent
     redirect/callback dance (Socialite's server-side OAuth code exchange
@@ -455,8 +468,11 @@ def google_callback(
 
 
 @auth_router.post("/google/link")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def google_link(
-    data: GoogleLinkRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: GoogleLinkRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
     try:
         user = auth_service.link_google_account(

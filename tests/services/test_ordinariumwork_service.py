@@ -175,18 +175,21 @@ class TestCreateOrdinariumwork:
         assert response.artist_id == artist.id
         assert response.artist_name == "MOZART, Wolfgang"
 
-    def test_rejects_short_name(self, db_session: Session):
-        artist_id = _make_artist(db_session)
-        with pytest.raises(
-            ordinariumwork_service.OrdinariumworkValidationError
-        ) as exc_info:
-            ordinariumwork_service.create_ordinariumwork(
-                db_session, _request(artist_id, name="ab")
-            )
+    def test_rejects_short_name(self):
+        # Now caught by OrdinariumworkRequest's own Field(min_length=3)
+        # before the service's _validate() ever runs -- the schema
+        # boundary was tightened to match the service's pre-existing
+        # 3-60 constant.
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+            _request(uuid.uuid4(), name="ab")
 
-        assert exc_info.value.errors == [
-            ("name", "Muss zwischen 3 und 60 Zeichen lang sein.")
-        ]
+    def test_rejects_out_of_range_duration(self):
+        # Same tightening as test_rejects_short_name, for
+        # OrdinariumworkRequest's new Field(le=999) -- the service-level
+        # 0-999 constant was previously unenforced (and untested) at the
+        # schema boundary.
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+            _request(uuid.uuid4(), duration=1000)
 
     def test_rejects_unknown_artist(self, db_session: Session):
         with pytest.raises(

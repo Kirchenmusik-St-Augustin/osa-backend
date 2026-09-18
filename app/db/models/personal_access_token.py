@@ -52,7 +52,7 @@ class PersonalAccessToken(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
+        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     name: Mapped[str]  # e.g. "session"
     token: Mapped[str]  # JWT-ID (jti)

@@ -37,10 +37,10 @@ class UserRole(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
+        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     role_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("roles.id", ondelete="RESTRICT")
+        ForeignKey("roles.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

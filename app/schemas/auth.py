@@ -70,7 +70,7 @@ class GoogleCallbackRequest(StrictInputModel):
 class GoogleLinkRequest(StrictInputModel):
     credential: str
     email: EmailStr
-    password: str
+    password: str = Field(max_length=128)
 
 
 class EmailKillSwitchStatusOutput(BaseModel):

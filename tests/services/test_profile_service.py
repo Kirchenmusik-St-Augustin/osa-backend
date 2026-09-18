@@ -91,6 +91,10 @@ class TestSchemaValidation:
         with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=1)
             _request(auth_password="")
 
+    def test_oversized_auth_password_is_rejected(self):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(max_length=128)
+            _request(auth_password="x" * 129)
+
 
 class TestUpdateProfile:
     def test_wrong_current_password_is_rejected(self, db_session: Session, make_user):

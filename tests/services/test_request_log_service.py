@@ -3,8 +3,10 @@ from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.orm import sessionmaker
 
+from app.db.database import engine
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import RequestLog
 from app.services import request_log_service
@@ -63,6 +65,13 @@ class TestRedact:
             {"access_token": "eyJhbGciOi...", "token_type": "bearer"}
         )
         assert result == {"access_token": "__removed__", "token_type": "bearer"}
+
+    def test_masks_the_newpw_field_from_the_set_password_response(self):
+        # UserAdministrationActionResponse.newpw carries the plaintext
+        # password an admin just set for another user -- must never reach
+        # request_logs unredacted.
+        result = request_log_service.redact({"user": {"id": "..."}, "newpw": "S3cr3t!"})
+        assert result == {"user": {"id": "..."}, "newpw": "__removed__"}
 
     def test_matches_keys_case_insensitively(self):
         result = request_log_service.redact({"Authorization": "Bearer xyz"})
@@ -172,6 +181,59 @@ class TestRecordRequest:
             .all()
         )
         assert len(matches) == 1
+
+    def test_get_or_create_client_user_agent_survives_a_concurrent_insert_race(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Reproduces the TOCTOU race deterministically, no real threads
+        needed: a genuinely independent session (own connection, own
+        transaction) commits a row for the same brand-new
+        user_agent_string strictly between this function's own initial
+        SELECT (finds nothing) and its INSERT -- exactly what a truly
+        concurrent request racing on the same new string would do. The
+        client_user_agents.string UNIQUE constraint rejects the INSERT for
+        real; the fallback re-SELECT must return the other session's
+        already-committed row instead of raising."""
+        user_agent_string = _unique("Race-Agent")
+        other_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
+        real_flush = db_session.flush
+        winner_committed = False
+
+        def _flush_after_a_concurrent_winner_commits() -> None:
+            # Session.begin_nested() itself issues one flush() on entry
+            # (flushing whatever's pending before the SAVEPOINT is taken)
+            # in addition to this function's own explicit db.flush() call
+            # -- guarded so the "concurrent winner" only ever commits once,
+            # on whichever of those two calls happens first.
+            nonlocal winner_committed
+            if not winner_committed:
+                winner_committed = True
+                other_session.add(ClientUserAgent(string=user_agent_string))
+                other_session.commit()
+            real_flush()
+
+        monkeypatch.setattr(
+            db_session, "flush", _flush_after_a_concurrent_winner_commits
+        )
+
+        try:
+            result_id = request_log_service._get_or_create_client_user_agent(
+                db_session, user_agent_string
+            )
+            winner_id = other_session.execute(
+                select(ClientUserAgent.id).where(
+                    ClientUserAgent.string == user_agent_string
+                )
+            ).scalar_one()
+            assert result_id == winner_id
+        finally:
+            other_session.execute(
+                delete(ClientUserAgent).where(
+                    ClientUserAgent.string == user_agent_string
+                )
+            )
+            other_session.commit()
+            other_session.close()
 
     def test_leaves_client_user_agent_id_null_without_a_user_agent_header(
         self, db_session: Session

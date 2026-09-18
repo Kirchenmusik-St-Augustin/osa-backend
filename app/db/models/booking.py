@@ -91,10 +91,10 @@ class Booking(PositionColumns, Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("performances.id", ondelete="RESTRICT")
+        ForeignKey("performances.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT")
+        ForeignKey("users.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     order: Mapped[int] = mapped_column("sort_order", default=0)
     fee: Mapped[int]

@@ -26,11 +26,14 @@ class RoleWithContactsOutput(BaseModel):
 
 
 class MessageToContactpersonRequest(StrictInputModel):
-    """1:1 Legacy's `MessageToContactpersonRequest` rules (`'message' =>
-    ['required', 'min:3']`) -- `recipient_id` is required here (unlike
-    Legacy's own unvalidated-if-absent `exists:` rule, see
-    support_service.send_message_to_contactperson's docstring for why that
-    Legacy quirk is not worth replicating literally)."""
+    """Legacy's `MessageToContactpersonRequest` rules (`'message' =>
+    ['required', 'min:3']`), plus an upper bound Legacy itself never had:
+    the message is embedded unmodified into an email body, so a
+    max_length caps how much text a single request can push through the
+    mail pipeline. `recipient_id` is required here (unlike Legacy's own
+    unvalidated-if-absent `exists:` rule, see
+    support_service.send_message_to_contactperson's docstring for why
+    that Legacy quirk is not worth replicating literally)."""
 
     recipient_id: LenientUuid
-    message: str = Field(min_length=3)
+    message: str = Field(min_length=3, max_length=2000)

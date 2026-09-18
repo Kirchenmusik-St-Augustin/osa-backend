@@ -31,6 +31,7 @@ from app.db.database import engine
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
+from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.fee import Fee
 from app.db.models.instrument import Instrument
 from app.db.models.job_run import JobRun
@@ -723,6 +724,50 @@ class TestUpdatedAtTrigger:
 
         assert user_role.updated_at is not None
         assert user_role.updated_at > old_updated_at
+
+
+class TestClientUserAgentTimestamps:
+    """client_user_agents was the only table in the schema with no
+    created_at/updated_at at all -- a small follow-up migration (2026-09,
+    after the FK-onupdate= hardening slice) added both, same TIMESTAMPTZ +
+    set_updated_at() trigger convention as every other table, applied
+    retroactively to an already-populated table rather than at table
+    creation time like the tables TestUpdatedAtTrigger above covers."""
+
+    def test_trigger_exists(self, db_session: Session):
+        rows = db_session.execute(
+            text(
+                "SELECT trigger_name FROM information_schema.triggers "
+                "WHERE event_object_table = 'client_user_agents' "
+                "AND trigger_name = 'set_updated_at'"
+            )
+        ).all()
+        assert len(rows) == 1
+
+    def test_updated_at_is_null_immediately_after_insert(self, db_session: Session):
+        agent = ClientUserAgent(string="schema-hardening-probe/1.0")
+        db_session.add(agent)
+        db_session.flush()
+        db_session.expire(agent)
+        assert agent.created_at is not None
+        assert agent.updated_at is None
+
+    def test_bare_update_advances_updated_at(self, db_session: Session):
+        old_updated_at = datetime(2020, 1, 1, tzinfo=UTC)
+        agent = ClientUserAgent(
+            string="schema-hardening-probe/2.0",
+            created_at=old_updated_at,
+            updated_at=old_updated_at,
+        )
+        db_session.add(agent)
+        db_session.flush()
+
+        agent.string = "schema-hardening-probe/2.1"  # never touches .updated_at
+        db_session.flush()
+        db_session.expire(agent)
+
+        assert agent.updated_at is not None
+        assert agent.updated_at > old_updated_at
 
 
 class TestLegacyIntBridgeColumnsDropped:

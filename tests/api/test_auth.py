@@ -684,6 +684,21 @@ def test_google_link_rejects_wrong_password(
     assert response.status_code == 401
 
 
+def test_google_link_rejects_oversized_password(client, make_user):
+    user = make_user(password="correct-password", email=_com_email())
+
+    response = client.post(
+        "/auth/google/link",
+        json={
+            "credential": "fake-credential",
+            "email": user.email,
+            "password": "x" * 129,
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_oauth2_disconnect_removes_own_binding(
     client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
 ):
@@ -773,3 +788,76 @@ def test_oauth2_disconnect_requires_authentication(client):
     response = client.delete("/auth/oauth2/1")
 
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting -- forgot-password/register/reset-password/verify-email/
+# google endpoints had no @limiter.limit(...) at all (unlike /refresh and
+# /resend-verification-email), making forgot-password in particular a clean
+# unauthenticated email-bombing vector against any address.
+# ---------------------------------------------------------------------------
+
+
+def test_forgot_password_verify_email_and_reset_password_are_rate_limited(client):
+    cases = [
+        ("/auth/forgot-password", {"email": "nobody@example.com"}),
+        ("/auth/verify-email", {"token": "not-a-real-token"}),
+        (
+            "/auth/reset-password",
+            {
+                "email": "nobody@example.com",
+                "token": "bogus-token",
+                "password": "Passw0rd1",
+                "password_confirmation": "Passw0rd1",
+            },
+        ),
+    ]
+    for path, payload in cases:
+        for _ in range(5):
+            response = client.post(path, json=payload)
+            assert response.status_code != 429
+        blocked = client.post(path, json=payload)
+        assert blocked.status_code == 429
+
+
+def test_register_is_rate_limited(client, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    payload = _registration_payload()
+
+    for _ in range(5):
+        # First call succeeds (200); the rest hit the duplicate-email
+        # rejection (422) -- both still count against the limiter, which
+        # counts requests reaching the endpoint, not just successful ones.
+        response = client.post("/auth/register", json=payload)
+        assert response.status_code != 429
+
+    blocked = client.post("/auth/register", json=payload)
+    assert blocked.status_code == 429
+
+
+def test_google_callback_and_link_are_rate_limited(
+    client, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    callback_payload = {"credential": "fake-credential"}
+    link_payload = {
+        "credential": "fake-credential",
+        "email": "nobody@example.com",
+        "password": "irrelevant",
+    }
+
+    with patch(
+        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        return_value={"sub": "google-rate-limit-test", "name": "Nobody"},
+    ):
+        for _ in range(5):
+            response = client.post("/auth/google/callback", json=callback_payload)
+            assert response.status_code != 429
+        blocked_callback = client.post("/auth/google/callback", json=callback_payload)
+        assert blocked_callback.status_code == 429
+
+        for _ in range(5):
+            response = client.post("/auth/google/link", json=link_payload)
+            assert response.status_code != 429
+        blocked_link = client.post("/auth/google/link", json=link_payload)
+        assert blocked_link.status_code == 429

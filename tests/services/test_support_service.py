@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
 from sqlalchemy import delete
 
 from app.db.models.user_role import UserRole
@@ -116,6 +117,10 @@ class TestSendMessageToContactperson:
         self, *, recipient_id: uuid.UUID, message: str = "Bitte um Rückruf."
     ) -> MessageToContactpersonRequest:
         return MessageToContactpersonRequest(recipient_id=recipient_id, message=message)
+
+    def test_rejects_oversized_message(self):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(max_length=2000)
+            self._data(recipient_id=uuid.uuid4(), message="x" * 2001)
 
     def test_returns_email_sender_and_message_for_verified_recipient(
         self, db_session: Session, make_user

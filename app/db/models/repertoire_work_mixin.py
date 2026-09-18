@@ -32,7 +32,7 @@ class RepertoireWorkColumns:
     description: Mapped[str | None]
     demanding: Mapped[bool] = mapped_column(default=False)
     artist_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("artists.id", ondelete="RESTRICT")
+        ForeignKey("artists.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     duration: Mapped[int | None]
     created_at: Mapped[datetime | None] = mapped_column(
