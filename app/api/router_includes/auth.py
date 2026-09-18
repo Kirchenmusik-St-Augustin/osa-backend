@@ -1,21 +1,18 @@
 import uuid
 from math import ceil
 from typing import Annotated
-from urllib.parse import urlencode
 
-from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_guards import get_verified_user
 from app.api.deps import get_current_user, oauth2_scheme
 from app.api.error_responses import field_errors_to_detail
+from app.api.job_queue import JobQueue, get_job_queue
 from app.core import mailer
-from app.core.arq_pool import get_arq_pool
-from app.core.config import get_settings, require_setting
+from app.core.config import get_settings
 from app.core.rate_limit import limiter
 from app.core.redacted import Redacted
 from app.core.security import (
@@ -256,27 +253,13 @@ def get_current_user_profile(
     )
 
 
-def _register_sync(data: RegisterRequest, db: Session) -> tuple[User, str, str, str]:
-    """Original synchronous handler body, logic unchanged -- extracted so
-    the async router function below can run it via run_in_threadpool
-    instead of executing this blocking DB code directly on the event loop.
-    Lets RegistrationConflictError propagate uncaught -- run_in_threadpool
-    re-raises it in the calling (async) context, where the router's own
-    try/except below turns it into a 422 response, exactly as before."""
-    user = auth_service.register_user(db, data)
-    access_token, session_id, refresh_secret = auth_service.create_user_session(
-        db, user
-    )
-    return user, access_token, session_id, refresh_secret
-
-
 @auth_router.post("/register")
 @limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
-async def register(
+def register(
     request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
     data: RegisterRequest,
     db: Annotated[Session, Depends(get_db)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> JSONResponse:
     """Register + auto-login right after user creation, then notify the disponent
     address in the background -- registration itself must not wait on (or fail because
@@ -284,8 +267,9 @@ async def register(
     work logged-out), so there is no dependency-ordering concern here, unlike
     resend_verification_email below."""
     try:
-        user, access_token, session_id, refresh_secret = await run_in_threadpool(
-            _register_sync, data, db
+        user = auth_service.register_user(db, data)
+        access_token, session_id, refresh_secret = auth_service.create_user_session(
+            db, user
         )
     except RegistrationConflictError as exc:
         return JSONResponse(
@@ -293,8 +277,8 @@ async def register(
             content={"detail": field_errors_to_detail(exc.errors)},
         )
 
-    await arq_pool.enqueue_job(
-        send_new_registration_notice_task.__name__,
+    job_queue.enqueue(
+        send_new_registration_notice_task,
         surname=user.surname,
         givenname=user.givenname,
         email=data.email.lower(),
@@ -302,39 +286,29 @@ async def register(
     )
     if user.email is not None:
         verify_url = auth_service.build_verification_email_url(user)
-        await arq_pool.enqueue_job(
-            send_verification_email_task.__name__, user.email, Redacted(verify_url)
+        job_queue.enqueue(
+            send_verification_email_task, user.email, Redacted(verify_url)
         )
 
     return _build_login_response(access_token, session_id, refresh_secret)
 
 
-def _resend_verification_email_sync(current_user: User) -> str | None:
-    if current_user.email_verified_at is None and current_user.email is not None:
-        return auth_service.build_verification_email_url(current_user)
-    return None
-
-
 @auth_router.post("/resend-verification-email")
 @limiter.limit("6/minute")  # type: ignore[reportUntypedFunctionDecorator]
-async def resend_verification_email(
+def resend_verification_email(
     request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
     current_user: Annotated[User, Depends(get_current_user)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """Re-sends the verification mail. Deliberately uses get_current_user,
     not get_verified_user -- an unverified user must be able to reach
     exactly this endpoint. Idempotent: no-op (still 200) if already
-    verified. current_user is declared BEFORE
-    arq_pool on purpose: FastAPI resolves Depends() in declaration order,
-    and an invalid/expired bearer token must be rejected (401) before this
-    request ever pays for creating/reusing the ARQ pool connection."""
-    verify_url = await run_in_threadpool(_resend_verification_email_sync, current_user)
-    if verify_url is not None and current_user.email is not None:
-        await arq_pool.enqueue_job(
-            send_verification_email_task.__name__,
-            current_user.email,
-            Redacted(verify_url),
+    verified. current_user is declared BEFORE job_queue on purpose, see
+    get_job_queue."""
+    if current_user.email_verified_at is None and current_user.email is not None:
+        verify_url = auth_service.build_verification_email_url(current_user)
+        job_queue.enqueue(
+            send_verification_email_task, current_user.email, Redacted(verify_url)
         )
     return {
         "status": "ok",
@@ -367,38 +341,24 @@ def verify_email(
     return _build_login_response(access_token, session_id, refresh_secret)
 
 
-def _forgot_password_sync(data: ForgotPasswordRequest, db: Session) -> str | None:
-    """Original synchronous handler body, logic unchanged -- extracted so
-    the async router function below can run it via run_in_threadpool
-    instead of executing this blocking DB code directly on the event loop."""
-    token = auth_service.request_password_reset(db, data.email)
-    if token is None:
-        return None
-    settings = get_settings()
-    base_url = require_setting(
-        settings.frontend_reset_password_url, "FRONTEND_RESET_PASSWORD_URL"
-    )
-    return f"{base_url}?{urlencode({'token': token, 'email': data.email})}"
-
-
 @auth_router.post("/forgot-password")
 @limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
-async def forgot_password(
+def forgot_password(
     request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
     data: ForgotPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """Always responds 200 regardless of whether the email is registered
     -- prevents account enumeration. No auth/permission dependency
     exists on this endpoint (must work logged-out), so unlike
     resend_verification_email above there is no dependency-ordering
-    concern here -- db and arq_pool are the only two dependencies and
+    concern here -- db and job_queue are the only two dependencies and
     neither one rejects the request."""
-    reset_url = await run_in_threadpool(_forgot_password_sync, data, db)
+    reset_url = auth_service.build_password_reset_url(db, data.email)
     if reset_url is not None:
-        await arq_pool.enqueue_job(
-            send_password_reset_email_task.__name__, data.email, Redacted(reset_url)
+        job_queue.enqueue(
+            send_password_reset_email_task, data.email, Redacted(reset_url)
         )
     return {
         "status": "ok",

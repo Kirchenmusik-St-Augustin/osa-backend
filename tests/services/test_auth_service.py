@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs
 
 import jwt
 import pytest
@@ -557,6 +558,45 @@ def test_request_password_reset_creates_token_row(db_session, make_user):
         select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
     ).scalar_one()
     assert row.token == hash_reset_token(token)
+
+
+def test_build_password_reset_url_returns_none_for_unknown_email(
+    db_session, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_RESET_PASSWORD_URL", "https://example.test/reset")
+
+    assert (
+        auth_service.build_password_reset_url(db_session, "nobody@example.test") is None
+    )
+
+
+def test_build_password_reset_url_embeds_stored_token_and_email(
+    db_session, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_RESET_PASSWORD_URL", "https://example.test/reset")
+    user = make_user()
+
+    url = auth_service.build_password_reset_url(db_session, user.email)
+
+    assert url is not None
+    base_url, query = url.split("?", 1)
+    assert base_url == "https://example.test/reset"
+    params = parse_qs(query)
+    assert params["email"] == [user.email]
+    row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
+    ).scalar_one()
+    assert row.token == hash_reset_token(params["token"][0])
+
+
+def test_build_password_reset_url_requires_configured_frontend_url(
+    db_session, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("FRONTEND_RESET_PASSWORD_URL", raising=False)
+    user = make_user()
+
+    with pytest.raises(RuntimeError, match="FRONTEND_RESET_PASSWORD_URL"):
+        auth_service.build_password_reset_url(db_session, user.email)
 
 
 def test_request_password_reset_replaces_previous_token(db_session, make_user):

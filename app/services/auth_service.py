@@ -400,6 +400,18 @@ def request_password_reset(db: Session, email: str) -> str | None:
     return token
 
 
+def build_password_reset_url(db: Session, email: str) -> str | None:
+    """Frontend link for the reset mail, or None if no user owns `email`
+    (see request_password_reset -- same no-enumeration contract)."""
+    token = request_password_reset(db, email)
+    if token is None:
+        return None
+    base_url = require_setting(
+        get_settings().frontend_reset_password_url, "FRONTEND_RESET_PASSWORD_URL"
+    )
+    return f"{base_url}?{urlencode({'token': token, 'email': email})}"
+
+
 def execute_password_reset(
     db: Session, email: str, token: str, new_password: str
 ) -> None:

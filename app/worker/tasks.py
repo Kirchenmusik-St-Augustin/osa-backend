@@ -1,11 +1,10 @@
 """Thin async wrappers around app.core.mailer's send_* functions,
 registered as arq on-demand jobs (WorkerSettings.functions) and enqueued
-from router code that used to call BackgroundTasks.add_task(mailer.send_
-...) directly. Each wrapper's own __name__ is what routers pass to
-ArqRedis.enqueue_job() -- e.g. app/api/router_includes/auth.py's
-forgot_password() enqueues send_password_reset_email_task.__name__.
+from router code via app.api.job_queue.JobQueue.enqueue(). Arq addresses
+each wrapper by its own __name__ -- e.g. app/api/router_includes/auth.py's
+forgot_password() enqueues send_password_reset_email_task.
 
-Every argument passed through enqueue_job() must be picklable (arq's
+Every argument passed through JobQueue.enqueue() must be picklable (arq's
 default job serializer, pickle.dumps -- see arq.jobs.serialize_job) --
 true for every argument below (plain str/list values,
 mailer.BookingCanceledMailEntry, a module-level frozen dataclass, and

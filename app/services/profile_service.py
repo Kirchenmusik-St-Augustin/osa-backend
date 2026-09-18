@@ -46,8 +46,8 @@ def _email_taken(db: Session, email: str, exclude_id: uuid.UUID) -> bool:
 def update_profile(
     db: Session, user: User, data: ProfileUpdateRequest
 ) -> tuple[User, bool]:
-    """Returns (user, email_changed) -- the router decides whether to send
-    a new verification mail (BackgroundTasks needs a request context this
+    """Returns (user, email_changed) -- the router decides whether to enqueue
+    a new verification mail (job queueing needs a request context this
     service deliberately doesn't have), this stays framework-agnostic.
 
     Order: re-auth check (current password) first, then the two

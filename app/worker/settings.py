@@ -1,8 +1,8 @@
 """arq WorkerSettings for the dedicated osa-backend-worker container (see
 osa-deploy's osa-backend-worker Quadlet) -- entry point:
 `arq app.worker.settings.WorkerSettings`. Runs every cron job AND every
-on-demand (former BackgroundTasks) job; the web container never runs
-either of these itself anymore.
+on-demand job the web container enqueues via app.api.job_queue; the web
+container never runs either of these itself.
 """
 
 import logging

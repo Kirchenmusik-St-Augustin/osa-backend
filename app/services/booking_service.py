@@ -122,10 +122,10 @@ class MessageRecipientsEmptyError(Exception):
 
 @dataclass(frozen=True)
 class BookedOrStandbyCanceledNotification:
-    """Everything the router needs to schedule
-    `mailer.send_booked_or_standby_canceled_email` via `BackgroundTasks.
-    add_task(...)` -- kept as plain data so the service layer itself never
-    imports FastAPI (see change_user_request_status)."""
+    """Everything the router needs to enqueue
+    `send_booked_or_standby_canceled_email_task` via `JobQueue.enqueue(...)`
+    -- kept as plain data so the service layer itself never imports FastAPI
+    (see change_user_request_status)."""
 
     disponent_emails: list[str]
     canceling_user_name: str
@@ -1180,11 +1180,11 @@ def _build_canceled_notification(
     db: Session, performance: Performance, user: User, current: BookingStatusOutput
 ) -> BookedOrStandbyCanceledNotification | None:
     """Builds the (recipients, sender name, mail entry) tuple the ROUTER
-    schedules via `BackgroundTasks.add_task(mailer.send_...)` -- returns
-    None if there is nothing to send. The service layer stays framework-
-    agnostic (no FastAPI import), matching every other service module in
-    this codebase (e.g. auth_service.py's request_password_reset(), whose
-    router caller decides whether/how to schedule the background task)."""
+    enqueues via `JobQueue.enqueue(...)` -- returns None if there is
+    nothing to send. The service layer stays framework-agnostic (no FastAPI
+    import), matching every other service module in this codebase (e.g.
+    auth_service.py's request_password_reset(), whose router caller decides
+    whether/how to enqueue the background job)."""
     disponent_emails = _disponent_emails(db)
     if not disponent_emails:
         return None
@@ -1290,7 +1290,7 @@ def change_user_request_status(
     A client can never dictate an arbitrary transition.
 
     Returns the notification descriptor (or None) for the ROUTER to
-    enqueue via `arq_pool.enqueue_job(..., notification.disponent_emails,
+    enqueue via `job_queue.enqueue(..., notification.disponent_emails,
     notification.canceling_user_name, notification.entry)` -- the
     descriptor captures the OLD status before this function's own
     db.commit() below."""
@@ -1651,8 +1651,8 @@ def send_message_to_cast(
     shared mailer/template infrastructure (`user_message` template).
 
     Returns (to_emails, sender_name, message) for the ROUTER to schedule
-    via `BackgroundTasks.add_task(mailer.send_user_message_email, ...)` --
-    the service layer stays framework-agnostic (no FastAPI import)."""
+    via `JobQueue.enqueue(send_user_message_email_task, ...)` -- the
+    service layer stays framework-agnostic (no FastAPI import)."""
     _get_performance_or_404(db, performance_id)
     users_by_id = _users_by_id(db, set(data.recipient_ids))
     to_emails = [

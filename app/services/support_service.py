@@ -68,8 +68,8 @@ def send_message_to_contactperson(
     router responds 200 either way, which does not reveal whether a given
     recipient id exists or is verified).
 
-    Returns (to_emails, sender_name, message) for the ROUTER to schedule via
-    `BackgroundTasks.add_task(mailer.send_user_message_email, ...)` -- same
+    Returns (to_emails, sender_name, message) for the ROUTER to enqueue via
+    `JobQueue.enqueue(send_user_message_email_task, ...)` -- same
     framework-agnostic split as booking_service.send_message_to_cast."""
     recipient = db.get(User, data.recipient_id)
     if (

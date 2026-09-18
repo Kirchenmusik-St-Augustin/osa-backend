@@ -1,8 +1,8 @@
 """Jinja2 templates + stdlib smtplib, every send logged to `sent_emails`.
 
-Called from FastAPI `BackgroundTasks.add_task(...)` (Starlette's threadpool
-for the sync function, not `asyncio.to_thread`) -- the request's own DB
-session is already closed by the time a background task runs, so every
+Called from the arq worker's job wrappers (app.worker.tasks, which run each
+sync function in Starlette's threadpool, not `asyncio.to_thread`) -- there
+is no request and thus no request DB session at all by then, so every
 function here opens its own short-lived session via SessionLocal()
 (the documented exception to the SessionLocal-outside-Depends ruff ban,
 see pyproject.toml's per-file-ignores).
@@ -270,8 +270,8 @@ def send_new_registration_notice(
     *, surname: str, givenname: str, email: str, phone: str | None
 ) -> None:
     """Takes plain fields, not a User ORM instance -- this runs inside a
-    BackgroundTasks callback, well after the request's DB session (and
-    thus the User instance's attribute access) has already been closed."""
+    arq job, long after the request's DB session (and thus the User
+    instance's attribute access) has already been closed."""
     settings = get_settings()
     now = local_now()
     timestamp = _format_ymd_timestamp(now)
