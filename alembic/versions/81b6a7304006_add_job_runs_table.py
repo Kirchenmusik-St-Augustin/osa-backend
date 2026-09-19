@@ -6,7 +6,7 @@ Create Date: 2026-09-14 15:00:00.000000
 
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql

@@ -10,39 +10,25 @@ from app.db.uuid_pk import uuid_pk
 
 
 class PersonalAccessToken(Base):
-    """Backs the JWT refresh flow by reusing legacy's `personal_access_tokens`
-    table -- a dead, unused Sanctum artifact in Legacy (0 rows in prod).
-    Legacy's generic/dead columns are repurposed: `token` holds the JWT-ID
-    (jti), `abilities` (nullable TEXT, same as legacy) holds the refresh
-    token hash, `expires_at` holds the refresh token's expiry.
-    `refresh_token_hash` is a hybrid property so callers keep reading/
-    writing a meaningful name while the underlying `abilities` column stays
-    legacy-shaped.
+    """Backs the JWT refresh flow, one row per issued refresh token. The
+    table's generic columns are repurposed: `token` holds the JWT-ID
+    (jti), `abilities` (nullable TEXT) holds the refresh token hash,
+    `expires_at` holds the refresh token's expiry. `refresh_token_hash` is
+    a hybrid property so callers keep reading/writing a meaningful name
+    while the underlying `abilities` column keeps its generic name.
 
-    As of the polymorphy-redesign slice (2026-09), the former
-    `tokenable_type`/`tokenable_id` polymorphic pair (Laravel's generic
-    `morphTo`, byte-for-byte carried over from legacy in Phase 1) is
-    replaced by a real `user_id` column with an ON DELETE CASCADE foreign
-    key: `tokenable_type` never held anything but the constant "User" in
-    this application (the JWT refresh flow only ever issues tokens to
-    Users, and nothing in this codebase ever branched on it), so the
-    generic polymorphic shape carried no actual behavior, only an
-    unenforced reference. `user_id` was already the name every caller used
-    for this column (see auth_service.py, app/api/deps.py) via a hybrid
-    property aliasing the old `tokenable_id` -- it is now the real column
-    name, and that alias is gone.
+    `user_id` is a real column with an ON DELETE CASCADE foreign key to
+    `users.id` -- the JWT refresh flow only ever issues tokens to Users, so
+    no polymorphic owner type is needed.
 
     `id`/`user_id` are UUIDv7 (server-generated via Postgres's native
-    `uuidv7()`, see app.db.uuid_pk) as of the UUID-migration slice
-    (2026-09), replacing the former integer autoincrement sequence.
+    `uuidv7()`, see app.db.uuid_pk).
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. `last_used_at`/`expires_at` are also TIMESTAMPTZ now
-    (same slice) but stay Python-managed -- only their storage type
-    changed."""
+    Python. `last_used_at`/`expires_at` are TIMESTAMPTZ too but stay
+    Python-managed."""
 
     __tablename__ = "personal_access_tokens"
     __table_args__ = (
@@ -52,7 +38,7 @@ class PersonalAccessToken(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
+        ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     name: Mapped[str]  # e.g. "session"
     token: Mapped[str]  # JWT-ID (jti)

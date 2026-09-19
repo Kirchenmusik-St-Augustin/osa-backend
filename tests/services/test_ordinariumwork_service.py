@@ -175,18 +175,20 @@ class TestCreateOrdinariumwork:
         assert response.artist_id == artist.id
         assert response.artist_name == "MOZART, Wolfgang"
 
-    def test_rejects_short_name(self, db_session: Session):
-        artist_id = _make_artist(db_session)
-        with pytest.raises(
-            ordinariumwork_service.OrdinariumworkValidationError
-        ) as exc_info:
-            ordinariumwork_service.create_ordinariumwork(
-                db_session, _request(artist_id, name="ab")
-            )
+    def test_rejects_short_name(self):
+        # Now caught by OrdinariumworkRequest's own Field(min_length=3)
+        # before the service's _validate() ever runs -- the schema
+        # boundary was tightened to match the service's pre-existing
+        # 3-60 constant.
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+            _request(uuid.uuid4(), name="ab")
 
-        assert exc_info.value.errors == [
-            ("name", "Muss zwischen 3 und 60 Zeichen lang sein.")
-        ]
+    def test_rejects_out_of_range_duration(self):
+        # Like test_rejects_short_name: the schema itself rejects an
+        # out-of-range duration (OrdinariumworkRequest's Field(le=999)),
+        # matching the service-level 0-999 constant.
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+            _request(uuid.uuid4(), duration=1000)
 
     def test_rejects_unknown_artist(self, db_session: Session):
         with pytest.raises(
@@ -333,12 +335,9 @@ class TestGetSetup:
     def test_output_order_follows_instrument_order_column_not_insertion_order(
         self, db_session: Session
     ):
-        """Regression guard for a real parity bug found via Playwright
-        against production data (2026-07-29): Legacy's Instrument/Voice
-        models carry a global order-by-`order` scope that applies even to
-        the Ordinariumwork setup relation -- the setup table's row order
-        must follow each item's own `order` column, not pivot-row insertion
-        order or `id`."""
+        """Regression guard: the setup table's row order must follow each
+        Instrument/Voice's own `order` column, not pivot-row insertion order
+        or `id`."""
         artist_id = _make_artist(db_session)
         first_added = _make_instrument(db_session)
         first_added.order = 10
@@ -422,9 +421,8 @@ class TestDeleteOrdinariumwork:
             ordinariumwork_service.get_ordinariumwork(db_session, created.id)
 
     def test_blocked_when_performance_references_it(self, db_session: Session):
-        """Retrofit regression guard (Schritt 5): Legacy's only
-        HasDependencies target for Ordinariumwork (`performances`) now
-        exists in osa-backend."""
+        """Regression guard: an Ordinariumwork referenced by a Performance
+        can't be deleted."""
         artist_id = _make_artist(db_session)
         location = _make_location(db_session)
         created = ordinariumwork_service.create_ordinariumwork(

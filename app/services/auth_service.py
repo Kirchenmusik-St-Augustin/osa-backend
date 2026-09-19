@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal, NoReturn
+from typing import TYPE_CHECKING, Literal, NoReturn, cast
 from urllib.parse import urlencode
 
 import jwt
@@ -35,6 +35,7 @@ from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
+from app.services.errors import DomainValidationError, FieldError
 
 if TYPE_CHECKING:
     import uuid
@@ -42,8 +43,7 @@ if TYPE_CHECKING:
     from app.core.json_types import JsonObject
     from app.schemas.auth import RegisterRequest
 
-# Mirrors Legacy's StoreRequest::ensureIsNotRateLimited() (5 attempts / 60s,
-# see legacy/app/Http/Requests/Auth/LoginController/StoreRequest.php).
+# Login lockout: 5 failed attempts per 60s window.
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_THROTTLE_WINDOW_SECONDS = 60
 
@@ -59,8 +59,7 @@ def log_auth_event(
     user_agent: str | None = None,
     payload: JsonObject | None = None,
 ) -> None:
-    """1:1 port of Legacy's `AuthLog::log()` (app/Models/AuthLog.php) --
-    write-only audit row, keyed by the raw submitted email string, not
+    """Write-only audit row, keyed by the raw submitted email string, not
     `user_id`. Commits immediately: the log must survive even if the
     caller's own transaction later fails."""
     db.add(
@@ -80,14 +79,11 @@ def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None
     """Returns seconds remaining if the email+IP pair is currently
     rate-limited, None if the login attempt may proceed.
 
-    Mirrors Legacy's asymmetric Laravel RateLimiter semantics (hit on
-    failure, cleared on success, key = lower(email)+ip) via a derived query
-    over AuthLog instead of a separate counter/cache -- deliberately a
-    sliding 60s window bounded by the most recent successful login for this
-    exact key (an approximation of Laravel's fixed-window-with-clear-on-
-    success cache semantics, not a bit-exact replication -- see the
-    Schritt-2 plan for the full reasoning). No new table, reuses the audit
-    trail as the source of truth (lean, DRY)."""
+    Asymmetric semantics (hit on failure, cleared on success, key =
+    lower(email)+ip) implemented as a derived query over AuthLog instead of
+    a separate counter/cache -- deliberately a sliding 60s window bounded by
+    the most recent successful login for this exact key. No new table,
+    reuses the audit trail as the source of truth (lean, DRY)."""
     now = datetime.now(UTC)
     window_start = now - timedelta(seconds=LOGIN_THROTTLE_WINDOW_SECONDS)
     normalized_email = email.lower()
@@ -134,9 +130,9 @@ def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None
 def authenticate_user(
     db: Session, email: str, password: str
 ) -> tuple[User | None, AuthFailureReason | Literal["ok"]]:
-    """Case-sensitive email match, matching Legacy's actual DB comparison
-    (no case-insensitive collation on `users.email`) -- deliberately NOT
-    lowercased here, unlike the throttle key above."""
+    """Case-sensitive email match (no case-insensitive collation on
+    `users.email`) -- deliberately NOT lowercased here, unlike the throttle
+    key above."""
     result = db.execute(
         select(User)
         .options(selectinload(User.roles))
@@ -267,24 +263,19 @@ def logout_user(db: Session, token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-class RegistrationConflictError(Exception):
+class RegistrationConflictError(DomainValidationError):
     """Field-level conflicts (email or name-combo already taken), surfaced
     to the router as a 422 in the same {"detail": [...]} shape FastAPI's
     own validation errors use."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Registration conflict")
 
 
 def check_registration_conflicts(
     db: Session, *, surname: str, givenname: str, email: str
 ) -> None:
-    """Case-insensitive duplicate check, including soft-deleted users
-    (User.deleted_at is deliberately NOT filtered out -- mirrors Legacy's
-    `User::withTrashed()` check), so a deleted user's name/email can't be
-    silently reused for a new registration."""
-    errors: list[tuple[str, str]] = []
+    """Case-insensitive duplicate check, including soft-deleted users (User.deleted_at
+    is deliberately NOT filtered out), so a deleted user's name/email can't be silently
+    reused for a new registration."""
+    errors: list[FieldError] = []
 
     name_taken = db.execute(
         select(User.id).where(
@@ -294,24 +285,23 @@ def check_registration_conflicts(
     ).first()
     if name_taken is not None:
         msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(("givenname", msg))
-        errors.append(("surname", msg))
+        errors.append(FieldError("givenname", msg))
+        errors.append(FieldError("surname", msg))
 
     email_taken = db.execute(
         select(User.id).where(func.lower(User.email) == email.lower())
     ).first()
     if email_taken is not None:
         msg = "Die E-Mail-Adresse wird bereits für ein bestehendes Konto verwendet."
-        errors.append(("email", msg))
+        errors.append(FieldError("email", msg))
 
     if errors:
         raise RegistrationConflictError(errors)
 
 
 def register_user(db: Session, data: RegisterRequest) -> User:
-    """Persists the new User row. Auto-login (mirrors Legacy's
-    `Auth::login($user)` right after `User::create()`) is the router's
-    job via create_user_session(), not this function's."""
+    """Persists the new User row. Auto-login is the router's job via
+    create_user_session(), not this function's."""
     check_registration_conflicts(
         db, surname=data.surname, givenname=data.givenname, email=data.email
     )
@@ -366,8 +356,7 @@ def verify_email(db: Session, token: str) -> User:
     if user is None or not user.email:
         raise ValueError(invalid_msg)
     if hash_email_for_verification(user.email) != email_hash:
-        # Email changed since the link was issued -- mirrors Legacy's
-        # EmailVerificationRequest::authorize() sha1(email) re-check.
+        # Email changed since the link was issued.
         raise ValueError(invalid_msg)
 
     if user.email_verified_at is None:
@@ -408,6 +397,18 @@ def request_password_reset(db: Session, email: str) -> str | None:
     return token
 
 
+def build_password_reset_url(db: Session, email: str) -> str | None:
+    """Frontend link for the reset mail, or None if no user owns `email`
+    (see request_password_reset -- same no-enumeration contract)."""
+    token = request_password_reset(db, email)
+    if token is None:
+        return None
+    base_url = require_setting(
+        get_settings().frontend_reset_password_url, "FRONTEND_RESET_PASSWORD_URL"
+    )
+    return f"{base_url}?{urlencode({'token': token, 'email': email})}"
+
+
 def execute_password_reset(
     db: Session, email: str, token: str, new_password: str
 ) -> None:
@@ -440,7 +441,7 @@ def execute_password_reset(
         raise ValueError(msg)
 
     user.auth_password = get_password_hash(new_password)
-    # Mirrors Legacy: a successful reset also verifies the email address.
+    # A successful reset also verifies the email address.
     user.email_verified_at = datetime.now(UTC)
 
     db.execute(
@@ -464,23 +465,43 @@ class OauthBindingNotFoundError(Exception):
     the router maps both cases to an identical 404 (no ID enumeration)."""
 
 
-def _verify_google_id_token(credential: str) -> dict[str, Any]:
+def _verify_google_id_token(credential: str) -> JsonObject:
     settings = get_settings()
     client_id = require_setting(settings.google_client_id, "GOOGLE_CLIENT_ID")
     try:
-        return dict(
-            google_id_token.verify_oauth2_token(
-                credential, google_requests.Request(), client_id
-            )
+        # google-auth's verify_oauth2_token() is untyped (effectively
+        # returns Any) -- cast at this boundary once, then narrow each
+        # claim we actually read through _string_claim() below.
+        return cast(
+            "JsonObject",
+            dict(
+                google_id_token.verify_oauth2_token(
+                    credential, google_requests.Request(), client_id
+                )
+            ),
         )
     except ValueError:
         msg = "Ungültiger oder abgelaufener Google-Token."
         raise ValueError(msg) from None
 
 
+def _string_claim(payload: JsonObject, key: str, *, default: str | None = None) -> str:
+    """Type-narrows one claim of a decoded Google ID token into a genuine,
+    runtime-checked str. Raises if the claim is absent or not a string and
+    no default is given -- Google's own verification guarantees standard
+    claims are well-formed, but the type checker has no way to know that."""
+    value = payload.get(key)
+    if isinstance(value, str):
+        return value
+    if default is not None:
+        return default
+    msg = f"Google-ID-Token-Claim {key!r} fehlt oder ist kein String."
+    raise ValueError(msg)
+
+
 def authenticate_google_user(db: Session, credential: str) -> User:
     id_info = _verify_google_id_token(credential)
-    google_id = id_info["sub"]
+    google_id = _string_claim(id_info, "sub")
 
     binding = db.execute(
         select(Oauth2Binding).where(
@@ -514,8 +535,8 @@ def link_google_account(
         raise ValueError(msg)
 
     id_info = _verify_google_id_token(credential)
-    google_id = id_info["sub"]
-    google_name = id_info.get("name", "")
+    google_id = _string_claim(id_info, "sub")
+    google_name = _string_claim(id_info, "name", default="")
 
     existing = db.execute(
         select(Oauth2Binding).where(
@@ -551,12 +572,11 @@ def link_google_account(
 def unlink_oauth_binding(
     db: Session, binding_id: uuid.UUID, current_user_id: uuid.UUID
 ) -> None:
-    """IDOR-fixed replacement for Legacy's `oauth2disconnect($id)` (which
-    looked up `Oauth2Binding::find($id)` with NO ownership check -- any
-    logged-in user could delete anyone else's Google link by iterating
-    IDs). The lookup now filters on local_id too; not-found and
-    not-owned both raise the same error -> one uniform 404, no
-    enumeration signal."""
+    """Unlinks a Google binding, restricted to the caller's own bindings
+    (IDOR protection: a logged-in user must not be able to delete anyone
+    else's Google link by iterating IDs). The lookup filters on local_id;
+    not-found and not-owned both raise the same error -> one uniform 404,
+    no enumeration signal."""
     binding = db.execute(
         select(Oauth2Binding).where(
             Oauth2Binding.id == binding_id, Oauth2Binding.local_id == current_user_id

@@ -19,22 +19,19 @@ from app.db.uuid_pk import uuid_pk
 class PerformancePosition(PositionColumns, Base):
     """Pivot row: which Instrument/Voice/Choirjob a Performance needs, and
     in what quantity. Unlike OrdinariumworkPosition, Performance's position
-    polymorphy legitimately includes ALL THREE types -- confirmed live:
-    Legacy's Performance uses instruments/voices/choirjobs, only
-    Ordinariumwork excludes choirjobs.
+    polymorphy legitimately includes ALL THREE types
+    (instruments/voices/choirjobs) -- only Ordinariumwork excludes
+    choirjobs.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. `performance_id` is an ON DELETE CASCADE foreign key as
-    of the FK-hardening slice (2026-09): performance_service.
-    delete_performance() already deletes this table's own rows before
-    deleting their Performance, CASCADE moves that cleanup to the
-    database. `position_type`/`position_id` are replaced by three
-    mutually-exclusive nullable foreign keys (`instrument_id`/`voice_id`/
-    `choirjob_id`, see PositionColumns) as of the polymorphy-redesign slice
-    (2026-09)."""
+    Python. `performance_id` is an ON DELETE CASCADE foreign key:
+    performance_service.delete_performance() already deletes this table's
+    own rows before deleting their Performance, CASCADE moves that cleanup
+    to the database. A position's owner is one of three mutually-exclusive
+    nullable foreign keys (`instrument_id`/`voice_id`/`choirjob_id`, see
+    PositionColumns)."""
 
     __tablename__ = "performance_positions"
     __table_args__ = (
@@ -54,7 +51,7 @@ class PerformancePosition(PositionColumns, Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("performances.id", ondelete="CASCADE")
+        ForeignKey("performances.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     quantity: Mapped[int]
     created_at: Mapped[datetime | None] = mapped_column(

@@ -6,7 +6,7 @@ Create Date: 2026-09-10 10:56:55.041954
 
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 import sqlalchemy as sa
 

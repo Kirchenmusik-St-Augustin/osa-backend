@@ -11,26 +11,22 @@ from app.db.uuid_pk import uuid_pk
 
 
 class AuthLog(Base):
-    """Mirrors legacy `auth_logs` exactly (Phase 1 -- no renames, no schema
-    changes). Write-only audit trail, keyed by `email` string rather than
-    `user_id` (matches legacy -- a log entry must survive even if the
-    referenced user is later deleted). No `created_at`/`updated_at`:
-    `fired_at` is the only timestamp legacy ever had for this table.
-    `payload` is a native JSONB column as of this slice (was the generic
-    JSON type, which Postgres renders as `json` rather than `jsonb`) --
-    the service layer already worked with plain Python dicts either way,
-    so this is a pure storage-format tightening with no behavior change.
+    """Write-only audit trail, keyed by `email` string rather than `user_id`
+    (a log entry must survive even if the referenced user is later
+    deleted). No `created_at`/`updated_at`: `fired_at` is the only
+    timestamp of this table. `payload` is a native JSONB column -- the
+    service layer works with plain Python dicts.
 
-    Event set is deliberately narrower than legacy's 10 Laravel listeners --
-    Login/Failed/Lockout/Logout/Verified/PasswordReset are kept (see
-    app.api.router_includes.auth for the call sites), Attempting/Validated/
-    (Current|Other)DeviceLogout are dropped as YAGNI (redundant with
-    Failed/Login, or no multi-device-logout feature exists here at all).
+    Event set is deliberately narrow --
+    Login/Failed/Lockout/Logout/Verified/PasswordReset are logged (see
+    app.api.router_includes.auth for the call sites); Attempting/Validated/
+    (Current|Other)DeviceLogout events are intentionally not logged
+    (redundant with Failed/Login, or no multi-device-logout feature exists
+    here at all).
 
-    `fired_at` is TIMESTAMPTZ as of the TIMESTAMPTZ + audit-trigger
-    hardening slice (2026-09) -- stays Python-managed via datetime.now(UTC)
-    (this table has no created_at/updated_at pair, so no server_default/
-    trigger applies here), only its storage type changed."""
+    `fired_at` is TIMESTAMPTZ and stays Python-managed via
+    datetime.now(UTC) (this table has no created_at/updated_at pair, so no
+    server_default/trigger applies here)."""
 
     __tablename__ = "auth_logs"
 

@@ -103,9 +103,9 @@ def test_downsync_wraps_the_hour_at_the_day_boundary(monkeypatch: pytest.MonkeyP
 def test_purge_expired_password_reset_tokens_runs_sunday_nights(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # arq's weekday spelling matches APScheduler's here by coincidence
-    # ('sun' is identical in both) -- see cron_config.py's own docstring
-    # for the 'tues'/'thurs' trap that would NOT be identical.
+    # arq spells 'sun' like the usual three-letter abbreviation -- see
+    # cron_config.py's own docstring for the 'tues'/'thurs' trap that
+    # would differ.
     monkeypatch.setenv("APP_ENVIRONMENT", "production")
     get_settings.cache_clear()
 

@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import app.db.base
+from app.api.exception_handlers import register_exception_handlers
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.api.router import api_router
 from app.api.router_includes.go import go_router
@@ -67,8 +68,7 @@ async def _validation_error_handler(
 
 
 # Pydantic's own error catalog is English-only -- the project requires
-# fully German validation text for the Auth-domain forms this slice introduces
-# (User decision 2026-07-28, see the Schritt-2 plan). Only translates the
+# fully German validation text for its forms. Only translates the
 # error `type`s Pydantic's built-in validation can actually produce; custom
 # field_validators (added in later Auth-domain schemas) already raise their
 # own German ValueError messages, which Pydantic wraps as "Value error, {msg}"
@@ -146,6 +146,7 @@ app.add_exception_handler(ValidationError, _validation_error_handler)
 app.add_exception_handler(RequestValidationError, _request_validation_error_handler)
 app.add_exception_handler(IntegrityError, _integrity_error_handler)
 app.add_exception_handler(Exception, _unhandled_exception_handler)
+register_exception_handlers(app)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -161,12 +162,12 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 # Registered AFTER CORSMiddleware so add_middleware's LIFO stacking makes it
-# the outermost layer -- it sees the actual final response (Admin-/Audit-
-# Viewer, Schritt 9), not an intermediate one.
+# the outermost layer -- it sees the actual final response, not an
+# intermediate one.
 app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(system_router)  # root-level health check, no prefix
-app.include_router(api_router)  # wiring point for future domain routers, empty today
+app.include_router(api_router)  # every domain router, see app/api/router.py
 # Public, unauthenticated redirect service for the dedicated go.-subdomain
 # (see app.api.router_includes.go's docstring). Mounted directly on `app`
 # under its own "/go" prefix -- NOT nested under api_router, since it has

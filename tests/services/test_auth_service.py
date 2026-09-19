@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs
 
 import jwt
 import pytest
@@ -318,7 +319,7 @@ def test_logout_user_deletes_session_and_sets_lastlogout(db_session, make_user):
 
 
 def test_logout_user_ignores_garbage_token(db_session):
-    # Must not raise -- Legacy's logout() is a best-effort cleanup.
+    # Must not raise -- logout is a best-effort cleanup.
     auth_service.logout_user(db_session, "not-a-real-jwt")
 
 
@@ -505,7 +506,7 @@ def test_verify_email_rejects_pre_migration_integer_user_id_token(db_session):
     error a user sees for any other bad link, not an unhandled
     exception (see the token's 60-minute TTL: a link emailed shortly
     before a cutover can still be clicked shortly after it)."""
-    legacy_token = security._email_verification_serializer.dumps(
+    integer_id_token = security._email_verification_serializer.dumps(
         {
             "user_id": "42",
             "email_hash": security.hash_email_for_verification("nobody@example.test"),
@@ -513,7 +514,7 @@ def test_verify_email_rejects_pre_migration_integer_user_id_token(db_session):
     )
 
     with pytest.raises(ValueError, match="ungültig oder abgelaufen"):
-        auth_service.verify_email(db_session, legacy_token)
+        auth_service.verify_email(db_session, integer_id_token)
 
 
 def test_verify_email_rejects_token_after_email_changed(db_session, make_user):
@@ -557,6 +558,45 @@ def test_request_password_reset_creates_token_row(db_session, make_user):
         select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
     ).scalar_one()
     assert row.token == hash_reset_token(token)
+
+
+def test_build_password_reset_url_returns_none_for_unknown_email(
+    db_session, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_RESET_PASSWORD_URL", "https://example.test/reset")
+
+    assert (
+        auth_service.build_password_reset_url(db_session, "nobody@example.test") is None
+    )
+
+
+def test_build_password_reset_url_embeds_stored_token_and_email(
+    db_session, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_RESET_PASSWORD_URL", "https://example.test/reset")
+    user = make_user()
+
+    url = auth_service.build_password_reset_url(db_session, user.email)
+
+    assert url is not None
+    base_url, query = url.split("?", 1)
+    assert base_url == "https://example.test/reset"
+    params = parse_qs(query)
+    assert params["email"] == [user.email]
+    row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
+    ).scalar_one()
+    assert row.token == hash_reset_token(params["token"][0])
+
+
+def test_build_password_reset_url_requires_configured_frontend_url(
+    db_session, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("FRONTEND_RESET_PASSWORD_URL", raising=False)
+    user = make_user()
+
+    with pytest.raises(RuntimeError, match="FRONTEND_RESET_PASSWORD_URL"):
+        auth_service.build_password_reset_url(db_session, user.email)
 
 
 def test_request_password_reset_replaces_previous_token(db_session, make_user):
@@ -628,6 +668,28 @@ def test_execute_password_reset_rejects_expired_token(db_session, make_user):
 # ---------------------------------------------------------------------------
 # Google OAuth
 # ---------------------------------------------------------------------------
+
+
+def test_string_claim_returns_the_value_when_present_and_a_string():
+    assert auth_service._string_claim({"name": "Max"}, "name") == "Max"
+
+
+def test_string_claim_returns_the_default_when_the_key_is_absent():
+    assert auth_service._string_claim({}, "name", default="") == ""
+
+
+def test_string_claim_returns_the_default_when_the_value_is_not_a_string():
+    assert auth_service._string_claim({"name": 123}, "name", default="") == ""
+
+
+def test_string_claim_raises_when_required_and_the_key_is_absent():
+    with pytest.raises(ValueError, match="sub"):
+        auth_service._string_claim({}, "sub")
+
+
+def test_string_claim_raises_when_required_and_the_value_is_not_a_string():
+    with pytest.raises(ValueError, match="sub"):
+        auth_service._string_claim({"sub": 12345}, "sub")
 
 
 def _google_id_info(sub: str | None = None, **overrides: object) -> dict[str, object]:
@@ -801,10 +863,9 @@ def test_unlink_oauth_binding_removes_owned_binding(db_session, make_user):
 def test_unlink_oauth_binding_rejects_binding_owned_by_another_user(
     db_session, make_user
 ):
-    """IDOR regression test: Legacy's `oauth2disconnect($id)` looked up
-    the binding by ID alone, with no ownership check at all -- any
-    logged-in user could delete any other user's Google link. This must
-    now be rejected instead, and rejected the SAME way as a not-found ID
+    """IDOR regression test: unlinking must check ownership -- otherwise
+    any logged-in user could delete any other user's Google link by
+    guessing an ID. It must be rejected the SAME way as a not-found ID
     (uniform 404 at the router level, no enumeration signal)."""
     victim = make_user()
     attacker = make_user()

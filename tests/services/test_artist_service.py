@@ -99,13 +99,12 @@ class TestCreateArtist:
 
         assert (artist.surname, artist.givenname) == ("MUSTER", "Mary Jane")
 
-    def test_rejects_short_surname(self, db_session: Session):
-        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
-            artist_service.create_artist(db_session, _request(surname="ab"))
-
-        assert exc_info.value.errors == [
-            ("surname", "Muss zwischen 3 und 32 Zeichen lang sein.")
-        ]
+    def test_rejects_short_surname(self):
+        # Now caught by ArtistRequest's own Field(min_length=3) before the
+        # service's _validate() ever runs -- the schema boundary was
+        # tightened to match the service's pre-existing 3-32 constant.
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+            _request(surname="ab")
 
     def test_rejects_duplicate_surname_givenname_combination(self, db_session: Session):
         surname, givenname = _unique("Dup"), _unique("Licate")
@@ -213,10 +212,10 @@ class TestDeleteArtist:
     def test_blocked_when_performance_references_artist_as_conductor(
         self, db_session: Session
     ):
-        """Retrofit regression guard (Schritt 5): Performance.artist_id is
+        """Regression guard: Performance.artist_id is
         the CONDUCTOR, a distinct role from Ordinariumwork/Propriumwork's
         composer artist_id, but both point at the same `artists` table and
-        Legacy's own $dependencies treats either role as "in use" alike."""
+        either role counts as "in use" alike."""
         composer = artist_service.create_artist(db_session, _request(composer=True))
         conductor = artist_service.create_artist(db_session, _request(conductor=True))
         ordinariumwork = ordinariumwork_service.create_ordinariumwork(

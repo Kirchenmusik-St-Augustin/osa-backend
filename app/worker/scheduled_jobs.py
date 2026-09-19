@@ -49,12 +49,18 @@ async def _run_and_record(job_id: str, func: Callable[[], None]) -> None:
     try:
         await run_in_threadpool(func)
     except Exception:
-        record_job_run(
-            job_id, started_at, status="failure", output=traceback.format_exc()
+        await run_in_threadpool(
+            record_job_run,
+            job_id,
+            started_at,
+            status="failure",
+            output=traceback.format_exc(),
         )
         raise
     else:
-        record_job_run(job_id, started_at, status="success", output=None)
+        await run_in_threadpool(
+            record_job_run, job_id, started_at, status="success", output=None
+        )
 
 
 async def purge_stale_booking_requests_task(

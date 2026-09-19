@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.db.models.fee import Fee
 from app.schemas.fee import FeeRequest, FeeResponse
+from app.services.errors import DomainValidationError, FieldError, NotFoundError
 
 if TYPE_CHECKING:
     import uuid
@@ -11,18 +12,14 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class FeeNotFoundError(Exception):
+class FeeNotFoundError(NotFoundError):
     """Raised when `fee_id` doesn't exist."""
 
 
-class FeeValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 coreelement_service.CoreelementValidationError
-    pattern."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Fee validation failed")
+class FeeValidationError(DomainValidationError):
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as
+    coreelement_service.CoreelementValidationError."""
 
 
 def _name_taken(db: Session, name: str, exclude_id: uuid.UUID | None) -> bool:
@@ -34,10 +31,10 @@ def _name_taken(db: Session, name: str, exclude_id: uuid.UUID | None) -> bool:
 
 def _validate(
     db: Session, data: FeeRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
     if _name_taken(db, data.name.strip(), exclude_id):
-        errors.append(("name", "Der Name ist bereits vergeben."))
+        errors.append(FieldError("name", "Der Name ist bereits vergeben."))
     return errors
 
 
@@ -54,8 +51,8 @@ def _to_response(fee: Fee) -> FeeResponse:
 
 
 def list_fees(db: Session) -> list[FeeResponse]:
-    # Legacy's `Fee::OrderByName` global scope -- alphabetical, since `fees`
-    # has no `order` column (see app.db.models.fee.Fee docstring).
+    # Alphabetical, since `fees` has no `order` column (see
+    # app.db.models.fee.Fee docstring).
     fees = db.execute(select(Fee).order_by(Fee.name)).scalars().all()
     return [_to_response(fee) for fee in fees]
 
@@ -84,9 +81,8 @@ def update_fee(db: Session, fee_id: uuid.UUID, data: FeeRequest) -> FeeResponse:
 
 
 def delete_fee(db: Session, fee_id: uuid.UUID) -> None:
-    # No has_dependencies check -- Legacy's own DestroyRequest has an empty
-    # rules() too, since bookings.fee/booking_logs.fee are plain integer
-    # copies of a Fee's amount, never an FK to fees.id.
+    # No has_dependencies check -- bookings.fee/booking_logs.fee are plain
+    # integer copies of a Fee's amount, never an FK to fees.id.
     fee = _get_or_404(db, fee_id)
     db.delete(fee)
     db.commit()

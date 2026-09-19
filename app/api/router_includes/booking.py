@@ -1,13 +1,11 @@
 import uuid
 from typing import Annotated, Literal
 
-from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_guards import require_permission
-from app.core.arq_pool import get_arq_pool
+from app.api.job_queue import JobQueue, get_job_queue
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.booking import (
@@ -23,13 +21,8 @@ from app.schemas.booking import (
 )
 from app.services import booking_service
 from app.services.booking_service import (
-    BookedOrStandbyCanceledNotification,
     BookingRequestAlreadyExistsError,
     MessageRecipientsEmptyError,
-)
-from app.services.performance_service import (
-    PerformanceInPastError,
-    PerformanceNotFoundError,
 )
 from app.worker.tasks import (
     send_booked_or_standby_canceled_email_task,
@@ -43,20 +36,8 @@ _MAINTAIN = Depends(require_permission("performanceMaintain"))
 _BILLING = Depends(require_permission("performanceBilling"))
 _CHANGE_STATUS = Depends(require_permission("performanceChangeUserStatus"))
 
-_NOT_FOUND_DETAIL = "Nicht gefunden."
-_IN_PAST_DETAIL = "Die Aufführung liegt bereits in der Vergangenheit."
 _DUPLICATE_REQUEST_DETAIL = "Es liegt bereits eine offene Anfrage vor."
 _EMPTY_RECIPIENTS_DETAIL = "Keiner der Empfänger hat eine bestätigte E-Mail-Adresse."
-
-
-def _not_found() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-    )
-
-
-def _in_past() -> HTTPException:
-    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_IN_PAST_DETAIL)
 
 
 @booking_router.get("/{performance_id}/cast")
@@ -65,12 +46,7 @@ def get_cast_page(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _CAST],
 ) -> PerformanceCastPageResponse:
-    try:
-        return booking_service.get_cast_page(db, performance_id)
-    except PerformanceNotFoundError:
-        raise _not_found() from None
-    except PerformanceInPastError:
-        raise _in_past() from None
+    return booking_service.get_cast_page(db, performance_id)
 
 
 @booking_router.post("/{performance_id}/cast")
@@ -80,41 +56,25 @@ def save_cast(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _CAST],
 ) -> CastFormData:
-    try:
-        return booking_service.save_cast(db, performance_id, data)
-    except PerformanceNotFoundError:
-        raise _not_found() from None
-    except PerformanceInPastError:
-        raise _in_past() from None
-
-
-def _change_user_request_status_sync(
-    db: Session, performance_id: uuid.UUID, current_user: User
-) -> tuple[BookingStatusOutput, BookedOrStandbyCanceledNotification | None]:
-    return booking_service.change_user_request_status(db, performance_id, current_user)
+    return booking_service.save_cast(db, performance_id, data)
 
 
 @booking_router.post("/{performance_id}/booking-status")
-async def change_user_request_status(
+def change_user_request_status(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _CHANGE_STATUS],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> BookingStatusOutput:
     """No request body -- the server recomputes the user's own current
     status and dispatches the transition itself (see
     booking_service.change_user_request_status's docstring).
-    _CHANGE_STATUS is declared before arq_pool on purpose: FastAPI resolves
-    Depends() in declaration order, and a rejected permission check must
-    not pay for creating/reusing the ARQ pool connection."""
+    _CHANGE_STATUS is declared before job_queue on purpose, see
+    get_job_queue."""
     try:
-        result, notification = await run_in_threadpool(
-            _change_user_request_status_sync, db, performance_id, current_user
+        result, notification = booking_service.change_user_request_status(
+            db, performance_id, current_user
         )
-    except PerformanceNotFoundError:
-        raise _not_found() from None
-    except PerformanceInPastError:
-        raise _in_past() from None
     except BookingRequestAlreadyExistsError:
         # Defensive only -- unreachable via the normal state machine (see
         # booking_service._request_booking's docstring), but a genuine
@@ -128,8 +88,8 @@ async def change_user_request_status(
         # no __iter__ and is not unpackable -- also robust against a future
         # field being added to BookedOrStandbyCanceledNotification without
         # a matching positional slot at this call site.
-        await arq_pool.enqueue_job(
-            send_booked_or_standby_canceled_email_task.__name__,
+        job_queue.enqueue(
+            send_booked_or_standby_canceled_email_task,
             notification.disponent_emails,
             notification.canceling_user_name,
             notification.entry,
@@ -143,12 +103,7 @@ def get_my_booking_status(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _CHANGE_STATUS],
 ) -> BookingStatusOutput:
-    try:
-        return booking_service.get_my_booking_status(
-            db, performance_id, current_user.id
-        )
-    except PerformanceNotFoundError:
-        raise _not_found() from None
+    return booking_service.get_my_booking_status(db, performance_id, current_user.id)
 
 
 @booking_router.get("/{performance_id}/billing")
@@ -157,10 +112,7 @@ def get_billing(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _BILLING],
 ) -> PerformanceBillingResponse:
-    try:
-        return booking_service.get_billing(db, performance_id, current_user)
-    except PerformanceNotFoundError:
-        raise _not_found() from None
+    return booking_service.get_billing(db, performance_id, current_user)
 
 
 @booking_router.get("/{performance_id}/requests-and-bookings")
@@ -169,14 +121,7 @@ def get_requests_and_bookings(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceRequestsAndBookingsResponse:
-    try:
-        return booking_service.get_requests_and_bookings(
-            db, performance_id, current_user
-        )
-    except PerformanceNotFoundError:
-        raise _not_found() from None
-    except PerformanceInPastError:
-        raise _in_past() from None
+    return booking_service.get_requests_and_bookings(db, performance_id, current_user)
 
 
 @booking_router.get("/{performance_id}/message-to-cast")
@@ -185,12 +130,7 @@ def get_message_to_cast_page(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceMessageToCastResponse:
-    try:
-        return booking_service.get_message_to_cast_page(
-            db, performance_id, current_user
-        )
-    except PerformanceNotFoundError:
-        raise _not_found() from None
+    return booking_service.get_message_to_cast_page(db, performance_id, current_user)
 
 
 @booking_router.get("/{performance_id}/message-to-cast/recipients")
@@ -204,43 +144,30 @@ def get_message_recipients(
     position_id: Annotated[uuid.UUID | None, Query(alias="id")] = None,
 ) -> list[MessageRecipientOutput]:
     resolved_type = None if position_type in (None, "all") else position_type
-    try:
-        return booking_service.get_message_recipients(
-            db, performance_id, resolved_type, position_id
-        )
-    except PerformanceNotFoundError:
-        raise _not_found() from None
-
-
-def _send_message_to_cast_sync(
-    db: Session, performance_id: uuid.UUID, current_user: User, data: SendMessageRequest
-) -> tuple[list[str], str, str]:
-    return booking_service.send_message_to_cast(db, performance_id, current_user, data)
+    return booking_service.get_message_recipients(
+        db, performance_id, resolved_type, position_id
+    )
 
 
 @booking_router.post("/{performance_id}/message-to-cast/send")
-async def send_message_to_cast(
+def send_message_to_cast(
     performance_id: uuid.UUID,
     data: SendMessageRequest,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, _MAINTAIN],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
-    """_MAINTAIN is declared before arq_pool on purpose -- see
-    change_user_request_status above for why."""
+    """_MAINTAIN is declared before job_queue on purpose -- see
+    get_job_queue."""
     try:
-        to_emails, sender_name, message = await run_in_threadpool(
-            _send_message_to_cast_sync, db, performance_id, current_user, data
+        to_emails, sender_name, message = booking_service.send_message_to_cast(
+            db, performance_id, current_user, data
         )
-    except PerformanceNotFoundError:
-        raise _not_found() from None
     except MessageRecipientsEmptyError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=_EMPTY_RECIPIENTS_DETAIL,
         ) from None
 
-    await arq_pool.enqueue_job(
-        send_user_message_email_task.__name__, to_emails, sender_name, message
-    )
+    job_queue.enqueue(send_user_message_email_task, to_emails, sender_name, message)
     return {"status": "ok", "message": "Nachricht wurde versendet."}

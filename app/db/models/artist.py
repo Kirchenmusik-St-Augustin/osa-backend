@@ -9,20 +9,16 @@ from app.db.uuid_pk import uuid_pk
 
 
 class Artist(Base):
-    """Mirrors legacy `artists` exactly (structural 1:1 transfer -- no
-    renames, no schema changes). `surname`/`givenname` are nullable in the
-    real legacy schema even though app-level validation always requires
-    them -- structural
-    parity keeps the model nullable regardless (see coreelement's
+    """A composer and/or conductor. `surname`/`givenname` are nullable in
+    the schema even though app-level validation always requires them (see
     Location.address for the same pattern). `composer`/`conductor` are
     orthogonal boolean flags, not mutually exclusive (an Artist row can be
     both, one, or neither).
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    Python."""
 
     __tablename__ = "artists"
     __table_args__ = (UniqueConstraint("surname", "givenname"),)

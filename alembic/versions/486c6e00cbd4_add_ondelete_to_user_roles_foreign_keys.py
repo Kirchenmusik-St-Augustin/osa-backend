@@ -6,7 +6,7 @@ Create Date: 2026-09-10 10:56:57.256774
 
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 from alembic import op
 
@@ -64,7 +64,7 @@ def downgrade() -> None:
     Restores both FKs to their original, ondelete-less (Postgres default
     NO ACTION) shape -- matches the exact DDL 6e1829d5f417_schema_baseline
     originally created, so a downgrade round-trip leaves user_roles
-    byte-for-byte identical to before this slice.
+    byte-for-byte identical to before this migration.
     """
     for name, table, column, referent, _ondelete in (
         _USER_ROLES_ROLE_FK,

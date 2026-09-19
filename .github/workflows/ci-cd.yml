@@ -21,6 +21,9 @@ jobs:
       - run: uv pip install --system -r requirements-dev.lock
       - run: ruff check --output-format github .
       - run: ruff format --check .
+      - run: python scripts/check_router_soc.py
+      - run: pip-audit -r requirements.lock
+      - run: pip-audit -r requirements-dev.lock
 
   quality:
     name: Typecheck & Test

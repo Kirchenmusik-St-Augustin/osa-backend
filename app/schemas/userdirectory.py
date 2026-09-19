@@ -7,9 +7,8 @@ from app.schemas.performance import PositionRefOutput
 
 class UserDirectoryAbilitiesOutput(BaseModel):
     """Catalog for the Instrument/Voice/Choirjob filter dropdown -- unlike
-    UserFormOptionsOutput, roles are deliberately NOT included (verified
-    against Legacy's UserdirectoryController::index(), whose `abilities`
-    prop only ever ships instruments/voices/choirjobs)."""
+    UserFormOptionsOutput, roles are deliberately NOT included (only
+    instruments/voices/choirjobs are filterable)."""
 
     instruments: list[PositionRefOutput]
     voices: list[PositionRefOutput]
@@ -17,8 +16,8 @@ class UserDirectoryAbilitiesOutput(BaseModel):
 
 
 class UserDirectoryEntryOutput(BaseModel):
-    """Mirrors Legacy's User\\Directory resource: `email` is only exposed
-    once the address is verified, mirroring `hasVerifiedEmail()`."""
+    """One directory entry: `email` is only exposed once the address is
+    verified."""
 
     id: uuid.UUID
     surname: str

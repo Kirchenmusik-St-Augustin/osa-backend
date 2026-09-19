@@ -13,16 +13,14 @@ from app.schemas.performance import (
     PerformanceSetupOutput,
 )
 
-# Field names are snake_case throughout (not Legacy's camelCase `notBooked`)
-# -- both this API and osa-frontend are built from scratch here, so there is
-# no wire-compatibility reason to mirror Legacy's JSON casing (Schritt 6
-# plan A.3). `for` (Legacy's field name on a booking-status "for" position)
-# is a reserved Python keyword, renamed to `position`.
+# Field names are snake_case throughout. `for` (the field name of a
+# booking-status "for" position) is a reserved Python keyword, renamed to
+# `position`.
 
 
 class CastMemberInput(StrictInputModel):
     id: LenientUuid
-    fee: int = Field(ge=0)
+    fee: int = Field(ge=0, le=999)
 
 
 class CastSetupItemInput(StrictInputModel):
@@ -225,4 +223,4 @@ class MessageRecipientOutput(BaseModel):
 
 class SendMessageRequest(StrictInputModel):
     recipient_ids: list[LenientUuid] = Field(min_length=1)
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=2000)

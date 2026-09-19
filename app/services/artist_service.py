@@ -7,6 +7,12 @@ from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumwork import Propriumwork
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+    NotFoundError,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -19,52 +25,49 @@ if TYPE_CHECKING:
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 32
 _SEARCH_RESULT_LIMIT = 20
+_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
 
 
-class ArtistNotFoundError(Exception):
+class ArtistNotFoundError(NotFoundError):
     """Raised when `artist_id` doesn't exist."""
 
 
-class ArtistValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's SaveRequest
-    error bags -- 1:1 auth_service.RegistrationConflictError pattern."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Artist validation failed")
+class ArtistValidationError(DomainValidationError):
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as auth_service.RegistrationConflictError."""
 
 
-class ArtistInUseError(Exception):
+class ArtistInUseError(GeneralValidationError):
     """Raised when delete is blocked by a dependent Ordinariumwork/
-    Propriumwork row -- mirrors Legacy's HasDependencies check. The third
-    Legacy dependency (`performances`) doesn't exist in osa-backend yet
-    (Schritt 5) and is added here once that domain lands."""
+    Propriumwork/Performance row."""
+
+    def __init__(self) -> None:
+        super().__init__(_IN_USE_DETAIL)
 
 
 def label_for(artist: Artist) -> str:
-    """Mirrors Legacy's HasHumanNames::name() virtual attribute
-    ("SURNAME, Givenname"), used as the display label in search results
-    and embedded in Ordinariumwork/Propriumwork responses."""
+    """Display label ("SURNAME, Givenname"), used in search results and
+    embedded in Ordinariumwork/Propriumwork responses."""
     return label_for_name(artist.surname or "", artist.givenname)
 
 
-def _name_year_range_error(field: str, value: int | None) -> tuple[str, str] | None:
+def _name_year_range_error(field: str, value: int | None) -> FieldError | None:
     if value is not None and not 1000 <= value <= 9999:
-        return field, "Muss eine vierstellige Jahreszahl sein."
+        return FieldError(field, "Muss eine vierstellige Jahreszahl sein.")
     return None
 
 
 def _validate(
     db: Session, data: ArtistRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
 
     length_error_msg = (
         f"Muss zwischen {_NAME_MIN_LENGTH} und {_NAME_MAX_LENGTH} Zeichen lang sein."
     )
     for field_name, value in (("surname", data.surname), ("givenname", data.givenname)):
         if not _NAME_MIN_LENGTH <= len(value) <= _NAME_MAX_LENGTH:
-            errors.append((field_name, length_error_msg))
+            errors.append(FieldError(field_name, length_error_msg))
 
     errors.extend(
         year_error
@@ -83,8 +86,8 @@ def _validate(
         stmt = stmt.where(Artist.id != exclude_id)
     if db.execute(stmt).scalar_one_or_none() is not None:
         msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(("surname", msg))
-        errors.append(("givenname", msg))
+        errors.append(FieldError("surname", msg))
+        errors.append(FieldError("givenname", msg))
 
     return errors
 
@@ -99,9 +102,8 @@ def _get_or_404(db: Session, artist_id: uuid.UUID) -> Artist:
 
 def list_composer_artists(db: Session) -> Sequence[Artist]:
     """Dropdown source for Ordinariumwork/Propriumwork's "Komponist" select
-    -- mirrors Legacy's `Artist::ofType('composer')->get()`, which is
-    embedded directly in those controllers' ShowForm resources rather than
-    gated under ArtistController itself (see artistMaintain/
+    -- embedded directly in those entities' form payloads rather than
+    gated by the artist maintain permission itself (see artistMaintain/
     ordinariumworkMaintain/propriumworkMaintain in permission_service.py,
     which share the identical planner/disponent condition)."""
     stmt = (
@@ -113,10 +115,8 @@ def list_composer_artists(db: Session) -> Sequence[Artist]:
 
 
 def search_artists(db: Session, query: str) -> Sequence[Artist]:
-    """Real indexed-ish DB query, replacing Legacy's `Artist::search()`
-    anti-pattern (loads the entire table into PHP, filters in memory).
-    Every whitespace-separated word in `query` must appear somewhere in
-    "surname givenname" (mirrors Legacy's `Str::containsAll` semantics)."""
+    """Filtered in the database (not in memory). Every whitespace-separated
+    word in `query` must appear somewhere in "surname givenname"."""
     words = [word for word in query.lower().split() if word]
     if not words:
         return []
@@ -174,10 +174,7 @@ def get_artist(db: Session, artist_id: uuid.UUID) -> Artist:
 def _artist_has_dependencies(db: Session, artist_id: uuid.UUID) -> bool:
     # Ordinariumwork/Propriumwork's artist_id is the composer; Performance's
     # is the conductor (Dirigent) -- both point at the same `artists` table,
-    # and Legacy's own $dependencies = ['ordinariumworks', 'propriumworks',
-    # 'performances'] treats either role as "in use" alike. Performance
-    # retrofitted once Schritt 5 built that domain (was deferred before,
-    # mirroring the Instrument/Voice retrofit in coreelement_service.py).
+    # and either role counts as "in use" alike.
     for model in (Ordinariumwork, Propriumwork, Performance):
         count = db.execute(
             select(func.count()).select_from(model).where(model.artist_id == artist_id)

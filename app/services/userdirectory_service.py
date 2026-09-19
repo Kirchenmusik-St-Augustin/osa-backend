@@ -45,10 +45,8 @@ def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
 
 
 def list_all_users(db: Session) -> Sequence[User]:
-    """1:1 Legacy's `User::all()` branch (type=all) -- excludes soft-deleted
-    users (Legacy's SoftDeletingScope applies implicitly there too),
-    ordered by surname/givenname (Legacy's OrderBySurnameGivenname
-    scope)."""
+    """All users (type=all) -- excludes soft-deleted users, ordered by
+    surname/givenname."""
     stmt = (
         select(User)
         .where(User.deleted_at.is_(None))
@@ -60,13 +58,13 @@ def list_all_users(db: Session) -> Sequence[User]:
 def list_users_for_position(
     db: Session, position_type: PositionType, position_id: uuid.UUID
 ) -> Sequence[User]:
-    """1:1 Legacy's `$item->users` branch (type=instruments|voices|choirjobs)
-    -- via the polymorphic user_positions pivot, same ordering/soft-delete
-    exclusion as list_all_users(). A position_id that doesn't correspond to
-    a real Instrument/Voice/Choirjob row simply yields no matches (the
-    filter dropdown only ever offers ids it fetched from get_abilities()
-    itself, so this path is not reachable through the real UI -- no need
-    for Legacy's `findOrFail()` 404 here)."""
+    """Users holding a position (type=instruments|voices|choirjobs) -- via
+    the user_positions pivot, same ordering/soft-delete exclusion as
+    list_all_users(). A position_id that doesn't correspond to a real
+    Instrument/Voice/Choirjob row simply yields no matches (the filter
+    dropdown only ever offers ids it fetched from get_abilities() itself,
+    so this path is not reachable through the real UI -- no need for a 404
+    here)."""
     stmt = (
         select(User)
         .join(UserPosition, UserPosition.user_id == User.id)

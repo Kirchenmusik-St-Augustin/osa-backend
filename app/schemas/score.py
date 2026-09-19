@@ -1,20 +1,29 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import StrictInputModel
+from app.schemas.base import BlankToNone, OptionalText, StrictInputModel
 from app.services.score_fields import SCORE_FIELDS
 
 # Shared by all 12 "*art" (Original/Kopie/Original-Kopie) fields -- always
-# optional, so the blank placeholder stays a real, reachable option here
-# (unlike the required selects below).
-_ArtValue = Literal["", "Original", "Kopie", "Original/Kopie"]
+# optional: the form's blank option is submitted as "" and normalized to
+# None.
+_ArtValue = Literal["Original", "Kopie", "Original/Kopie"]
+_OptionalArt = Annotated[_ArtValue | None, BlankToNone]
 
-# "sparte" is optional -- blank placeholder stays reachable.
+# geboren/gestorben/jahr: the only number fields with no meaningful "empty
+# means 0" convention (see score_fields.py's docstring). A number input
+# left blank submits "" like any other blank form field, so it needs the
+# same BlankToNone normalization text/select fields get -- strict=True
+# would otherwise reject a bare "" for an int field. The `ge`/`le` range
+# check sits on the inner `int`, not the outer union -- Pydantic applies a
+# numeric constraint to whatever type it's attached to, and applied to the
+# union it raises a TypeError on the None branch instead of skipping it.
+_OptionalYear = Annotated[Annotated[int, Field(ge=0, le=9999)] | None, BlankToNone]
+
 _SparteValue = Literal[
-    "",
     "Advent/Weihnacht",
     "Bundeshymne",
     "Chor",
@@ -32,13 +41,11 @@ _SparteValue = Literal[
     "Symphonie",
     "Volkslied",
 ]
+# "sparte" is optional, like the "*art" fields above.
+_OptionalSparte = Annotated[_SparteValue | None, BlankToNone]
 
-# "inhalt" is REQUIRED -- Legacy's own config still lists a leading ""
-# among its allowed `values` (kept in SCORE_FIELDS for the fields-config
-# wire format, i.e. the rendered <select>'s placeholder option), but
-# Laravel's `required` rule rejects an actually-empty submission before
-# the `in:` rule is ever reached, so "" is practically unreachable here.
-# Excluding it from this Literal enforces that same practical outcome.
+# "inhalt" is REQUIRED: unlike the optional selects above it has no blank
+# option, so an empty submission is rejected outright.
 _InhaltValue = Literal[
     "Orchestermaterial",
     "Chormaterial",
@@ -63,88 +70,87 @@ class ScoreFieldConfig(BaseModel):
 
 
 class ScoreRequest(StrictInputModel):
-    """All 94 Score::$fields values. Every field always carries a concrete
-    value (never None) -- 1:1 how Legacy's own form always submits a full
-    payload (`setDefaults()` seeds "" for text/select, 0 for every number
-    including the "nullable" geboren/gestorben/jahr, which Legacy's own
-    create form also defaults to 0, never blank). NULL only ever appears
-    at the DB layer for pre-existing rows; the service layer coalesces it
-    to "" / 0 on read (see score_service.py), so Optional never needs to
-    cross this API boundary at all."""
+    """All 94 score card fields. The form always submits the full card, so
+    every field must be present in the payload. Blank optional text/select
+    values (submitted as "") are normalized to None and stored as NULL;
+    numbers default to 0 in the form and stay required, except
+    geboren/gestorben/jahr, which stay NULL when left blank -- there is no
+    meaningful year 0, so unlike every other number field they carry no
+    "empty means 0" convention (see score_service.py's get_defaults())."""
 
     # -- Fundort (physical location) --
     kasten: str = Field(min_length=1, max_length=SCORE_FIELDS["kasten"].length)
     boxnr: str = Field(min_length=1, max_length=SCORE_FIELDS["boxnr"].length)
-    auch: str = Field(max_length=SCORE_FIELDS["auch"].length)
+    auch: OptionalText = Field(max_length=SCORE_FIELDS["auch"].length)
     inhalt: _InhaltValue
 
     # -- Werk identification --
-    surname: str = Field(max_length=SCORE_FIELDS["surname"].length)
-    givenname: str = Field(max_length=SCORE_FIELDS["givenname"].length)
-    geboren: int = Field(ge=0, le=9999)
-    gestorben: int = Field(ge=0, le=9999)
+    surname: OptionalText = Field(max_length=SCORE_FIELDS["surname"].length)
+    givenname: OptionalText = Field(max_length=SCORE_FIELDS["givenname"].length)
+    geboren: _OptionalYear
+    gestorben: _OptionalYear
     werk: str = Field(min_length=1, max_length=SCORE_FIELDS["werk"].length)
-    teil: str = Field(max_length=SCORE_FIELDS["teil"].length)
-    sparte: _SparteValue
-    verz: str = Field(max_length=SCORE_FIELDS["verz"].length)
-    jahr: int = Field(ge=0, le=9999)
+    teil: OptionalText = Field(max_length=SCORE_FIELDS["teil"].length)
+    sparte: _OptionalSparte
+    verz: OptionalText = Field(max_length=SCORE_FIELDS["verz"].length)
+    jahr: _OptionalYear
 
     # -- Holdings: Partitur 1/2 --
-    part1verl: str = Field(max_length=SCORE_FIELDS["part1verl"].length)
-    part1art: _ArtValue
-    part1zust: str = Field(max_length=SCORE_FIELDS["part1zust"].length)
+    part1verl: OptionalText = Field(max_length=SCORE_FIELDS["part1verl"].length)
+    part1art: _OptionalArt
+    part1zust: OptionalText = Field(max_length=SCORE_FIELDS["part1zust"].length)
     part1anz: int = Field(ge=0, le=9999)
-    part2verl: str = Field(max_length=SCORE_FIELDS["part2verl"].length)
-    part2art: _ArtValue
-    part2zust: str = Field(max_length=SCORE_FIELDS["part2zust"].length)
+    part2verl: OptionalText = Field(max_length=SCORE_FIELDS["part2verl"].length)
+    part2art: _OptionalArt
+    part2zust: OptionalText = Field(max_length=SCORE_FIELDS["part2zust"].length)
     part2anz: int = Field(ge=0, le=9999)
 
     # -- Holdings: Klavierauszug 1/2 --
-    klausz1verl: str = Field(max_length=SCORE_FIELDS["klausz1verl"].length)
-    klausz1art: _ArtValue
-    klausz1zust: str = Field(max_length=SCORE_FIELDS["klausz1zust"].length)
+    klausz1verl: OptionalText = Field(max_length=SCORE_FIELDS["klausz1verl"].length)
+    klausz1art: _OptionalArt
+    klausz1zust: OptionalText = Field(max_length=SCORE_FIELDS["klausz1zust"].length)
     klausz1anz: int = Field(ge=0, le=9999)
-    klausz2verl: str = Field(max_length=SCORE_FIELDS["klausz2verl"].length)
-    klausz2art: _ArtValue
-    klausz2zust: str = Field(max_length=SCORE_FIELDS["klausz2zust"].length)
+    klausz2verl: OptionalText = Field(max_length=SCORE_FIELDS["klausz2verl"].length)
+    klausz2art: _OptionalArt
+    klausz2zust: OptionalText = Field(max_length=SCORE_FIELDS["klausz2zust"].length)
     klausz2anz: int = Field(ge=0, le=9999)
 
     # -- Holdings: Chorpartitur 1/2 --
-    chorpart1verl: str = Field(max_length=SCORE_FIELDS["chorpart1verl"].length)
-    chorpart1art: _ArtValue
-    chorpart1zust: str = Field(max_length=SCORE_FIELDS["chorpart1zust"].length)
+    chorpart1verl: OptionalText = Field(max_length=SCORE_FIELDS["chorpart1verl"].length)
+    chorpart1art: _OptionalArt
+    chorpart1zust: OptionalText = Field(max_length=SCORE_FIELDS["chorpart1zust"].length)
     chorpart1anz: int = Field(ge=0, le=9999)
-    chorpart2verl: str = Field(max_length=SCORE_FIELDS["chorpart2verl"].length)
-    chorpart2art: _ArtValue
-    chorpart2zust: str = Field(max_length=SCORE_FIELDS["chorpart2zust"].length)
+    chorpart2verl: OptionalText = Field(max_length=SCORE_FIELDS["chorpart2verl"].length)
+    chorpart2art: _OptionalArt
+    chorpart2zust: OptionalText = Field(max_length=SCORE_FIELDS["chorpart2zust"].length)
     chorpart2anz: int = Field(ge=0, le=9999)
 
     # -- Holdings: Stimmen (Sopran/Alt/Tenor/Bass) --
-    stsoprverl: str = Field(max_length=SCORE_FIELDS["stsoprverl"].length)
-    stsoprart: _ArtValue
-    stsoprzust: str = Field(max_length=SCORE_FIELDS["stsoprzust"].length)
+    stsoprverl: OptionalText = Field(max_length=SCORE_FIELDS["stsoprverl"].length)
+    stsoprart: _OptionalArt
+    stsoprzust: OptionalText = Field(max_length=SCORE_FIELDS["stsoprzust"].length)
     stsopranz: int = Field(ge=0, le=9999)
-    staltverl: str = Field(max_length=SCORE_FIELDS["staltverl"].length)
-    staltart: _ArtValue
-    staltzust: str = Field(max_length=SCORE_FIELDS["staltzust"].length)
+    staltverl: OptionalText = Field(max_length=SCORE_FIELDS["staltverl"].length)
+    staltart: _OptionalArt
+    staltzust: OptionalText = Field(max_length=SCORE_FIELDS["staltzust"].length)
     staltanz: int = Field(ge=0, le=9999)
-    sttenverl: str = Field(max_length=SCORE_FIELDS["sttenverl"].length)
-    sttenart: _ArtValue
-    sttenzust: str = Field(max_length=SCORE_FIELDS["sttenzust"].length)
+    sttenverl: OptionalText = Field(max_length=SCORE_FIELDS["sttenverl"].length)
+    sttenart: _OptionalArt
+    sttenzust: OptionalText = Field(max_length=SCORE_FIELDS["sttenzust"].length)
     sttenanz: int = Field(ge=0, le=9999)
-    stbassverl: str = Field(max_length=SCORE_FIELDS["stbassverl"].length)
-    stbassart: _ArtValue
-    stbasszust: str = Field(max_length=SCORE_FIELDS["stbasszust"].length)
+    stbassverl: OptionalText = Field(max_length=SCORE_FIELDS["stbassverl"].length)
+    stbassart: _OptionalArt
+    stbasszust: OptionalText = Field(max_length=SCORE_FIELDS["stbasszust"].length)
     stbassanz: int = Field(ge=0, le=9999)
 
     # -- Holdings: Orgel/Orchester ("orch" alone has no "anz" column) --
-    orgelverl: str = Field(max_length=SCORE_FIELDS["orgelverl"].length)
-    orgelart: _ArtValue
-    orgelzust: str = Field(max_length=SCORE_FIELDS["orgelzust"].length)
+    orgelverl: OptionalText = Field(max_length=SCORE_FIELDS["orgelverl"].length)
+    orgelart: _OptionalArt
+    orgelzust: OptionalText = Field(max_length=SCORE_FIELDS["orgelzust"].length)
     orgelanz: int = Field(ge=0, le=9999)
-    orchverl: str = Field(max_length=SCORE_FIELDS["orchverl"].length)
-    orchart: _ArtValue
-    orchzust: str = Field(max_length=SCORE_FIELDS["orchzust"].length)
+    orchverl: OptionalText = Field(max_length=SCORE_FIELDS["orchverl"].length)
+    orchart: _OptionalArt
+    orchzust: OptionalText = Field(max_length=SCORE_FIELDS["orchzust"].length)
 
     # -- Instrumentation headcounts --
     violine1: int = Field(ge=0, le=9999)
@@ -173,25 +179,25 @@ class ScoreRequest(StrictInputModel):
     pauke: int = Field(ge=0, le=9999)
 
     # -- Special/guest instrument slots --
-    soinstr1art: str = Field(max_length=SCORE_FIELDS["soinstr1art"].length)
+    soinstr1art: OptionalText = Field(max_length=SCORE_FIELDS["soinstr1art"].length)
     soinstr1anz: int = Field(ge=0, le=9999)
-    soinstr2art: str = Field(max_length=SCORE_FIELDS["soinstr2art"].length)
+    soinstr2art: OptionalText = Field(max_length=SCORE_FIELDS["soinstr2art"].length)
     soinstr2anz: int = Field(ge=0, le=9999)
-    soinstr3art: str = Field(max_length=SCORE_FIELDS["soinstr3art"].length)
+    soinstr3art: OptionalText = Field(max_length=SCORE_FIELDS["soinstr3art"].length)
     soinstr3anz: int = Field(ge=0, le=9999)
-    soinstr4art: str = Field(max_length=SCORE_FIELDS["soinstr4art"].length)
+    soinstr4art: OptionalText = Field(max_length=SCORE_FIELDS["soinstr4art"].length)
     soinstr4anz: int = Field(ge=0, le=9999)
 
     # -- Remarks --
-    bemerkung: str = Field(max_length=SCORE_FIELDS["bemerkung"].length)
-    zusatznoten: str = Field(max_length=SCORE_FIELDS["zusatznoten"].length)
+    bemerkung: OptionalText = Field(max_length=SCORE_FIELDS["bemerkung"].length)
+    zusatznoten: OptionalText = Field(max_length=SCORE_FIELDS["zusatznoten"].length)
 
 
 class ScoreResponse(BaseModel):
     id: uuid.UUID
     created_at: UtcDatetime | None
     updated_at: UtcDatetime | None
-    fields: dict[str, str | int]
+    fields: dict[str, str | int | None]
 
 
 class ScoreSearchResult(BaseModel):

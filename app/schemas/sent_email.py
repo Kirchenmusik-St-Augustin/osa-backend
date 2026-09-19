@@ -6,9 +6,8 @@ from app.core.datetime_utils import UtcDatetime
 
 
 class SentEmailShortOutput(BaseModel):
-    """1:1 Legacy's `SentEmail\\Short` resource -- `datetime` maps to
-    `updated_at` here (NOT `created_at`, see SentEmailShowOutput below),
-    matching `SentEmail::ofMonth()`'s own filter/sort column."""
+    """One row of the monthly sent-mail list -- `datetime` is the row's
+    `created_at`."""
 
     id: uuid.UUID
     datetime: UtcDatetime
@@ -17,9 +16,8 @@ class SentEmailShortOutput(BaseModel):
 
 
 class SentEmailShowOutput(BaseModel):
-    """1:1 Legacy's `SentEmail\\Show` resource -- `datetime` maps to
-    `created_at` here, unlike the Short/list resource above (verified
-    against Legacy source, not a typo)."""
+    """Full detail of one sent mail -- `datetime` is the row's
+    `created_at`."""
 
     id: uuid.UUID
     mailer: str | None

@@ -98,7 +98,6 @@ def test_valid_secret_key_and_tier2_defaults(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("SESSION_LIFETIME_MINUTES", raising=False)
     monkeypatch.delenv("SESSION_IDLE_TIMEOUT_MINUTES", raising=False)
     monkeypatch.delenv("REFRESH_TOKEN_LIFETIME_DAYS", raising=False)
-    monkeypatch.delenv("PASSWORD_MIN_LENGTH", raising=False)
 
     settings = Settings()
 
@@ -106,7 +105,6 @@ def test_valid_secret_key_and_tier2_defaults(monkeypatch: pytest.MonkeyPatch):
     assert settings.session_lifetime_minutes == 15
     assert settings.session_idle_timeout_minutes == 120
     assert settings.refresh_token_lifetime_days == 7
-    assert settings.password_min_length == 8
 
 
 def test_koofr_backup_defaults(monkeypatch: pytest.MonkeyPatch):

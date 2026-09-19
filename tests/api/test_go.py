@@ -65,11 +65,11 @@ class TestGoResolve:
         assert response.status_code == 404
 
     def test_listall_is_not_a_public_dump(self, client):
-        # Regression test for the closed security bug (Legacy's
-        # GoController::go() special-cased "listAll" as an unauthenticated
-        # dump of every stored target URL). With no shorturl actually
-        # named "listAll", this must 404 like any other unknown path --
-        # never return a 200 with a list of targets.
+        # Regression test for a closed security bug (a special "listAll"
+        # path once served an unauthenticated dump of every stored target
+        # URL). With no shorturl actually named "listAll", this must 404
+        # like any other unknown path -- never return a 200 with a list of
+        # targets.
         response = client.get("/go/listAll", follow_redirects=False)
         assert response.status_code == 404
 

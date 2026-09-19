@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, cast, overload
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.datetime_utils import (
     ensure_tz_aware,
@@ -30,22 +31,17 @@ if TYPE_CHECKING:
 
 class RequestLogUserNotFoundError(Exception):
     """Raised when `user_id` doesn't exist at all (soft-deleted users ARE
-    found, 1:1 Legacy's `User::withTrashed()->find()` here)."""
+    found)."""
 
 
 class RequestLogNotFoundError(Exception):
     """Raised when `request_log_id` doesn't exist."""
 
 
-# Legacy's `RequestLog::process()` only masks 'password'/'password_confirmation'
-# in the REQUEST body. Extended here (User-confirmed 2026-08-10, Schritt 9)
-# to also cover the RESPONSE body and a wider set of keys -- our JWT auth
-# returns `access_token` directly in login/refresh response bodies
-# (legacy's session id never
-# leaves an httponly cookie), so a 1:1 narrow mask would leak live tokens
-# into an administrator-readable log table. Pure security hardening, no
-# legacy business result changed -- security bugs get fixed, not
-# replicated.
+# Sensitive keys are masked in both the REQUEST and the RESPONSE body --
+# our JWT auth returns `access_token` directly in login/refresh response
+# bodies, so without redaction live tokens would leak into an
+# administrator-readable log table.
 REDACT_KEYS = frozenset(
     {
         "password",
@@ -53,6 +49,7 @@ REDACT_KEYS = frozenset(
         "auth_password",
         "current_password",
         "new_password",
+        "newpw",
         "access_token",
         "refresh_token",
         "token",
@@ -81,14 +78,9 @@ def redact(value: JsonValue) -> JsonValue:
     return value
 
 
-# Legacy's three RequestLog::process() exclusions: route name 'dumpdb' (no
-# equivalent route exists in the new backend, N/A), path starting with the
-# literal string 'web' (a legacy-only routing artifact, no equivalent path
-# prefix exists here, N/A), and a `skipRequestLog` response header (kept).
-# Additionally excludes the liveness check `GET /` (app/api/system.py) --
-# a sensible, business-neutral addition: logging every healthcheck ping
-# would flood the table with zero audit value, no legacy behavior implied
-# otherwise since legacy has no equivalent unauthenticated liveness route.
+# Requests excluded from logging: those whose response carries the skip
+# header, and the liveness check `GET /` (app/api/system.py) -- logging
+# every healthcheck ping would flood the table with zero audit value.
 _SKIP_PATHS = frozenset({"/"})
 
 
@@ -103,9 +95,23 @@ def _get_or_create_client_user_agent(db: Session, user_agent_string: str) -> uui
     existing_id = result.scalar_one_or_none()
     if existing_id is not None:
         return existing_id
-    client_user_agent = ClientUserAgent(string=user_agent_string)
-    db.add(client_user_agent)
-    db.flush()
+    try:
+        with db.begin_nested():
+            client_user_agent = ClientUserAgent(string=user_agent_string)
+            db.add(client_user_agent)
+            db.flush()
+    except IntegrityError:
+        # Lost a TOCTOU race: this table's get-or-create runs on every
+        # HTTP request, so a concurrent request can insert the same new
+        # user_agent_string between the SELECT above and this INSERT.
+        # begin_nested()'s SAVEPOINT already rolled back the failed
+        # insert -- the other request's row is committed by now, so a
+        # plain re-SELECT finds it.
+        return db.execute(
+            select(ClientUserAgent.id).where(
+                ClientUserAgent.string == user_agent_string
+            )
+        ).scalar_one()
     return client_user_agent.id
 
 
@@ -123,8 +129,7 @@ def record_request(
     response_content: JsonValue,
     memory_usage: int,
 ) -> None:
-    """1:1 port of legacy's `RequestLog::process($request, $response)` --
-    dedupes the User-Agent string via ClientUserAgent get-or-create, then
+    """Dedupes the User-Agent string via ClientUserAgent get-or-create, then
     writes one RequestLog row. Called from RequestLoggingMiddleware via
     `starlette.concurrency.run_in_threadpool()` (this function itself stays
     a plain sync function, no event-loop awareness needed here)."""
@@ -151,22 +156,18 @@ def record_request(
 
 
 def _label_without_comma(user: User) -> str:
-    # Deliberate Legacy inconsistency vs. list_entries_for_user_day()'s
-    # comma-format `username` below: the Index.vue pug template renders the
-    # raw `{{ user.surname }} {{ user.givenname }}` fields directly (space-
-    # separated, no comma) instead of the comma-format `name` accessor --
-    # this page's User\Short resource never exposes a combined `name` field.
+    # Space-separated label (no comma), deliberately unlike the comma-format
+    # `username` in list_entries_for_user_day() below.
     return f"{user.surname} {user.givenname}" if user.givenname else user.surname
 
 
 def list_days_with_users_for_month(
     db: Session, year: int, month: int
 ) -> list[RequestLogDayGroupOutput]:
-    """Real functional change vs. Legacy's flat month-only user list
-    (User decision 2026-08-12) -- groups the month's activity by local
-    (Settings.app_timezone) calendar day, newest day first, for
-    post-cutover monitoring ("which days had activity, who was active").
-    Users per day, `withTrashed()` (no `deleted_at` filter), sorted by
+    """Groups the month's activity by local (Settings.app_timezone)
+    calendar day, newest day first, for monitoring ("which days had
+    activity, who was active"). Users per day include soft-deleted ones (no
+    `deleted_at` filter), sorted by
     (surname, givenname) -- same lesson as
     support_service.list_roles_with_contacts().
 
@@ -206,7 +207,7 @@ def list_days_with_users_for_month(
         user_ids_by_day.setdefault(local_day, set()).add(user_id)
 
     all_user_ids = {uid for ids in user_ids_by_day.values() for uid in ids}
-    # Query 2/2: withTrashed()-equivalent, same as the old list_users_for_month().
+    # Query 2/2: includes soft-deleted users (no `deleted_at` filter).
     users_by_id = {
         user.id: user
         for user in db.execute(select(User).where(User.id.in_(all_user_ids)))
@@ -272,12 +273,10 @@ def list_entries_for_user_day(
 
 
 def get(db: Session, request_log_id: uuid.UUID) -> RequestLogShowOutput:
-    """1:1 Legacy's `RequestLog\\Show` resource. `user_name` is resolved via
-    a PLAIN (non-withTrashed) User lookup -- a real, deliberate asymmetry
-    vs. list_days_with_users_for_month()/list_entries_for_user_day() above:
-    Legacy's Show resource calls bare `User::find($this->user_id)`, which
-    returns null for a since-soft-deleted user (unlike the Index/IndexUser
-    controllers' explicit `withTrashed()`)."""
+    """`user_name` is resolved via a plain lookup that excludes soft-deleted
+    users -- a deliberate asymmetry vs. list_days_with_users_for_month()/
+    list_entries_for_user_day() above, which include them: a since-soft-
+    deleted user yields no `user_name` here."""
     row = db.execute(
         select(RequestLog).where(RequestLog.id == request_log_id)
     ).scalar_one_or_none()

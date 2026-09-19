@@ -14,23 +14,19 @@ class PermissionRule:
     condition: Callable[[set[str], bool], bool]
 
 
-# Ported from Legacy's 21 Policy ability-rules (app/Models/Policies/*Policy.php)
-# into one centralized, testable matrix. `role_names` is the set of Role.name
+# One centralized, testable permission matrix. `role_names` is the set of Role.name
 # values currently assigned to the user (planner/disponent/billing/scores/
 # shorturls); `is_administrator` is the separate `users.administrator`
 # boolean flag, never a role row.
 #
-# `clientUserAgentView` (Legacy's ClientUserAgentPolicy::view) was NOT
-# ported: Legacy itself never gates any route on it (no controller ever
-# calls Gate::authorize('view', ClientUserAgent::class)), so it was dead
-# code there too -- porting it would just carry that dead code forward.
+# There is deliberately no `clientUserAgentView` permission: no route is
+# gated on it.
 #
 # The Performance-domain rules (performanceMaintain/-Cast/-ChangeUserStatus)
-# only encode Legacy's ROLE gate here -- Legacy additionally requires the
-# specific Performance's schedule to not be in the past (an object-level
-# check, not a user-level one). That temporal check is layered on at the
-# Performance service call site once the Performance domain exists
-# (Schritt 5), not part of this matrix.
+# only encode the ROLE gate here -- the specific Performance's schedule must
+# additionally not be in the past (an object-level check, not a user-level
+# one). That temporal check is layered on at the Performance service call
+# site, not part of this matrix.
 PERMISSION_RULES: list[PermissionRule] = [
     PermissionRule(
         permission="userMaintain",

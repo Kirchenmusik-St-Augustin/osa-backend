@@ -11,23 +11,18 @@ from app.db.uuid_pk import uuid_pk
 
 
 class RequestLog(Base):
-    """Mirrors legacy `request_logs` exactly (structural 1:1 transfer, no
-    new FK constraints beyond what Legacy had). Written by
-    `app.api.middleware.request_logging.RequestLoggingMiddleware` for every
-    non-excluded request -- 1:1 legacy's `RequestLog::process()`, called
-    from `RequestLogging` middleware's `terminate()` hook. `client_ips`/
-    `request_input`/`response_content` are native JSONB columns (were
-    varchar holding manually json.dumps()-encoded text before this slice)
-    -- SQLAlchemy handles (de)serialization automatically, the service
-    layer works with plain Python objects (list/dict/etc.) end to end.
-    `client_user_agent_id`/`user_id` are nullable, ON DELETE SET NULL
-    foreign keys as of the FK-hardening slice (2026-09): an anonymous or
-    since-deleted client/user never blocks or removes this table's own
-    audit trail entries. `created_at`/`updated_at` are TIMESTAMPTZ as of
-    the TIMESTAMPTZ + audit-trigger hardening slice (2026-09): `created_at`
-    is populated by the database's own DEFAULT now(), `updated_at` by the
-    shared set_updated_at() BEFORE UPDATE trigger -- neither is assigned
-    from Python anymore."""
+    """Audit-trail entry for every non-excluded request, written by
+    `app.api.middleware.request_logging.RequestLoggingMiddleware`.
+    `client_ips`/`request_input`/`response_content` are native JSONB
+    columns -- SQLAlchemy handles (de)serialization automatically, the
+    service layer works with plain Python objects (list/dict/etc.) end to
+    end. `client_user_agent_id`/`user_id` are nullable, ON DELETE SET NULL
+    foreign keys: an anonymous or since-deleted client/user never blocks or
+    removes this table's own audit trail entries. `created_at`/
+    `updated_at` are TIMESTAMPTZ: `created_at` is populated by the
+    database's own DEFAULT now(), `updated_at` by the shared
+    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
+    Python."""
 
     __tablename__ = "request_logs"
 
@@ -35,10 +30,10 @@ class RequestLog(Base):
     client_ip: Mapped[str]
     client_ips: Mapped[list[str] | None] = mapped_column(JSONB())
     client_user_agent_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("client_user_agents.id", ondelete="SET NULL")
+        ForeignKey("client_user_agents.id", ondelete="SET NULL", onupdate="SET NULL")
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL")
+        ForeignKey("users.id", ondelete="SET NULL", onupdate="SET NULL")
     )
     request_method: Mapped[str]
     request_path: Mapped[str]

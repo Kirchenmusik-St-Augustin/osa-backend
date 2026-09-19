@@ -1,11 +1,12 @@
 import uuid
 from datetime import datetime
+from enum import IntEnum
 from typing import Annotated
 
 from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import LenientUuid, StrictInputModel
+from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
 
 # Pydantic's model-level strict=True (StrictInputModel) rejects ISO-8601
 # datetime STRINGS for a plain `datetime` field -- JSON has no native
@@ -31,7 +32,7 @@ class PerformanceSetupInput(StrictInputModel):
 
 class PerformanceRehearsalInput(StrictInputModel):
     schedule: _LenientDatetime
-    comment: str | None = Field(default=None, max_length=30)
+    comment: OptionalText = Field(default=None, max_length=30)
 
 
 class PerformancePropriumEntryInput(StrictInputModel):
@@ -44,12 +45,12 @@ class PerformanceRequest(StrictInputModel):
     location_id: LenientUuid
     ordinariumwork_id: LenientUuid
     artist_id: LenientUuid | None = None
-    description: str | None = None
-    choirjob_defaultfee: int = Field(ge=0)
-    instrument_defaultfee: int = Field(ge=0)
-    voice_defaultfee: int = Field(ge=0)
-    extracost_amount: int | None = Field(default=None, ge=0)
-    extracost_description: str | None = None
+    description: OptionalText = None
+    choirjob_defaultfee: int = Field(ge=0, le=999)
+    instrument_defaultfee: int = Field(ge=0, le=999)
+    voice_defaultfee: int = Field(ge=0, le=999)
+    extracost_amount: int | None = Field(default=None, ge=0, le=999)
+    extracost_description: OptionalText = None
     setup: PerformanceSetupInput
     proprium: list[PerformancePropriumEntryInput] = Field(default_factory=list)
     rehearsals: list[PerformanceRehearsalInput] = Field(default_factory=list)
@@ -74,10 +75,9 @@ class PerformancePositionOutput(BaseModel):
     name: str
     quantity: int
     # Lets the frontend flag a setup row whose Instrument/Voice/Choirjob
-    # has since been archived (osa-only `active` addition, outside the
-    # structural 1:1 transfer's scope) -- get_setup() resolves existing rows
-    # by id regardless of active status, so a since-archived position
-    # still shows up here correctly, just visibly marked.
+    # has since been archived -- get_setup() resolves existing rows by id
+    # regardless of active status, so a since-archived position still shows
+    # up here correctly, just visibly marked.
     active: bool
 
 
@@ -114,15 +114,26 @@ class PositionRefOutput(BaseModel):
     name: str
 
 
-class BookingStatusOutput(BaseModel):
-    """Port of `userBookingStatus()`'s 6-state result: 0=not bookable,
-    1=bookable/unrequested, 2=requested, 3=standby, 4=booked/regular,
-    5=rejected ("nicht gebucht"). Lives here (not app.schemas.booking)
-    because PerformanceCalendarItem below needs it too, and booking.py
-    already depends on this module for Location/Proprium/Rehearsal/Setup --
-    the other direction would be circular."""
+class BookingStatus(IntEnum):
+    """The 6 states of a user's booking status for one performance. The
+    integer value is the wire format."""
 
-    status: int
+    NOT_BOOKABLE = 0
+    BOOKABLE = 1  # bookable, no request or booking yet
+    REQUESTED = 2
+    STANDBY = 3  # booked, but on a standby slot
+    BOOKED = 4  # booked on a regular slot
+    REJECTED = 5  # request rejected ("nicht gebucht")
+
+
+class BookingStatusOutput(BaseModel):
+    """A user's booking status for one performance. Lives here (not
+    app.schemas.booking) because PerformanceCalendarItem below needs it too,
+    and booking.py already depends on this module for
+    Location/Proprium/Rehearsal/Setup -- the other direction would be
+    circular."""
+
+    status: BookingStatus
     position: PositionRefOutput | None = None
     at: UtcDatetime | None = None
 

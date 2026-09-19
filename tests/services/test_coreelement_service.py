@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 def _unique(base: str = "Element") -> str:
     """Every test gets its own collision-free name -- tests/conftest.py's
-    shared test DB has no per-test rollback (1:1 make_user's uuid-based
-    emails for the same reason), and coreelement names are globally unique
+    shared test DB has no per-test rollback (same reason as make_user's
+    uuid-based emails), and coreelement names are globally unique
     per type, unlike Users."""
     return f"{base}-{uuid.uuid4().hex[:8]}"
 
@@ -105,14 +105,13 @@ class TestCreateCoreelement:
         )
         assert second.order == first.order + 1
 
-    def test_name_too_short_is_rejected(self, db_session: Session):
-        with pytest.raises(coreelement_service.CoreelementValidationError) as exc_info:
-            coreelement_service.create_coreelement(
-                db_session, CoreelementType.instrument, _request("ab")
-            )
-        assert exc_info.value.errors == [
-            ("name", "Muss zwischen 3 und 60 Zeichen lang sein.")
-        ]
+    def test_name_too_short_is_rejected(self):
+        # Now caught by CoreelementRequest's own Field(min_length=3)
+        # before the service's _validate_name() ever runs -- the schema
+        # boundary was tightened to match the service's pre-existing
+        # 3-character floor (shared by all six types).
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+            _request("ab")
 
     def test_duplicate_name_is_rejected(self, db_session: Session):
         name = _unique("Substitut")
@@ -258,22 +257,14 @@ class TestUpdateCoreelement:
 
         assert (updated.address, updated.color) == ("Neue Adresse 2", "00ff00")
 
-    def test_extra_field_out_of_bounds_is_rejected(self, db_session: Session):
-        item = coreelement_service.create_coreelement(
-            db_session,
-            CoreelementType.location,
-            _request(address="Alte Adresse 1", color="000000"),
-        )
-        with pytest.raises(coreelement_service.CoreelementValidationError) as exc_info:
-            coreelement_service.update_coreelement(
-                db_session,
-                CoreelementType.location,
-                item.id,
-                _request(item.name, address="ab", color="000000"),
-            )
-        assert exc_info.value.errors == [
-            ("address", "Muss zwischen 3 und 60 Zeichen lang sein.")
-        ]
+    def test_extra_field_out_of_bounds_is_rejected(self):
+        # Now caught by CoreelementRequest's own Field(min_length=3) on
+        # `address` before the service's _validate_extra_field() ever
+        # runs -- address is used by exactly one type (Location), so the
+        # schema bound here IS the service's exact 3-60 constant, not just
+        # a best-effort outer net (see CoreelementRequest's docstring).
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+            _request(address="ab", color="000000")
 
 
 class TestDeleteCoreelement:
@@ -283,10 +274,9 @@ class TestDeleteCoreelement:
                 db_session, CoreelementType.instrument, uuid.uuid4()
             )
 
-    def test_simple_type_has_no_dependency_check_yet(self, db_session: Session):
-        """Instrument/Voice/Choirjob/Location/Propriumelement have zero real
-        dependents in osa-backend today (Performance/Repertoire domains
-        don't exist until Schritt 4/5) -- delete must always succeed."""
+    def test_unreferenced_element_can_be_deleted(self, db_session: Session):
+        """An element nothing references can always be deleted, and a second
+        delete then reports it as not found."""
         item = coreelement_service.create_coreelement(
             db_session, CoreelementType.instrument, _request()
         )

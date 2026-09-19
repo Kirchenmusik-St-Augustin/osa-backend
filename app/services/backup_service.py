@@ -1,34 +1,24 @@
-"""PostgreSQL -> Koofr WebDAV backup/restore -- functional equivalent of
-Legacy's OsaScheduleBackupProdDB.php Artisan command, and this module's
-own file-copy-based predecessor.
+"""PostgreSQL -> Koofr WebDAV backup/restore.
 
-Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`,
-User decision 2026-08-13) -- unchanged convention, only the extension
-moved from `.tar.gz` (a tarred file copy) to `.dump` (pg_dump's own
-`--format=custom` output, already a single binary file, nothing to tar).
-Backups created
-before the Postgres cutover keep their old `.tar.gz` names on Koofr and no
-longer match _FILENAME_PATTERN -- same accepted, documented naming break as
-the 2026-08-13 stage-prefix change before it (see git history), not a
-special case this module needs to handle.
+Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`);
+`.dump` is pg_dump's own `--format=custom` output, already a single binary
+file, nothing to tar. Files on Koofr that do not match _FILENAME_PATTERN
+are ignored.
 
 Uses raw WebDAV HTTP verbs via `requests` (already a pinned dependency)
-instead of shelling out to rclone (what the existing restore script does)
-or adding a dedicated WebDAV client library -- no new dependency, no
-subprocess/shell-escaping surface for the upload/download/list/delete side.
-pg_dump/pg_restore/psql themselves are unavoidably subprocesses (no pure-
-Python equivalent exists) -- `_run_pg_subprocess()` surfaces stderr on
-failure (a bare CalledProcessError hides exactly the detail that matters
-for debugging a failed disaster-recovery run).
+instead of shelling out to rclone or adding a dedicated WebDAV client
+library -- no new dependency, no subprocess/shell-escaping surface for the
+upload/download/list/delete side. pg_dump/pg_restore/psql themselves are
+unavoidably subprocesses (no pure-Python equivalent exists) --
+`_run_pg_subprocess()` surfaces stderr on failure (a bare
+CalledProcessError hides exactly the detail that matters for debugging a
+failed disaster-recovery run).
 
-Known, deliberately NOT replicated Legacy bug: Legacy's own
-cleanupOldBackups() passes the WebDAV-absolute paths returned by PROPFIND
-straight into a Laravel Storage disk whose configured `path` is itself a
-root prefix -- an absolute path handed to that disk produces a
-double-prefixed, nonexistent target, so the delete silently no-ops and old
-backups pile up on Koofr. This module never reuses a raw path from a
-listing response: `_parse_backup_filenames()` extracts only the basename,
-and every delete/download URL is rebuilt fresh from
+This module never reuses a raw path from a PROPFIND listing response:
+WebDAV returns absolute paths, which a storage layer that already applies
+a root prefix would double-prefix -- the delete would silently no-op and old
+backups would pile up on Koofr. `_parse_backup_filenames()` extracts only
+the basename, and every delete/download URL is rebuilt fresh from
 koofr_base_uri + koofr_backup_path + basename via `_koofr_url()`.
 """
 
@@ -64,8 +54,8 @@ _EPOCH = datetime.min  # noqa: DTZ901
 
 _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 # Stage-prefixed, optionally "-manual"-suffixed --
-# f"{app_environment}-{timestamp}{suffix}" naming (User decision,
-# 2026-08-13, see module docstring). `stage` is intentionally not
+# f"{app_environment}-{timestamp}{suffix}" naming (see module
+# docstring). `stage` is intentionally not
 # constrained to Settings' exact _VALID_ENVIRONMENTS set here -- this
 # pattern only needs to recognize OUR OWN generated filenames well enough
 # to extract the timestamp, not to validate the settings enum.
@@ -318,7 +308,7 @@ def _parse_backup_filenames(propfind_xml: str) -> list[str]:
 
     Deliberately extracts ONLY the basename from each href, regardless of
     whether Koofr returns absolute or relative paths -- see this module's
-    docstring for the Legacy bug this sidesteps.
+    docstring for why raw listing paths are never reused.
     """
     root = ElementTree.fromstring(propfind_xml)  # noqa: S314 -- trusted source, see docstring
     names: list[str] = []
@@ -331,21 +321,15 @@ def _parse_backup_filenames(propfind_xml: str) -> list[str]:
     return names
 
 
-# NOTE (2026-08-14): both the filename timestamp (run_backup()) and the
-# retention cutoff (cleanup_old_backups()) switched from datetime.now(UTC)
-# to local_now() -- Settings.app_timezone wall-clock, matching the
-# backup_koofr scheduler trigger's own timezone. Pre-2026-08-14 filenames
-# are genuinely UTC-stamped from before this fix; the resulting <=2h skew
-# for those older names is negligible against both the >=daily backup
-# cadence (their order relative to newer entries is unaffected across
-# calendar days) and the 28-day default retention window (~0.3% skew) --
-# no backfill/rename of already-uploaded names is needed.
+# Both the filename timestamp (run_backup()) and the retention cutoff
+# (cleanup_old_backups()) use local_now() -- Settings.app_timezone
+# wall-clock, matching the backup_koofr cron trigger's own timezone.
 def _parse_backup_timestamp(name: str) -> datetime | None:
     match = _FILENAME_PATTERN.match(name)
     if match is None:
         return None
-    # Deliberately naive -- see the module-level NOTE above for why this
-    # stays unattached to any tzinfo.
+    # Deliberately naive: the stamp is Settings.app_timezone wall-clock, the
+    # same convention as local_now(), so it compares directly against it.
     return datetime.strptime(match.group("timestamp"), _TIMESTAMP_FORMAT)  # noqa: DTZ007
 
 
@@ -360,7 +344,7 @@ def _parse_backup_stage(name: str) -> str | None:
 
 def cleanup_old_backups(*, dry_run: bool = False) -> list[str]:
     """Delete Koofr backups older than koofr_backup_retention_days
-    (default 28 = Legacy's hardcoded 4 weeks).
+    (default 28 = 4 weeks).
 
     Returns the filenames that were deleted (or, if dry_run=True, that
     WOULD be deleted -- nothing is actually removed in that case). Names
@@ -421,14 +405,10 @@ def _wipe_public_schema(
     with an open transaction on this database can block. Terminating every
     other session first makes lock acquisition deterministic instead of a
     timing race -- any session still using the old schema is about to get
-    errors the instant it's dropped anyway. The scheduler's own
-    advisory-lock-holding connection (see _acquire_scheduler_lock() in
-    app.core.scheduler) is deliberately spared -- it never touches a
-    table, so it can never conflict with DROP SCHEMA, and terminating it
-    would silently stop this worker's scheduled jobs until the next
-    restart. lock_timeout is a safety net for a new connection arriving in
-    the brief window between the terminate and the DROP SCHEMA -- a fast,
-    clearly logged failure instead of an unbounded hang.
+    errors the instant it's dropped anyway. lock_timeout is a safety net
+    for a new connection arriving in the brief window between the
+    terminate and the DROP SCHEMA -- a fast, clearly logged failure
+    instead of an unbounded hang.
     """
     psql = _resolve_pg_tool("psql")
     _run_pg_subprocess(
@@ -442,8 +422,7 @@ def _wipe_public_schema(
             (
                 "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
                 "WHERE datname = current_database() "
-                "AND pid != pg_backend_pid() "
-                "AND query NOT ILIKE '%pg_try_advisory_lock%'; "
+                "AND pid != pg_backend_pid(); "
                 "SET lock_timeout = '5s'; DROP SCHEMA public CASCADE; "
                 "CREATE SCHEMA public;"
             ),
@@ -614,9 +593,8 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
     overwrites the live database.
 
     Calls engine.dispose() after the restore: _wipe_public_schema() above
-    terminates every other session on this database (except the
-    scheduler's advisory-lock connection), including any this app's own
-    connection pool was holding idle. pool_pre_ping=True (see
+    terminates every other session on this database, including any this
+    app's own connection pool was holding idle. pool_pre_ping=True (see
     app.db.database) would eventually catch and transparently replace each
     of those on next use anyway, but disposing the whole pool immediately
     is simpler than waiting for that to happen one connection at a time.

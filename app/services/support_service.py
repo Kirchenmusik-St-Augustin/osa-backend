@@ -20,22 +20,18 @@ if TYPE_CHECKING:
 def get_my_requests_and_bookings(
     db: Session, user: User
 ) -> list[PerformanceShortOutput]:
-    """Thin wrapper -- Content/Common/Selfadmin/SupportController::
-    requestsAndBookings() has no logic of its own in Legacy either, it just
-    calls `auth()->user()->requestsAndBookings(true)`."""
+    """Thin wrapper: the caller's own upcoming requests and bookings."""
     return booking_service.get_upcoming_requests_and_bookings_for_user(db, user.id)
 
 
 def list_roles_with_contacts(db: Session) -> list[RoleWithContactsOutput]:
-    """1:1 Legacy's `Role::all()` fed through `Role\\ShowWithUsers`. Single
-    query via `selectinload(Role.users)` -- N+1-safe regardless of how many
+    """All roles with their contact users. Single query via
+    `selectinload(Role.users)` -- N+1-safe regardless of how many
     roles/contacts exist (see app.db.models.role.Role.users docstring).
 
-    Contacts are re-sorted by (surname, givenname) in Python after loading --
-    Legacy's `User` model carries a global `OrderBySurnameGivenname` scope
-    (`app/Models/Scopes/OrderBySurnameGivenname.php`) applied to EVERY User
-    query including this `belongsToMany` relationship load, so the dropdown
-    is alphabetical in Legacy regardless of `user_roles` insertion order."""
+    Contacts are re-sorted by (surname, givenname) in Python after loading,
+    so the dropdown is alphabetical regardless of `user_roles` insertion
+    order."""
     roles = (
         db.execute(select(Role).options(selectinload(Role.users)).order_by(Role.id))
         .scalars()
@@ -67,18 +63,13 @@ def list_roles_with_contacts(db: Session) -> list[RoleWithContactsOutput]:
 def send_message_to_contactperson(
     db: Session, sender: User, data: MessageToContactpersonRequest
 ) -> tuple[list[str], str, str] | None:
-    """1:1 Legacy's quirk: `SupportController::messageToContactperson()`
-    looks up the recipient and only sends `Mail::send()` if
-    `hasVerifiedEmail()` -- otherwise it silently no-ops (still `return
-    back()`, i.e. the router responds 200 either way). Extended here to a
-    genuinely non-existent recipient id too -- Legacy's own `exists:` rule
-    only validates a *present* `recipient` key, so an absent/invalid one
-    reaches `User::find(null)` and crashes with a null-pointer call in
-    practice; that crash is not a business result worth replicating, a
-    silent no-op is the sane equivalent.
+    """Looks up the recipient and only returns mail data if the recipient
+    exists and has a verified email -- otherwise it silently no-ops (the
+    router responds 200 either way, which does not reveal whether a given
+    recipient id exists or is verified).
 
-    Returns (to_emails, sender_name, message) for the ROUTER to schedule via
-    `BackgroundTasks.add_task(mailer.send_user_message_email, ...)` -- same
+    Returns (to_emails, sender_name, message) for the ROUTER to enqueue via
+    `JobQueue.enqueue(send_user_message_email_task, ...)` -- same
     framework-agnostic split as booking_service.send_message_to_cast."""
     recipient = db.get(User, data.recipient_id)
     if (

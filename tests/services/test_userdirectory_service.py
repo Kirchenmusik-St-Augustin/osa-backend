@@ -25,7 +25,6 @@ def _make_choirjob(db_session: Session) -> Choirjob:
 
 class TestGetAbilities:
     def test_does_not_include_roles(self, db_session: Session):
-        # Verified against Legacy's UserdirectoryController::index() --
         # `abilities` only ever ships instruments/voices/choirjobs.
         options = userdirectory_service.get_abilities(db_session)
         assert not hasattr(options, "roles")

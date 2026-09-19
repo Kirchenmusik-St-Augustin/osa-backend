@@ -1,11 +1,10 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import require_permission
-from app.api.error_responses import field_errors_to_detail
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.ordinariumwork import (
@@ -16,17 +15,10 @@ from app.schemas.ordinariumwork import (
     OrdinariumworkSetupOutput,
 )
 from app.services import ordinariumwork_service
-from app.services.ordinariumwork_service import (
-    OrdinariumworkInUseError,
-    OrdinariumworkNotFoundError,
-    OrdinariumworkValidationError,
-)
 
 ordinariumwork_router = APIRouter()
 
 _MAINTAIN = Depends(require_permission("ordinariumworkMaintain"))
-_NOT_FOUND_DETAIL = "Nicht gefunden."
-_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
 
 
 @ordinariumwork_router.get("/search")
@@ -44,13 +36,7 @@ def create_ordinariumwork(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> OrdinariumworkResponse:
-    try:
-        return ordinariumwork_service.create_ordinariumwork(db, data)
-    except OrdinariumworkValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    return ordinariumwork_service.create_ordinariumwork(db, data)
 
 
 @ordinariumwork_router.get("/available-positions")
@@ -67,12 +53,7 @@ def get_ordinariumwork(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> OrdinariumworkResponse:
-    try:
-        return ordinariumwork_service.get_ordinariumwork(db, ordinariumwork_id)
-    except OrdinariumworkNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
+    return ordinariumwork_service.get_ordinariumwork(db, ordinariumwork_id)
 
 
 @ordinariumwork_router.get("/{ordinariumwork_id}/setup")
@@ -81,12 +62,7 @@ def get_ordinariumwork_setup(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> OrdinariumworkSetupOutput:
-    try:
-        return ordinariumwork_service.get_setup(db, ordinariumwork_id)
-    except OrdinariumworkNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
+    return ordinariumwork_service.get_setup(db, ordinariumwork_id)
 
 
 @ordinariumwork_router.put("/{ordinariumwork_id}")
@@ -96,17 +72,7 @@ def update_ordinariumwork(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> OrdinariumworkResponse:
-    try:
-        return ordinariumwork_service.update_ordinariumwork(db, ordinariumwork_id, data)
-    except OrdinariumworkNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
-    except OrdinariumworkValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    return ordinariumwork_service.update_ordinariumwork(db, ordinariumwork_id, data)
 
 
 @ordinariumwork_router.delete("/{ordinariumwork_id}")
@@ -115,15 +81,5 @@ def delete_ordinariumwork(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:
-    try:
-        ordinariumwork_service.delete_ordinariumwork(db, ordinariumwork_id)
-    except OrdinariumworkNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
-    except OrdinariumworkInUseError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail([("general", _IN_USE_DETAIL)]),
-        ) from None
+    ordinariumwork_service.delete_ordinariumwork(db, ordinariumwork_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}

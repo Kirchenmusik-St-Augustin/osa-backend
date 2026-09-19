@@ -41,8 +41,7 @@ def _make_sent_email(
 
 class TestListForMonth:
     def test_filters_and_sorts_by_created_at_not_updated_at(self, db_session: Session):
-        # As of the audit-trigger hardening slice (2026-09), updated_at no
-        # longer gets a value on insert (a real UPDATE never happens for
+        # updated_at gets no value on insert (a real UPDATE never happens for
         # this write-once table) -- a row updated_at-stamped into a
         # different month than it was created must still show up (and
         # sort) by created_at, the only column reliably populated.

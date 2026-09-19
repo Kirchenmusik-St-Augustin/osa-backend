@@ -151,18 +151,13 @@ class TestCreatePropriumwork:
         assert response.artist_id == artist.id
         assert response.artist_name == "HAYDN, Joseph"
 
-    def test_rejects_short_name(self, db_session: Session):
-        artist_id = _make_artist(db_session)
-        with pytest.raises(
-            propriumwork_service.PropriumworkValidationError
-        ) as exc_info:
-            propriumwork_service.create_propriumwork(
-                db_session, _request(artist_id, name="ab")
-            )
-
-        assert exc_info.value.errors == [
-            ("name", "Muss zwischen 3 und 60 Zeichen lang sein.")
-        ]
+    def test_rejects_short_name(self):
+        # Now caught by PropriumworkRequest's own Field(min_length=3)
+        # before the service's _validate() ever runs -- the schema
+        # boundary was tightened to match the service's pre-existing
+        # 3-60 constant.
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+            _request(uuid.uuid4(), name="ab")
 
     def test_rejects_unknown_artist(self, db_session: Session):
         with pytest.raises(
@@ -188,33 +183,18 @@ class TestCreatePropriumwork:
                 db_session, _request(artist_id, name=name)
             )
 
-    def test_rejects_out_of_range_duration(self, db_session: Session):
-        artist_id = _make_artist(db_session)
-        with pytest.raises(
-            propriumwork_service.PropriumworkValidationError
-        ) as exc_info:
-            propriumwork_service.create_propriumwork(
-                db_session, _request(artist_id, duration=1000)
-            )
+    def test_rejects_out_of_range_duration(self):
+        # Same tightening as test_rejects_short_name, for
+        # PropriumworkRequest's new Field(le=999).
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+            _request(uuid.uuid4(), duration=1000)
 
-        assert exc_info.value.errors == [
-            ("duration", "Muss zwischen 1 und 999 liegen.")
-        ]
-
-    def test_rejects_zero_duration(self, db_session: Session):
-        """Legacy quirk: unlike Ordinariumwork, Propriumwork's duration
-        lower bound is 1, not 0 -- a duration of exactly 0 is invalid."""
-        artist_id = _make_artist(db_session)
-        with pytest.raises(
-            propriumwork_service.PropriumworkValidationError
-        ) as exc_info:
-            propriumwork_service.create_propriumwork(
-                db_session, _request(artist_id, duration=0)
-            )
-
-        assert exc_info.value.errors == [
-            ("duration", "Muss zwischen 1 und 999 liegen.")
-        ]
+    def test_rejects_zero_duration(self):
+        """Unlike Ordinariumwork, Propriumwork's duration lower bound is 1,
+        not 0 -- a duration of exactly 0 is invalid (PropriumworkRequest's
+        own Field(ge=1))."""
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(ge=1)
+            _request(uuid.uuid4(), duration=0)
 
 
 class TestUpdatePropriumwork:
@@ -273,7 +253,7 @@ class TestDeletePropriumwork:
             propriumwork_service.get_propriumwork(db_session, created.id)
 
     def test_blocked_when_performance_proprium_references_it(self, db_session: Session):
-        """Retrofit regression guard (Schritt 5): unlike Ordinariumwork (a
+        """Regression guard: unlike Ordinariumwork (a
         direct column on `performances`), Propriumwork is only referenced
         through the `performance_proprium` pivot table."""
         artist_id = _make_artist(db_session)

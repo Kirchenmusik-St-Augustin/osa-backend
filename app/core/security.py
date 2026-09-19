@@ -26,12 +26,12 @@ REFRESH_TOKEN_LIFETIME_DAYS = _settings.refresh_token_lifetime_days
 
 
 def verify_password(plain_password: str, hashed_password: str | None) -> bool:
-    """Legacy passwords are real bcrypt hashes in PHP's `$2y$` form
-    (`password_hash()`'s default prefix) -- Python's bcrypt only accepts
-    `$2a$`/`$2b$`. Both prefixes denote the exact same algorithm revision
-    for any password that doesn't hit the historical 8-bit-vs-7-bit-high-bit
-    edge case, so normalizing the prefix before verifying is safe and lets
-    every already-migrated Legacy user log in unchanged."""
+    """Stored hashes may carry the `$2y$` bcrypt prefix (emitted by other
+    bcrypt implementations) -- Python's bcrypt only accepts `$2a$`/`$2b$`.
+    Both prefixes denote the exact same algorithm revision for any password
+    that doesn't hit the historical 8-bit-vs-7-bit-high-bit edge case, so
+    normalizing the prefix before verifying is safe and lets every user with
+    a `$2y$` hash log in unchanged."""
     try:
         if not hashed_password:
             return False
@@ -58,10 +58,9 @@ _RANDOM_PASSWORD_ALPHABET = (
 
 
 def generate_random_password(length: int = 10) -> str:
-    """Port of Legacy's `Str::random(10)`, used by
-    UserAdministrationController::setPassword (Schritt 7) to generate a
-    one-time password an administrator sets for another user -- shown once
-    in the response, never logged, never emailed."""
+    """Random alphanumeric password an administrator sets for another user
+    (user administration's set-password flow) -- shown once in the
+    response, never logged, never emailed."""
     return "".join(secrets.choice(_RANDOM_PASSWORD_ALPHABET) for _ in range(length))
 
 
@@ -132,14 +131,13 @@ class InvalidVerificationTokenError(Exception):
 
 
 def create_email_verification_token(user_id: uuid.UUID, email: str) -> str:
-    """Mirrors Legacy's Laravel Signed URL for email verification 1:1
-    (Illuminate\\Auth\\Notifications\\VerifyEmail): payload is
-    {user_id, sha1(email)}. sha1 here is only a cheap "has the email
-    changed since" fingerprint, not a security boundary -- tamper
-    protection comes from itsdangerous' HMAC signature around the whole
-    payload, not from sha1's collision resistance. user_id is serialized
-    explicitly via str() -- itsdangerous encodes the payload as plain JSON
-    internally, with no native UUID support."""
+    """Signed email-verification token: payload is {user_id, sha1(email)}.
+    sha1 here is only a cheap "has the email changed since" fingerprint,
+    not a security boundary -- tamper protection comes from itsdangerous'
+    HMAC signature around the whole payload, not from sha1's collision
+    resistance. user_id is serialized explicitly via str() -- itsdangerous
+    encodes the payload as plain JSON internally, with no native UUID
+    support."""
     email_hash = hashlib.sha1(email.encode(), usedforsecurity=False).hexdigest()
     return _email_verification_serializer.dumps(
         {"user_id": str(user_id), "email_hash": email_hash}

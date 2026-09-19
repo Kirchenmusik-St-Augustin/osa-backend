@@ -6,7 +6,7 @@ Create Date: 2026-09-08 10:10:00.000000
 
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -22,9 +22,8 @@ depends_on: str | Sequence[str] | None = None
 # Shared by all 12 "Original/Kopie/Original-Kopie" columns -- see
 # app.db.models.score's _ART_ENUM for the model-side twin of this object.
 # soinstr1art..soinstr4art deliberately do NOT get this type: despite the
-# "art" name, they have no CheckConstraint even before this slice
-# (confirmed free-text fields, see app.services.score_fields) and stay
-# plain varchar.
+# "art" name, they are free-text fields (see app.services.score_fields)
+# and stay plain varchar.
 score_art_enum = postgresql.ENUM(
     "Original", "Kopie", "Original/Kopie", name="score_art", create_type=False
 )

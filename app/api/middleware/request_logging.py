@@ -1,4 +1,4 @@
-"""Global request/response audit logging (Schritt 9) -- runs outside any
+"""Global request/response audit logging -- runs outside any
 request's own Depends() chain (ASGI middleware, not a route function), so it
 opens its own short-lived SessionLocal() per request, the same documented
 exception as app/core/mailer.py/app/services/booking_jobs.py (see
@@ -26,10 +26,9 @@ _SKIP_LOG_HEADER = "x-skip-request-log"
 
 
 async def _extract_request_input(request: Request) -> JsonObject:
-    """Best-effort read of the request body as a dict -- mirrors Legacy's
-    `$request->all()`, which handles both JSON bodies and form-encoded
-    bodies (our own login endpoint uses OAuth2PasswordRequestForm, i.e.
-    x-www-form-urlencoded, not JSON)."""
+    """Best-effort read of the request body as a dict, handling both JSON
+    bodies and form-encoded bodies (our own login endpoint uses
+    OAuth2PasswordRequestForm, i.e. x-www-form-urlencoded, not JSON)."""
     content_type = request.headers.get("content-type", "")
     body = await request.body()
     if not body:
@@ -52,8 +51,7 @@ async def _extract_request_input(request: Request) -> JsonObject:
 
 
 def _try_parse_json(body: bytes) -> JsonValue:
-    # Mirrors Legacy's `json_decode($response->content())` -- returns None
-    # for any non-JSON (or empty) response body, same as PHP's json_decode.
+    # Returns None for any non-JSON (or empty) response body.
     if not body:
         return None
     try:
@@ -63,9 +61,9 @@ def _try_parse_json(body: bytes) -> JsonValue:
 
 
 def _forwarded_ips(request: Request) -> list[str]:
-    # Mirrors Legacy's `$request->ips()` (full X-Forwarded-For chain, most
-    # recent proxy last) -- Starlette has no built-in equivalent, so this
-    # is read directly off the header, falling back to the direct peer.
+    # Full X-Forwarded-For chain, most recent proxy last -- Starlette has no
+    # built-in equivalent, so this is read directly off the header, falling
+    # back to the direct peer.
     header = request.headers.get("x-forwarded-for")
     if not header:
         return [request.client.host] if request.client else []
@@ -73,10 +71,9 @@ def _forwarded_ips(request: Request) -> list[str]:
 
 
 def _memory_usage_bytes() -> int:
-    # Approximates Legacy's `memory_get_usage()` (live PHP heap) with the
-    # process's peak resident set size -- a different metric, but the field
-    # is purely informational (no business logic reads it), and Linux
-    # containers report ru_maxrss in KiB.
+    # Process's peak resident set size -- the field is purely informational
+    # (no business logic reads it), and Linux containers report ru_maxrss in
+    # KiB.
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 
 
@@ -128,10 +125,9 @@ def _resolve_user_id(db: Session, auth_header: str | None) -> uuid.UUID | None:
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    """1:1 port of Legacy's `RequestLogging` middleware (`terminate()` hook,
-    global on the `web` group -- every request gets logged, not just
-    Administrator-domain ones). See app.services.request_log_service for
-    the exclusion rules and redaction logic."""
+    """Logs every request (not just Administrator-domain ones). See
+    app.services.request_log_service for the exclusion rules and redaction
+    logic."""
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -139,27 +135,27 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         request_input = await _extract_request_input(request)
         response = await call_next(request)
 
-        response_body = b""
-        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
-            response_body += chunk
-
         skip_header_present = _SKIP_LOG_HEADER in response.headers
-        rebuilt = Response(
-            content=response_body,
-            status_code=response.status_code,
-            headers={
-                key: value
-                for key, value in response.headers.items()
-                if key.lower() != _SKIP_LOG_HEADER
-            },
-            media_type=response.media_type,
-            background=response.background,
-        )
-
+        if skip_header_present:
+            del response.headers[_SKIP_LOG_HEADER]
         if request_log_service.should_skip(
             request.url.path, skip_header_present=skip_header_present
         ):
-            return rebuilt
+            # Unconsumed body_iterator, streamed lazily by whatever ASGI
+            # layer sends this response next -- skipped requests never pay
+            # for the full in-memory buffering below.
+            return response
+
+        response_body = b""
+        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+            response_body += chunk
+        rebuilt = Response(
+            content=response_body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+            background=response.background,
+        )
 
         client_ips = _forwarded_ips(request)
         await run_in_threadpool(

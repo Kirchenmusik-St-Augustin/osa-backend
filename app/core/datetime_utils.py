@@ -6,19 +6,19 @@ from pydantic import BeforeValidator
 
 from app.core.config import get_settings
 
-# Our DateTime columns are still declared without timezone=True (a real
-# TIMESTAMPTZ migration is a separate, not-yet-started step), so every
-# datetime read back from the DB comes back naive,
-# even though every write goes through datetime.now(UTC). Comparing a naive
-# value against an aware one raises TypeError, so any code comparing a
-# stored timestamp against "now" needs this normalization first.
+# Genuinely-UTC audit/event columns (created_at/updated_at, token/session
+# timestamps, ...) are TIMESTAMPTZ and come back timezone-aware from the DB
+# already. ensure_tz_aware() stays as a defensive normalization: comparing
+# a naive value against an aware one raises TypeError, and it protects any
+# remaining code path that might still hand it a naive datetime (a test
+# fixture, a value built in Python before being persisted, ...) without
+# every caller needing to reason about where the value originated.
 #
 # This applies ONLY to genuinely UTC audit columns (created_at/updated_at,
 # token/session timestamps) that are actually written via datetime.now(UTC).
 # It must NOT be used on user-entered wall-clock fields like
-# Performance.schedule -- those are naive local time in Settings.app_timezone
-# (mirroring Legacy's Carbon under config('app.timezone')), not UTC. See
-# local_now() below for that case.
+# Performance.schedule -- those are naive local time in Settings.app_timezone,
+# not UTC. See local_now() below for that case.
 
 
 @overload
@@ -54,12 +54,12 @@ UtcDatetime = Annotated[datetime, BeforeValidator(ensure_tz_aware)]
 
 def get_app_timezone() -> ZoneInfo:
     """Single source of truth for Settings.app_timezone as a ZoneInfo
-    instance -- every call site that previously constructed
-    ZoneInfo(get_settings().app_timezone) independently (scheduler
-    construction/_format_next_run, local_now/local_day_bounds_utc,
+    instance -- every call site (the worker's cron timezone,
+    scheduler_service's next-run display, local_now/local_day_bounds_utc,
     request_log_service's local-day grouping, the logging formatter) goes
-    through this one helper instead, so a future APP_TIMEZONE change only
-    has one place to verify. ZoneInfo(key) is itself cache-keyed by the
+    through this one helper instead of constructing
+    ZoneInfo(get_settings().app_timezone) itself, so a future APP_TIMEZONE
+    change only has one place to verify. ZoneInfo(key) is itself cache-keyed by the
     zoneinfo module (repeated calls with the same key return the same
     cached instance), so no extra @lru_cache is needed here -- and none is
     wanted, since it would need its own cache_clear() coupled to
@@ -71,8 +71,7 @@ def local_now() -> datetime:
     """Naive wall-clock 'now' in Settings.app_timezone (default
     Europe/Vienna), for comparison against naive wall-clock columns like
     Performance.schedule/PerformanceRehearsal.schedule (see module docstring
-    above). Mirrors Legacy's Carbon::now() under config('app.timezone').
-    Deliberately NOT datetime.now(UTC) or plain datetime.now() -- the
+    above). Deliberately NOT datetime.now(UTC) or plain datetime.now() -- the
     container OS runs in UTC, not Vienna, so a bare local "now" would
     silently be off by the configured zone's UTC offset (1-2h depending on
     DST), exactly like the bug this replaced."""

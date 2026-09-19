@@ -49,8 +49,7 @@ def _unique_schedule() -> datetime:
     schedule to test that rule. Normalized to a fixed minute/second so
     hour-boundary arithmetic in collision tests (+/- N minutes) is
     deterministic regardless of the wall-clock minute the suite happens to
-    run at (an earlier version of this helper was flaky right around the
-    top of an hour for exactly that reason). Naive local_now()-based, not
+    run at. Naive local_now()-based, not
     datetime.now(UTC) -- `schedule` is a naive wall-clock value, and
     comparing it against an aware datetime raises TypeError (see
     app.core.datetime_utils.local_now())."""
@@ -288,6 +287,19 @@ class TestCreatePerformance:
         assert response.location_id == location.id
         assert response.ordinariumwork_id == work.id
         assert response.instrument_defaultfee == 60
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "choirjob_defaultfee",
+            "instrument_defaultfee",
+            "voice_defaultfee",
+            "extracost_amount",
+        ],
+    )
+    def test_rejects_out_of_range_money_field(self, field: str):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+            _request(uuid.uuid4(), uuid.uuid4(), **{field: 1000})
 
     def test_rejects_schedule_before_tomorrow(self, db_session: Session):
         composer_id = _make_artist(db_session, composer=True)
@@ -674,6 +686,26 @@ class TestCreatePerformance:
 
         assert response.location_id == location_b.id
 
+    def test_allows_same_location_at_a_different_hour(self, db_session: Session):
+        # Regression guard for the SQL-side hour-window filter in
+        # _validate_collision (WHERE schedule >= hour_start AND < hour_end)
+        # -- a performance at the SAME location just outside that window
+        # must not be mistaken for a collision.
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        schedule = _unique_schedule()
+        performance_service.create_performance(
+            db_session, _request(location.id, work.id, schedule=schedule)
+        )
+
+        response = performance_service.create_performance(
+            db_session,
+            _request(location.id, work.id, schedule=schedule + timedelta(hours=1)),
+        )
+
+        assert response.location_id == location.id
+
 
 class TestUpdatePerformance:
     def test_not_found_raises(self, db_session: Session):
@@ -687,8 +719,7 @@ class TestUpdatePerformance:
             )
 
     def test_collision_check_also_runs_on_update(self, db_session: Session):
-        """User-Entscheidung 2026-07-29: unlike Legacy (which only checked
-        this on create), the collision check now also runs on update."""
+        """The collision check runs on update too, not just on create."""
         composer_id = _make_artist(db_session, composer=True)
         first_conductor = _make_artist(db_session, conductor=True)
         second_conductor = _make_artist(db_session, conductor=True)
@@ -790,7 +821,7 @@ class TestUpdatePerformance:
     def test_setup_shrink_reconciles_bookings_via_booking_service(
         self, db_session: Session, make_user
     ):
-        """Retrofit A.5b (Schritt 6 plan): shrinking a position's quantity
+        """Shrinking a position's quantity
         must demote the now-standby booking, and removing a position
         entirely must purge its bookings -- both via
         booking_service.reconcile_setup_change, wired in from
@@ -869,8 +900,8 @@ class TestUpdatePerformance:
         # Shrinking a quantity does NOT remove the now-standby booking row
         # (its "regular"/"standby" status is derived from order < quantity,
         # not stored) -- only the REMOVED position's booking is actually
-        # purged. This mirrors Legacy exactly: saveCastItem's demote path
-        # only logs the transition, it never deletes on its own.
+        # purged. The demote path only logs the transition, it never
+        # deletes on its own.
         remaining = (
             db_session.execute(
                 select(Booking).where(Booking.performance_id == created.id)

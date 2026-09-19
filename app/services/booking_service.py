@@ -51,6 +51,7 @@ from app.schemas.booking import (
     StaffSectionOutput,
 )
 from app.schemas.performance import (
+    BookingStatus,
     BookingStatusOutput,
     PerformancePositionOutput,
     PerformanceSetupOutput,
@@ -90,14 +91,14 @@ _BOOKING_POSITION_COLUMNS: dict[
     "choirjobs": Booking.choirjob_id,
 }
 
-# (user_id, fee) -- the internal exchange shape saveCastItem's diff engine
+# (user_id, fee) -- the internal exchange shape _save_cast_item's diff engine
 # works with, decoupled from the CastMemberInput/-Output Pydantic schemas
 # that only exist at the HTTP boundary (reconcile_setup_change and
 # cancel_auth_user_booking build these from ORM rows, not request bodies).
 CastEntry = tuple[uuid.UUID, int]
 
-# Fixed business constants from Legacy's config/osa.php ("billing" section)
-# -- not user-editable Settings fields, same reasoning as
+# Fixed business constants of the organ-fee billing tiers -- not
+# user-editable Settings fields, same reasoning as
 # Performance.instrument_defaultfee being a real column rather than config.
 _INSTRUMENTS_ORGFEE_TIER1_THRESHOLD = 0
 _INSTRUMENTS_ORGFEE_TIER1 = 30
@@ -111,21 +112,20 @@ class BookingRequestAlreadyExistsError(Exception):
     """Defensive guard against a race between two concurrent self-service
     requests for the same performance -- unreachable in the normal
     single-user flow since change_user_request_status only dispatches here
-    when userBookingStatus() already reported status 1 (no existing row)."""
+    when user_booking_status() already reported BOOKABLE (no existing row)."""
 
 
 class MessageRecipientsEmptyError(Exception):
     """Raised when none of the requested recipients have a verified email
-    -- mirrors the same "nothing to actually send" guard as Legacy's
-    `hasVerifiedEmail()` check in messageToContactperson/BookingLog."""
+    -- the "nothing to actually send" guard."""
 
 
 @dataclass(frozen=True)
 class BookedOrStandbyCanceledNotification:
-    """Everything the router needs to schedule
-    `mailer.send_booked_or_standby_canceled_email` via `BackgroundTasks.
-    add_task(...)` -- kept as plain data so the service layer itself never
-    imports FastAPI (see change_user_request_status)."""
+    """Everything the router needs to enqueue
+    `send_booked_or_standby_canceled_email_task` via `JobQueue.enqueue(...)`
+    -- kept as plain data so the service layer itself never imports FastAPI
+    (see change_user_request_status)."""
 
     disponent_emails: list[str]
     canceling_user_name: str
@@ -160,9 +160,7 @@ def _setup_position_ids(
 
 def _users_by_id(db: Session, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, User]:
     """Includes soft-deleted users -- for displaying an EXISTING booking's/
-    request's user, which must never crash on a deactivated account
-    (Schritt-5 withTrashed()-consistency decision, applied here to every
-    Booking display in Schritt 6 too)."""
+    request's user, which must never crash on a deactivated account."""
     if not user_ids:
         return {}
     rows = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
@@ -171,8 +169,7 @@ def _users_by_id(db: Session, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, User]
 
 def _active_users_by_id(db: Session, user_ids: set[uuid.UUID]) -> dict[uuid.UUID, User]:
     """Excludes soft-deleted users -- for NEW-booking candidate/suggestion
-    lists (staff() bookable, popularBookings(), notbooked()'s GET side),
-    matching Legacy's own relation scoping there (no withTrashed() call)."""
+    lists (bookable candidates, popular bookings, the not-booked list)."""
     if not user_ids:
         return {}
     rows = (
@@ -299,7 +296,7 @@ def _to_short_output(
     )
 
 
-# --- userBookingStatus() -- the 6-state machine -----------------------------
+# --- user_booking_status() -- the 6-state machine ---------------------------
 
 
 def user_booking_status(
@@ -320,9 +317,8 @@ def get_my_booking_status(
     """Public entry point for `GET /performances/{id}/my-booking-status` --
     deliberately its own small endpoint+service function (not a retrofit of
     performance_service.get_performance_detail) to keep performance_service
-    and booking_service decoupled at module-import time (Schritt 6 plan
-    B.4). Always reveals
-    the real status even for a past performance -- the Show page needs to
+    and booking_service decoupled at module-import time. Always reveals the
+    real status even for a past performance -- the Show page needs to
     render the self-service badge/trigger regardless of date."""
     performance = _get_performance_or_404(db, performance_id)
     return user_booking_status(db, performance, user_id, keep_past_status=True)
@@ -336,13 +332,14 @@ def user_booking_status_batch(
     keep_past_status: bool = False,
 ) -> dict[uuid.UUID, BookingStatusOutput]:
     """N+1-safe: a fixed, small number of queries regardless of how many
-    user_ids are passed in -- mirrors Performance::userBookingStatus()
-    called once per user in Legacy's requestsAndBookings(), but without
-    the N+1 (Schritt 6 plan A.8)."""
+    user_ids are passed in."""
     if not user_ids:
         return {}
     if performance.schedule < local_now() and not keep_past_status:
-        return {user_id: BookingStatusOutput(status=0) for user_id in user_ids}
+        return {
+            user_id: BookingStatusOutput(status=BookingStatus.NOT_BOOKABLE)
+            for user_id in user_ids
+        }
 
     setup_ids = _setup_position_ids(performance_service.get_setup(db, performance.id))
 
@@ -390,7 +387,7 @@ def user_booking_status_batch(
     result: dict[uuid.UUID, BookingStatusOutput] = {}
     for user_id in user_ids:
         if not is_bookable(user_position_ids[user_id], setup_ids):
-            result[user_id] = BookingStatusOutput(status=0)
+            result[user_id] = BookingStatusOutput(status=BookingStatus.NOT_BOOKABLE)
             continue
 
         booking = bookings_by_user.get(user_id)
@@ -399,14 +396,17 @@ def user_booking_status_batch(
             quantity = quantity_by_key.get(booking_key, 0)
             name = name_by_key.get(booking_key, "")
             result[user_id] = BookingStatusOutput(
-                status=4 if booking.order < quantity else 3,
+                status=(
+                    BookingStatus.BOOKED
+                    if booking.order < quantity
+                    else BookingStatus.STANDBY
+                ),
                 position=PositionRefOutput(id=booking_key[1], name=name),
                 # updated_at is NULL until the row's first real UPDATE
                 # (the set_updated_at() trigger never fires on a row that
                 # was only ever inserted, never modified in place -- see
                 # _save_cast_item's delete+recreate pattern) -- created_at
-                # is the meaningful fallback, same value updated_at always
-                # held here before the audit-trigger hardening slice.
+                # is the meaningful fallback.
                 at=booking.updated_at or booking.created_at,
             )
             continue
@@ -415,13 +415,13 @@ def user_booking_status_batch(
         if booking_request is not None:
             at = booking_request.updated_at or booking_request.created_at
             result[user_id] = (
-                BookingStatusOutput(status=5, at=at)
+                BookingStatusOutput(status=BookingStatus.REJECTED, at=at)
                 if booking_request.notbooked_at is not None
-                else BookingStatusOutput(status=2, at=at)
+                else BookingStatusOutput(status=BookingStatus.REQUESTED, at=at)
             )
             continue
 
-        result[user_id] = BookingStatusOutput(status=1)
+        result[user_id] = BookingStatusOutput(status=BookingStatus.BOOKABLE)
     return result
 
 
@@ -434,23 +434,19 @@ def user_booking_status_for_performances(
 ) -> dict[uuid.UUID, BookingStatusOutput]:
     """N+1-safe variant of user_booking_status_batch() for the other axis:
     ONE user across MANY performances -- what the calendar list needs for
-    its self-service badge/trigger on every row. Legacy's own equivalent
-    (Short resource's `auth_user_booking` accessor) runs userBookingStatus()
-    once per row, a real N+1 there; the project's N+1-protection
-    requirement means the business RESULT is ported here, not that query
-    pattern (Schritt 6 plan A.8).
+    its self-service badge/trigger on every row, computed in a fixed number
+    of queries.
 
-    `keep_past_status` mirrors Legacy's `userBookingStatus($user,
-    $keepPastStatus)` second argument: every caller so far passes nothing
-    (past performances always collapse to status=0), EXCEPT the System-
-    admin per-user "Anfragen und Buchungen" view, which calls `...(true)`
-    so historic bookings still show their real status instead of going
-    blank."""
+    `keep_past_status`: every caller so far passes nothing (past
+    performances always collapse to NOT_BOOKABLE), EXCEPT the admin per-user
+    "Anfragen und Buchungen" view, which passes True so historic bookings
+    still show their real status instead of going blank."""
     if not performances:
         return {}
 
     result: dict[uuid.UUID, BookingStatusOutput] = {
-        performance.id: BookingStatusOutput(status=0) for performance in performances
+        performance.id: BookingStatusOutput(status=BookingStatus.NOT_BOOKABLE)
+        for performance in performances
     }
     eligible_ids = [
         performance.id
@@ -548,7 +544,7 @@ def _resolve_calendar_status(
     performances() -- same branching as user_booking_status_batch()'s inline
     loop, just against the already-batched-by-performance dicts."""
     if not is_bookable(user_position_ids, setup_ids_by_performance[performance_id]):
-        return BookingStatusOutput(status=0)
+        return BookingStatusOutput(status=BookingStatus.NOT_BOOKABLE)
 
     booking = bookings_by_performance.get(performance_id)
     if booking is not None:
@@ -556,7 +552,11 @@ def _resolve_calendar_status(
         quantity = quantity_by_performance[performance_id].get(booking_key, 0)
         name = name_by_key.get(booking_key, "")
         return BookingStatusOutput(
-            status=4 if booking.order < quantity else 3,
+            status=(
+                BookingStatus.BOOKED
+                if booking.order < quantity
+                else BookingStatus.STANDBY
+            ),
             position=PositionRefOutput(id=booking_key[1], name=name),
             # See user_booking_status_batch's identical fallback above --
             # updated_at is NULL on a row that was only ever inserted.
@@ -567,12 +567,12 @@ def _resolve_calendar_status(
     if booking_request is not None:
         at = booking_request.updated_at or booking_request.created_at
         return (
-            BookingStatusOutput(status=5, at=at)
+            BookingStatusOutput(status=BookingStatus.REJECTED, at=at)
             if booking_request.notbooked_at is not None
-            else BookingStatusOutput(status=2, at=at)
+            else BookingStatusOutput(status=BookingStatus.REQUESTED, at=at)
         )
 
-    return BookingStatusOutput(status=1)
+    return BookingStatusOutput(status=BookingStatus.BOOKABLE)
 
 
 # --- Cast: GET -----------------------------------------------------------
@@ -641,8 +641,8 @@ def _get_cast_form_data(
         .scalars()
         .all()
     )
-    # Legacy's notbooked() GET uses plain User::find() (no withTrashed()),
-    # silently skipping soft-deleted users -- unlike the cast list above.
+    # Soft-deleted users are silently skipped here -- unlike the cast list
+    # above.
     not_booked_user_ids = {request.user_id for request in not_booked_requests}
     active_users_by_id = _active_users_by_id(db, not_booked_user_ids)
     not_booked = [
@@ -702,10 +702,8 @@ def _get_staff(
         for item in items:
             requesting: list[BookableUserOutput] = []
             other: list[BookableUserOutput] = []
-            # Legacy sorts these implicitly via User's global
-            # OrderBySurnameGivenname scope (Performance::staff() itself
-            # has no explicit orderBy) -- qualified user ids come out of a
-            # plain set here, so the sort has to happen explicitly.
+            # Qualified user ids come out of a plain set here, so the sort
+            # by (surname, givenname) has to happen explicitly.
             candidates = sorted(
                 (
                     user
@@ -811,12 +809,11 @@ def _popular_for_position(
 
 
 def _get_popular(db: Session, performance: Performance) -> PopularSectionOutput:
-    """Port of Ordinariumwork::popularBookings() -- iterates the
-    ORDINARIUMWORK's own Instrument/Voice setup (NOT the performance's own
-    position configuration) across ALL of that Ordinariumwork's PAST
-    performances. Choirjobs are always empty: Legacy's own
-    `ordinariumwork_positions` CHECK constraint excludes 'choirjobs'
-    entirely, so that branch is structurally always empty (see
+    """Popular bookings -- iterates the ORDINARIUMWORK's own Instrument/
+    Voice setup (NOT the performance's own position configuration) across
+    ALL of that Ordinariumwork's PAST performances. Choirjobs are always
+    empty: an Ordinariumwork's positions can never include 'choirjobs', so
+    that branch is structurally always empty (see
     app.db.models.ordinariumwork_position.OrdinariumworkPosition)."""
     ow_setup = ordinariumwork_service.get_setup(db, performance.ordinariumwork_id)
     past_performance_ids = list(
@@ -907,7 +904,7 @@ def _diff_cast_transitions(
     quantity: int,
     old_quantity: int | None,
 ) -> list[tuple[uuid.UUID, Literal["book", "unbook"], int]]:
-    """Pure decision logic behind Performance::saveCastItem()'s book/unbook
+    """Pure decision logic behind _save_cast_item's book/unbook
     log entries -- deliberately separated from _save_cast_item's DB writes
     so both halves stay independently readable (and this half independently
     unit-testable without touching the database at all)."""
@@ -926,9 +923,8 @@ def _diff_cast_transitions(
         old_index = old_ids.index(user_id) if user_id in old_ids else None
         if old_index is None:
             # brand new entry -- landing in a regular slot books it,
-            # landing in a standby slot logs 'unbook' (Legacy's own,
-            # intentionally counter-intuitive naming for "not currently
-            # regular").
+            # landing in a standby slot logs 'unbook' (deliberately
+            # counter-intuitive naming for "not currently regular").
             transitions.append((user_id, "book" if index < quantity else "unbook", fee))
             continue
         was_regular = old_index < reference_quantity
@@ -949,10 +945,9 @@ def _save_cast_item(
     new_cast: list[CastEntry] | None,
     old_quantity: int | None,
 ) -> None:
-    """1:1 port of Performance::saveCastItem() -- the append-only diff/log
-    engine behind every cast mutation (Schritt 6 plan's "Exakte
-    Legacy-Business-Logik" section specifies the algorithm this mirrors
-    line for line)."""
+    """The append-only diff/log engine behind every cast mutation: compares
+    the old and new cast of one position, logs each transition and
+    recreates that position's bookings."""
     position_column = _BOOKING_POSITION_COLUMNS[position_type]
     old_bookings = (
         db.execute(
@@ -1080,7 +1075,7 @@ def _apply_cast(
 def _apply_notbooked(
     db: Session, performance: Performance, ids: list[uuid.UUID]
 ) -> None:
-    """Port of Performance::notbooked()'s SET branch -- MUST run after
+    """Marks the given requests as rejected -- MUST run after
     _apply_cast(), it reads `bookings` post-mutation to exclude anyone who
     ended up actually cast from the "rejected" list."""
     db.execute(
@@ -1125,9 +1120,9 @@ def reconcile_setup_change(
     removed_keys: set[tuple[PositionType, uuid.UUID]],
     old_quantities: dict[tuple[PositionType, uuid.UUID], int],
 ) -> None:
-    """Port of Performance::setup()'s cast-reconciliation step, called from
+    """Cast reconciliation after a setup change, called from
     performance_service.update_performance() right after `_sync_positions`
-    (Schritt 6 plan A.5b) -- purges bookings on removed positions, then
+    -- purges bookings on removed positions, then
     re-evaluates promote/demote on every remaining position against its OLD
     quantity."""
     for position_type, position_id in removed_keys:
@@ -1183,11 +1178,11 @@ def _build_canceled_notification(
     db: Session, performance: Performance, user: User, current: BookingStatusOutput
 ) -> BookedOrStandbyCanceledNotification | None:
     """Builds the (recipients, sender name, mail entry) tuple the ROUTER
-    schedules via `BackgroundTasks.add_task(mailer.send_...)` -- returns
-    None if there is nothing to send. The service layer stays framework-
-    agnostic (no FastAPI import), matching every other service module in
-    this codebase (e.g. auth_service.py's request_password_reset(), whose
-    router caller decides whether/how to schedule the background task)."""
+    enqueues via `JobQueue.enqueue(...)` -- returns None if there is
+    nothing to send. The service layer stays framework-agnostic (no FastAPI
+    import), matching every other service module in this codebase (e.g.
+    auth_service.py's request_password_reset(), whose router caller decides
+    whether/how to enqueue the background job)."""
     disponent_emails = _disponent_emails(db)
     if not disponent_emails:
         return None
@@ -1272,7 +1267,7 @@ def _cancel_booking_or_request(
 ) -> BookedOrStandbyCanceledNotification | None:
     notification = (
         _build_canceled_notification(db, performance, user, current)
-        if current.status in (3, 4)
+        if current.status in (BookingStatus.STANDBY, BookingStatus.BOOKED)
         else None
     )
     db.execute(
@@ -1288,31 +1283,25 @@ def _cancel_booking_or_request(
 def change_user_request_status(
     db: Session, performance_id: uuid.UUID, user: User
 ) -> tuple[BookingStatusOutput, BookedOrStandbyCanceledNotification | None]:
-    """Port of PerformanceController::changeUserRequestStatus() -- takes no
-    client-provided target status (unlike this plan's original draft
-    schema): the server recomputes the CURRENT status itself via
-    user_booking_status() and dispatches on that, exactly like Legacy's
-    `switch ($performance->auth_user_booking['status'])`. A client can
-    never dictate an arbitrary transition (this endpoint's own earlier
-    draft schema allowed one and was corrected before implementation).
+    """Takes no client-provided target status: the server recomputes the
+    CURRENT status itself via user_booking_status() and dispatches on that.
+    A client can never dictate an arbitrary transition.
 
     Returns the notification descriptor (or None) for the ROUTER to
-    enqueue via `arq_pool.enqueue_job(..., notification.disponent_emails,
+    enqueue via `job_queue.enqueue(..., notification.disponent_emails,
     notification.canceling_user_name, notification.entry)` -- the
     descriptor captures the OLD status before this function's own
-    db.commit() below, exactly like Legacy's Mail::send() call preceding
-    the switch."""
+    db.commit() below."""
     performance = _get_performance_or_404(db, performance_id)
     _ensure_not_past(performance)
     current = user_booking_status(db, performance, user.id)
 
     notification: BookedOrStandbyCanceledNotification | None = None
-    if current.status == 1:
+    if current.status == BookingStatus.BOOKABLE:
         _request_booking(db, performance_id, user.id)
-    elif current.status in (2, 3, 4, 5):
+    elif current.status != BookingStatus.NOT_BOOKABLE:
         notification = _cancel_booking_or_request(db, performance, user, current)
-    # status 0 (not bookable): Legacy's switch has no matching case --
-    # a silent no-op, replicated here the same way.
+    # NOT_BOOKABLE: no matching case -- a silent no-op.
 
     db.commit()
     return user_booking_status(db, performance, user.id), notification
@@ -1336,10 +1325,9 @@ def _truncate_cast(
 def _booked_cast(
     db: Session, performance: Performance, setup: PerformanceSetupOutput
 ) -> CastSectionOutput:
-    """Port of Performance::bookedCast() -- the full cast list truncated to
-    each position's quantity (drops standby entries), used by billing
-    (unbooked-slot pricing) and MessageToCast (only actually-booked users
-    are message recipients)."""
+    """The full cast list truncated to each position's quantity (drops standby entries),
+    used by billing (unbooked-slot pricing) and MessageToCast (only actually-booked
+    users are message recipients)."""
     full_cast = _get_cast_form_data(db, performance, setup).cast
     return CastSectionOutput(
         instruments=_truncate_cast(full_cast.instruments, setup.instruments),
@@ -1414,8 +1402,8 @@ def _org_fee(instrument_count: int, choirjob_count: int) -> BillingOrgfeeOutput:
 def get_billing(
     db: Session, performance_id: uuid.UUID, current_user: User
 ) -> PerformanceBillingResponse:
-    """No past-lock -- Legacy's `billing` policy checks only the `billing`
-    role, unlike `cast`/`maintain` (Schritt 6 plan, router table)."""
+    """No past-lock -- the `billing` permission checks only the `billing`
+    role, unlike `cast`/`maintain`."""
     performance = _get_performance_or_404(db, performance_id)
     detail = performance_service.get_performance_detail(db, performance_id)
     setup = detail.setup
@@ -1509,27 +1497,24 @@ def get_requests_and_bookings(
     return PerformanceRequestsAndBookingsResponse(**short.model_dump(), entries=entries)
 
 
-# --- Selfadmin-Support (Schritt 7) --------------------------------------------
+# --- Selfadmin-Support --------------------------------------------------------
 
 
 def get_upcoming_requests_and_bookings_for_user(
     db: Session, user_id: uuid.UUID, *, upcoming_only: bool = True
 ) -> list[PerformanceShortOutput]:
-    """1:1 Legacy's `User::requestsAndBookings($upcomingOnly, false)`: every
-    Performance the user has either a confirmed Booking for, or (failing
-    that) an open BookingRequest for -- Bookings take precedence on the
-    rare case both exist for the same performance, matching Legacy's own
-    "booked ids first, then requesting ids not already covered" de-dup
-    order (no filter on BookingRequest.notbooked_at -- Legacy includes
-    rejected requests here too).
+    """Every Performance the user has either a confirmed Booking for, or
+    (failing that) an open BookingRequest for -- Bookings take precedence
+    on the rare case both exist for the same performance ("booked ids
+    first, then requesting ids not already covered" de-dup order; no
+    filter on BookingRequest.notbooked_at, rejected requests are included
+    too).
 
-    `upcoming_only` defaults to True (Legacy's Selfadmin/SupportController
-    calls `->requestsAndBookings(true)`), but the System-admin per-user
-    "Anfragen und Buchungen" view (Baustelle 1's `GET /users/{id}/requests-
-    and-bookings`) calls Legacy's `System\\UserController::
-    requestsAndBookings()`, which uses the bare, ALL-history default
-    (`$upcomingOnly = false`). Generic on `user_id` (not necessarily the
-    caller) so this one function backs both callers."""
+    `upcoming_only` defaults to True (the Selfadmin/Support caller), but
+    the admin per-user "Anfragen und Buchungen" view (`GET
+    /users/{id}/requests-and-bookings`) passes False for the ALL-history
+    variant. Generic on `user_id` (not necessarily the caller) so this one
+    function backs both callers."""
     now = local_now()
     booked_query = (
         select(Booking.performance_id)
@@ -1593,11 +1578,9 @@ def get_upcoming_requests_and_bookings_for_user(
 def get_message_to_cast_page(
     db: Session, performance_id: uuid.UUID, current_user: User
 ) -> PerformanceMessageToCastResponse:
-    """No past-lock -- Legacy's MessageToCastRequest authorizes against
-    `Performance::class` (no instance), so `maintain`'s object-level
-    past-check never triggers here, unlike requestsAndBookings() which
-    authorizes against the actual `$performance` instance. Replicated as
-    an intentional Legacy quirk, not "fixed"."""
+    """No past-lock -- the message-to-cast page stays available for past
+    performances, unlike the maintain-type actions, whose object-level
+    past-check locks them once the schedule has passed. Intentional."""
     performance = _get_performance_or_404(db, performance_id)
     detail = performance_service.get_performance_detail(db, performance_id)
     setup = detail.setup
@@ -1614,9 +1597,8 @@ def _ordered_recipient_ids(
     position_type: PositionType | None,
     position_id: uuid.UUID | None,
 ) -> list[uuid.UUID]:
-    """Legacy order: instruments, then voices, then choirjobs -- each
-    item's cast is already sorted by position order + booking order (see
-    Performance::cast()/bookedCast())."""
+    """Order: instruments, then voices, then choirjobs -- each item's cast
+    is already sorted by position order + booking order."""
     if position_type is not None:
         section = getattr(booked_cast, position_type)
         item = next((entry for entry in section if entry.id == position_id), None)
@@ -1663,16 +1645,12 @@ def get_message_recipients(
 def send_message_to_cast(
     db: Session, performance_id: uuid.UUID, sender: User, data: SendMessageRequest
 ) -> tuple[list[str], str, str]:
-    """The MessageToCast send bugfix -- Legacy's "Nachricht senden" button
-    posted to a GET-only route (guaranteed HTTP 405, the feature was
-    never reachable). This
-    builds a real, working send on top of the same mailer/template
-    infrastructure Legacy already had sitting unused for exactly this
-    purpose (`user_message.blade.php`).
+    """Sends a free-text message to the selected cast members, built on the
+    shared mailer/template infrastructure (`user_message` template).
 
     Returns (to_emails, sender_name, message) for the ROUTER to schedule
-    via `BackgroundTasks.add_task(mailer.send_user_message_email, ...)` --
-    the service layer stays framework-agnostic (no FastAPI import)."""
+    via `JobQueue.enqueue(send_user_message_email_task, ...)` -- the
+    service layer stays framework-agnostic (no FastAPI import)."""
     _get_performance_or_404(db, performance_id)
     users_by_id = _users_by_id(db, set(data.recipient_ids))
     to_emails = [

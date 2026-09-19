@@ -1,8 +1,8 @@
 """Jinja2 templates + stdlib smtplib, every send logged to `sent_emails`.
 
-Called from FastAPI `BackgroundTasks.add_task(...)` (Starlette's threadpool
-for the sync function, not `asyncio.to_thread`) -- the request's own DB
-session is already closed by the time a background task runs, so every
+Called from the arq worker's job wrappers (app.worker.tasks, which run each
+sync function in Starlette's threadpool, not `asyncio.to_thread`) -- there
+is no request and thus no request DB session at all by then, so every
 function here opens its own short-lived session via SessionLocal()
 (the documented exception to the SessionLocal-outside-Depends ruff ban,
 see pyproject.toml's per-file-ignores).
@@ -40,14 +40,14 @@ _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescap
 
 
 def _format_short_date(value: datetime) -> str:
-    # Legacy's `schedule->format('j. m. Y')` -- day/month without leading
-    # zeros, same reasoning as _format_notification_timestamp (strftime's
-    # non-padded %-d/%-m is a glibc-only extension, not portable). Rendered
-    # in Python rather than as a Jinja template filter/global -- Jinja's
-    # type stubs don't model arbitrary-callable globals cleanly, and every
-    # other value already reaches these templates pre-formatted the same
-    # way (see e.g. send_password_reset_email's `count=`).
-    return f"{value.day}. {value.month}. {value.year}"
+    # Day WITHOUT leading zeros, month WITH leading zeros (unlike
+    # `_format_notification_timestamp`, where neither has any) -- easy to
+    # conflate. Rendered in Python rather than as a Jinja template
+    # filter/global -- Jinja's type stubs don't model arbitrary-callable
+    # globals cleanly, and every other value already reaches these templates
+    # pre-formatted the same way (see e.g. send_password_reset_email's
+    # `count=`).
+    return f"{value.day}. {value.month:02d}. {value.year}"
 
 
 def _format_ymd_timestamp(now: datetime) -> str:
@@ -55,8 +55,7 @@ def _format_ymd_timestamp(now: datetime) -> str:
 
 
 def _format_notification_timestamp(now: datetime) -> str:
-    # Legacy's `j. n. Y, H:i` (Laravel/PHP date format) -- day/month without
-    # leading zeros, unlike strftime's %d/%m.
+    # Day/month without leading zeros, unlike strftime's %d/%m.
     return f"{now.day}. {now.month}. {now.year}, {now.strftime('%H:%M')}"
 
 
@@ -69,10 +68,9 @@ def _count_recipients(value: str | None) -> int:
 @dataclass(frozen=True)
 class MailKillSwitchStatus:
     """Frontend-facing kill-switch status -- see get_kill_switch_status().
-    `sent` is exclusively for the Statistics page (Schritt 9) -- deliberately
-    NOT added to EmailKillSwitchStatusOutput/GET /auth/me (see Schritt 7's
-    cross-cutting decision: a live counter on every login is unnecessary
-    weight, it belongs on its own dedicated endpoint instead)."""
+    `sent` is exclusively for the Statistics page -- deliberately NOT part of
+    EmailKillSwitchStatusOutput/GET /auth/me: a live counter on every login
+    is unnecessary weight, it belongs on its own dedicated endpoint."""
 
     active: bool
     period_days: int
@@ -81,22 +79,19 @@ class MailKillSwitchStatus:
 
 
 def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
-    """30-day rolling window over `sent_emails`, ported from Legacy's
-    config/mail.php `limit.periodDays`/`limit.allMessagesThreshold` (30 /
-    950): once the summed recipient count (to+cc+bcc) of everything sent
-    in the window reaches the threshold, mail sending switches globally to
-    pure logging -- never a failed request, see _send_templated_email.
-    Public (unlike the private helpers around it) because it also drives
-    the frontend's proactive warning icon/card (GET /auth/me,
-    MessageToContactpersonView, MessageToCastView -- Schritt 7) and the
-    Statistics page's "sent" counter (Schritt 9).
+    """Rolling window (default 30 days) over `sent_emails`: once the summed
+    recipient count (to+cc+bcc) of everything sent in the window reaches the
+    threshold (default 950), mail sending switches globally to pure logging
+    -- never a failed request, see _send_templated_email. Public (unlike
+    the private helpers around it) because it also drives the frontend's
+    proactive warning icon/card (GET /auth/me, MessageToContactpersonView,
+    MessageToCastView) and the Statistics page's "sent" counter.
 
-    Fail-safe, 1:1 Legacy's `SentEmail::ensureThresholdCompliance()`: if the
-    counting query itself fails, treat mail as disabled rather than risk
-    silently missing an over-threshold state. `sent` reports the configured
+    Fail-safe: if the counting query itself fails, treat mail as disabled rather than
+    risk silently missing an over-threshold state. `sent` reports the configured
     threshold itself in that case (the real count is genuinely unknown, but
-    `active=True` already signals "at/over limit" -- reporting anything
-    below threshold there would visually contradict that)."""
+    `active=True` already signals "at/over limit" -- reporting anything below threshold
+    there would visually contradict that)."""
     settings = get_settings()
     try:
         window_start = datetime.now(UTC) - timedelta(
@@ -151,9 +146,15 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
     else:
         with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.ehlo()
-            if server.has_extn("STARTTLS"):
-                server.starttls()
-                server.ehlo()
+            if not server.has_extn("STARTTLS"):
+                msg_text = (
+                    f"SMTP server {smtp_host}:{smtp_port} does not offer "
+                    "STARTTLS -- refusing to send credentials and mail in "
+                    "plaintext."
+                )
+                raise RuntimeError(msg_text)
+            server.starttls()
+            server.ehlo()
             if settings.smtp_user.lower() != "null":
                 server.login(settings.smtp_user, settings.smtp_password)
             server.sendmail(from_email, recipients, msg.as_string())
@@ -231,8 +232,7 @@ def _send_templated_email(
     # actual delivery, independent of this header) -- but the visible "To"
     # header shows only our own sender address instead of the full list, so
     # a multi-recipient blast (e.g. MessageToCast) never exposes one
-    # recipient's address to another (Datenschutz, User-confirmed
-    # 2026-07-31).
+    # recipient's address to another (data protection).
     msg["To"] = from_header if use_bcc else to_str
     msg["Reply-To"] = f'"{settings.smtp_from_name}" <{settings.mail_disponent}>'
     msg.attach(MIMEText(html_content, "html", "utf-8"))
@@ -268,8 +268,8 @@ def send_new_registration_notice(
     *, surname: str, givenname: str, email: str, phone: str | None
 ) -> None:
     """Takes plain fields, not a User ORM instance -- this runs inside a
-    BackgroundTasks callback, well after the request's DB session (and
-    thus the User instance's attribute access) has already been closed."""
+    arq job, long after the request's DB session (and thus the User
+    instance's attribute access) has already been closed."""
     settings = get_settings()
     now = local_now()
     timestamp = _format_ymd_timestamp(now)
@@ -288,8 +288,8 @@ def send_new_registration_notice(
 
 @dataclass(frozen=True)
 class BookingStatusMailEntry:
-    """One row of a `send_booking_status_email` mail -- 1:1 port of
-    Legacy's `booking_status.blade.php` per-BookingLog panel."""
+    """One row of a `send_booking_status_email` mail -- one per
+    BookingLog transition."""
 
     ordinariumwork_artist_name: str
     ordinariumwork_name: str
@@ -307,7 +307,7 @@ def _booking_status_entry_context(entry: BookingStatusMailEntry) -> dict[str, ob
 def send_booking_status_email(
     to_email: str, entries: list[BookingStatusMailEntry]
 ) -> None:
-    """Port of Legacy's `BookingStatus` mail, sent by the
+    """Booking-status notification, sent by the
     `notify_upcoming_booking_status` scheduled job (see
     app.services.booking_jobs) -- one mail per user, bundling every
     booking-log transition they haven't been notified about yet."""
@@ -324,8 +324,7 @@ def send_booking_status_email(
 
 @dataclass(frozen=True)
 class BookingCanceledMailEntry:
-    """1:1 port of Legacy's `booked_or_standby_canceled.blade.php`
-    template variables."""
+    """Template variables of the `booked_or_standby_canceled` mail."""
 
     ordinariumwork_artist_name: str
     ordinariumwork_name: str
@@ -339,9 +338,8 @@ class BookingCanceledMailEntry:
 def send_booked_or_standby_canceled_email(
     to_emails: list[str], canceling_user_name: str, entry: BookingCanceledMailEntry
 ) -> None:
-    """Port of Legacy's `BookedOrStandbyCanceled` mail -- sent synchronously
-    to every `disponent` user when someone self-cancels a booking/standby
-    (booking_service.change_user_request_status)."""
+    """Cancellation notice -- sent synchronously to every `disponent` user when someone
+    self-cancels a booking/standby (booking_service.change_user_request_status)."""
     now = local_now()
     subject = f"Eine Buchung wurde storniert! ({_format_ymd_timestamp(now)})"
     _send_templated_email(
@@ -357,12 +355,9 @@ def send_booked_or_standby_canceled_email(
 def send_user_message_email(
     to_emails: list[str], sender_name: str, message: str
 ) -> None:
-    """Port of Legacy's `UserMessage` mail/`user_message.blade.php` template
-    -- previously only wired up for the unrelated Selfadmin/Support
-    "message a contact person" feature (Schritt 7 scope), now reused for
-    the Schritt-6 MessageToCast send bugfix (see
-    booking_service.send_message_to_cast). Sent via Bcc (User-confirmed
-    2026-07-31, Datenschutz) --
+    """Free-text message mail, used by both the Selfadmin/Support "message a
+    contact person" feature and MessageToCast (see
+    booking_service.send_message_to_cast). Sent via Bcc (data protection):
     `to_emails` here is a disponent-picked, potentially large group of
     musicians/singers who don't necessarily know each other and have no
     reason to see one another's address, unlike e.g. the small, fixed

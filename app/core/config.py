@@ -10,9 +10,8 @@ CORS_ORIGINS, DATABASE_URL, SECRET_KEY.
 Tier 2 (optional, defaults applied, no boot-time validation): session/JWT
 lifetimes, mail sender identity, registration/mail-kill-switch tuning,
 default Performance location/conductor, Valkey connection details for the
-arq job queue -- sane defaults (several taken straight from Legacy's
-config/mail.php and config/osa.php) so a deployment that never touches
-these features still boots.
+arq job queue -- sane defaults so a deployment that never touches these
+features still boots.
 
 Tier 3 (feature-required, no default -- checked at first actual use via
 require_setting(), not at boot): SMTP_HOST/SMTP_PORT, GOOGLE_CLIENT_ID,
@@ -60,26 +59,23 @@ class Settings(BaseSettings):
     refresh_token_lifetime_days: int = Field(
         default=7, validation_alias="REFRESH_TOKEN_LIFETIME_DAYS"
     )
-    password_min_length: int = Field(default=8, validation_alias="PASSWORD_MIN_LENGTH")
-    # Mirrors Legacy's config('app.timezone') -- the single source of truth
-    # for interpreting/comparing naive wall-clock columns like
-    # Performance.schedule (see app.core.datetime_utils.local_now()). Not a
-    # Tier 1 setting: a sane default keeps the app bootable, but stays a real
-    # setting (not a hardcoded literal) so a future multi-timezone deployment
-    # is a config change, not a code change.
+    # Single source of truth for interpreting/comparing naive wall-clock
+    # columns like Performance.schedule (see
+    # app.core.datetime_utils.local_now()). Not a Tier 1 setting: a sane
+    # default keeps the app bootable, but stays a real setting (not a
+    # hardcoded literal) so a future multi-timezone deployment is a config
+    # change, not a code change.
     app_timezone: str = Field(default="Europe/Vienna", validation_alias="APP_TIMEZONE")
-    # Bare hostname of the dedicated short-URL redirect subdomain (Legacy:
-    # hardcoded "go.hochamt.at" in ShorturlController::index()'s
-    # `urlprefix` prop). A real setting (not a literal) so dev
-    # ("go.hochamt.at.dev.schimpl.cc") vs. prod ("go.hochamt.at") is a
-    # config difference only -- see app.services.shorturl_service and the
-    # dedicated go.-domain Caddy vhost that actually routes traffic there.
+    # Bare hostname of the dedicated short-URL redirect subdomain. A real
+    # setting (not a literal) so dev ("go.hochamt.at.dev.schimpl.cc") vs.
+    # prod ("go.hochamt.at") is a config difference only -- see
+    # app.services.shorturl_service and the dedicated go.-domain Caddy vhost
+    # that actually routes traffic there.
     shorturl_domain: str = Field(
         default="go.hochamt.at", validation_alias="SHORTURL_DOMAIN"
     )
-    # Tier 2 -- used by PerformanceController::create()'s successor
-    # (performance_service.get_available_data()) to pre-fill a brand-new
-    # Performance's Ort/Dirigent fields. UUID primary keys are generated at
+    # Tier 2 -- used by performance_service.get_available_data() to pre-fill
+    # a brand-new Performance's Ort/Dirigent fields. UUID primary keys are generated at
     # row-creation time, not predictable literals, so there is no sane
     # built-in default here (unlike the other Tier 2 settings above) --
     # each deployment configures its own row's id via the env var once one
@@ -93,8 +89,7 @@ class Settings(BaseSettings):
         default=None, validation_alias="PERFORMANCE_DEFAULT_CONDUCTOR_ARTIST_ID"
     )
 
-    # Tier 2 (mail) -- defaults taken from Legacy's config/mail.php /
-    # config/osa.php so the migrated values stay identical.
+    # Tier 2 (mail) -- sane defaults, overridable per deployment.
     smtp_from_email: str = Field(
         default="no-reply@hochamt.at", validation_alias="SMTP_FROM_EMAIL"
     )
@@ -121,13 +116,9 @@ class Settings(BaseSettings):
         default=60, validation_alias="PASSWORD_RESET_TTL_MINUTES"
     )
 
-    # Tier 2 (Koofr WebDAV backup target + retention) -- defaults match
-    # Legacy's config/filesystems.php 'koofr_backup' disk and
-    # OsaScheduleBackupProdDB.php's hardcoded 4-week retention 1:1. Do not
-    # change koofr_base_uri/koofr_backup_path without also migrating
-    # existing Koofr-stored backups, or osa-einteilung.hochamt.at/tools/
-    # restore-koofr-backup.sh (hardcoded to the same path) stops finding
-    # them.
+    # Tier 2 (Koofr WebDAV backup target + retention, default 4 weeks). Do
+    # not change koofr_base_uri/koofr_backup_path without also migrating the
+    # existing Koofr-stored backups, or the restore no longer finds them.
     koofr_base_uri: str = Field(
         default="https://app.koofr.net/dav/", validation_alias="KOOFR_BASE_URI"
     )
@@ -137,16 +128,15 @@ class Settings(BaseSettings):
     koofr_backup_retention_days: int = Field(
         default=28, validation_alias="KOOFR_BACKUP_RETENTION_DAYS"
     )
-    # Job-registration gate (app.core.scheduler.start_scheduler()) -- two
+    # Job-registration gate (app.worker.cron_config.build_cron_catalog()) -- two
     # independent conditions (APP_ENVIRONMENT == "production" AND this
     # flag), not this flag alone: unlike a per-stage-isolated storage
     # bucket, OSA's Koofr path is ONE shared destination across every
     # stage, so a single settings toggle must not be enough to make a
     # dev/qa process write into it.
     backup_enabled: bool = Field(default=True, validation_alias="BACKUP_ENABLED")
-    # Deliberate deviation from Legacy's dailyAt('10:50') (User decision,
-    # 2026-08-13) -- moved to a nighttime slot, Europe/Vienna wall-clock via
-    # Settings.app_timezone (see app.core.scheduler.start_scheduler()).
+    # Nighttime slot, Europe/Vienna wall-clock via Settings.app_timezone
+    # (see app.worker.cron_config.build_cron_catalog()).
     backup_hour: int = Field(default=3, validation_alias="BACKUP_HOUR")
     backup_minute: int = Field(default=0, validation_alias="BACKUP_MINUTE")
 

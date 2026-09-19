@@ -9,27 +9,23 @@ from app.db.uuid_pk import uuid_pk
 
 
 class Fee(Base):
-    """Mirrors legacy `fees` (Phase 1 structural parity), with one
-    additive DB-level hardening constraint layered on top in the
-    Quick-Wins hardening slice (2026-09): `amount >= 0` is already
-    enforced at the Pydantic layer (FeeRequest.amount: Field(ge=0, le=999))
-    but was never backed by the database itself -- any non-API write path
-    had no protection against a negative amount before this.
+    """Standalone billing-rate lookup table. `amount >= 0` is enforced both
+    at the Pydantic layer (FeeRequest.amount: Field(ge=0, le=999)) and by a
+    database CHECK constraint, so no non-API write path can store a
+    negative amount.
 
-    A standalone billing-rate lookup table, administered through its own
-    dedicated Legacy controller (`Content/System/FeeController`, not the
-    generic Coreelement mechanism) -- unlike Instrument/Voice/Choirjob/
+    Administered through its own dedicated service (not the generic
+    Coreelement mechanism) -- unlike Instrument/Voice/Choirjob/
     Location/Role/Propriumelement, `fees` has no `order` column, so it
     deliberately does NOT use CoreelementColumns. Bookings copy a Fee's
     `amount` into `bookings.fee`/`booking_logs.fee` as a plain integer at
     booking time -- there is no FK from either table back to `fees.id`, so
     deleting a Fee never orphans a booking.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    Python."""
 
     __tablename__ = "fees"
     __table_args__ = (CheckConstraint("amount >= 0", name="fees_amount_check"),)

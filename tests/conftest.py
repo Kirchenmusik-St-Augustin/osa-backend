@@ -1,8 +1,7 @@
 """Shared pytest fixtures.
 
 The test suite runs against a dedicated PostgreSQL database
-(TEST_DATABASE_URL, falling back to DATABASE_URL) -- not a throwaway
-per-session file (see git history for that earlier fixture setup). Schema
+(TEST_DATABASE_URL, falling back to DATABASE_URL). Schema
 comes from the real Alembic migrations (command.upgrade(..., "head")), not
 Base.metadata.create_all() -- running the actual migration here is what
 would catch model/migration drift, not just a fixture rebuilt from the
@@ -13,20 +12,12 @@ time (E402 is already allowed project-wide for exactly this reason, see
 pyproject.toml).
 
 Per-test isolation uses a transaction+SAVEPOINT pattern (db_session
-below), not the earlier "plain get_db()
-generator, data persists across tests" model this suite used against its
-throwaway-per-session file. That original model relied on tests
-picking mutually-unique fixture data (uuid-suffixed emails, monotonic
-`itertools.count()` ids in a few files) to avoid collisions -- against
-real Postgres, with the full suite's actual connection/session traffic
-(the scheduler's advisory lock among it), that discipline alone turned out
-to not be quite enough: a full-suite run occasionally produced a handful
-of failures that never reproduced in isolation or on a second full run,
-consistent with a rare timing-dependent cross-test interaction rather than
-a deterministic bug in any one test. Wrapping every test in its own
-transaction, rolled back afterward regardless of how the test or the code
-under test committed, removes the shared mutable state that a timing
-window could ever act on.
+below): every test is wrapped in its own outer transaction, rolled back
+afterward regardless of how the test or the code under test committed.
+Tests therefore share no mutable database state and never need mutually
+unique fixture data to avoid collisions -- data that persisted across
+tests made a full-suite run occasionally fail in ways that never
+reproduced in isolation.
 """
 
 import os
@@ -79,6 +70,7 @@ from app.api.middleware import request_logging
 from app.core import mailer
 from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings
+from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
 from app.db.database import engine, get_db
 from app.db.models.choirjob import Choirjob
@@ -115,6 +107,17 @@ def _reset_settings_cache():
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """The slowapi Limiter's in-memory storage is a module-level singleton
+    (app.core.rate_limit.limiter), shared across the whole test session --
+    without a reset, an endpoint's rate-limit counter accumulates across
+    every test that happens to call it, regardless of test order."""
+    limiter.reset()
+    yield
+    limiter.reset()
 
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -356,8 +359,7 @@ def make_user(db_session: Session) -> Callable[..., User]:
 @pytest.fixture
 def make_instrument(db_session: Session) -> Callable[..., Instrument]:
     """Factory fixture: creates a persisted Instrument (unique name per
-    call unless overridden) -- since the polymorphy-redesign slice
-    (2026-09), bookings/booking_logs/performance_positions/
+    call unless overridden) -- bookings/booking_logs/performance_positions/
     ordinariumwork_positions/user_positions' instrument_id is a real
     foreign key, so any test row referencing one needs a backing Instrument
     to actually exist."""

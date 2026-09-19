@@ -127,12 +127,9 @@ class TestValidation:
         )
         assert response.status_code == 422
 
-    def test_blank_inhalt_is_rejected_despite_being_a_listed_value(
-        self, client, make_user
-    ):
-        # Regression test: Legacy's own `values` list for the required
-        # "inhalt" select still carries a leading "" placeholder, but
-        # `required` makes it practically unreachable -- must 422, not 201.
+    def test_blank_inhalt_is_rejected(self, client, make_user):
+        # Regression test: the required "inhalt" select has no blank
+        # option, so an empty submission must 422, not 201.
         headers = _auth_headers(client, make_user)
         response = client.post("/scores", json=_payload(inhalt=""), headers=headers)
         assert response.status_code == 422

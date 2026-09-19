@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -119,3 +119,45 @@ class TestRunAndRecord:
             asyncio.run(scheduled_jobs.downsync_task({}))
 
         mock_record_job_run.assert_not_called()
+
+
+class TestRunAndRecordUsesThreadpool:
+    """record_job_run() opens its own SessionLocal() and commits -- blocking
+    DB I/O that must never run directly on the worker's event loop. The
+    TestRunAndRecord tests above mock record_job_run() away entirely, so
+    they cannot tell a direct call from a run_in_threadpool()-wrapped one;
+    these tests patch run_in_threadpool itself instead, the same pattern
+    used for the request-logging middleware's own threadpool guard."""
+
+    @pytest.mark.parametrize(
+        ("wrapper", "_target_name", "job_id"), _RECORDED_WRAPPERS_AND_TARGETS
+    )
+    def test_records_success_via_run_in_threadpool(self, wrapper, _target_name, job_id):
+        with patch(
+            "app.worker.scheduled_jobs.run_in_threadpool", new_callable=AsyncMock
+        ) as spy:
+            asyncio.run(wrapper({}))
+
+        assert spy.await_count == 2
+        record_call = spy.await_args_list[1]
+        assert record_call.args[0] is scheduled_jobs.record_job_run
+        assert record_call.args[1] == job_id
+        assert record_call.kwargs == {"status": "success", "output": None}
+
+    @pytest.mark.parametrize(
+        ("wrapper", "_target_name", "job_id"), _RECORDED_WRAPPERS_AND_TARGETS
+    )
+    def test_records_failure_via_run_in_threadpool(self, wrapper, _target_name, job_id):
+        with patch(
+            "app.worker.scheduled_jobs.run_in_threadpool", new_callable=AsyncMock
+        ) as spy:
+            spy.side_effect = [ValueError("boom"), None]
+            with pytest.raises(ValueError, match="boom"):
+                asyncio.run(wrapper({}))
+
+        assert spy.await_count == 2
+        record_call = spy.await_args_list[1]
+        assert record_call.args[0] is scheduled_jobs.record_job_run
+        assert record_call.args[1] == job_id
+        assert record_call.kwargs["status"] == "failure"
+        assert "ValueError: boom" in record_call.kwargs["output"]

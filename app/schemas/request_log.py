@@ -18,18 +18,14 @@ class RequestLogUserSummaryOutput(BaseModel):
 class RequestLogDayGroupOutput(BaseModel):
     """One row of the Index endpoint's response -- a local
     (Settings.app_timezone) calendar day within the requested month that
-    had at least one RequestLog entry, with the users active on that day.
-    No Legacy equivalent -- Legacy's Content/Administrator/RequestLogs/
-    Index.vue only ever returns a flat month-scoped user list; day grouping
-    is a real functional change for post-cutover monitoring (User decision
-    2026-08-12), not a 1:1 migration slice."""
+    had at least one RequestLog entry, with the users active on that day."""
 
     day: date
     users: list[RequestLogUserSummaryOutput]
 
 
 class RequestLogEntryOutput(BaseModel):
-    """1:1 Legacy's `RequestLog\\Short` resource."""
+    """One request-log entry in the per-user, per-day list."""
 
     id: uuid.UUID
     created_at: UtcDatetime
@@ -38,15 +34,14 @@ class RequestLogEntryOutput(BaseModel):
 
 
 class RequestLogUserDetailOutput(BaseModel):
-    """Backs `Content/Administrator/RequestLogs/IndexUser.vue` -- entries
-    sorted `created_at ASC` (1:1 Legacy's own `orderBy('created_at')`)."""
+    """One user's request-log entries of a day, sorted `created_at ASC`."""
 
     username: str
     entries: list[RequestLogEntryOutput]
 
 
 class RequestLogShowOutput(BaseModel):
-    """1:1 Legacy's `RequestLog\\Show` resource."""
+    """Full detail of one request-log entry."""
 
     id: uuid.UUID
     client_ip: str

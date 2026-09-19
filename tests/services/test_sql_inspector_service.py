@@ -7,7 +7,7 @@ from app.services.sql_inspector_service import (
 )
 
 
-def test_get_valid_tables_includes_known_legacy_tables(db_session):
+def test_get_valid_tables_includes_known_tables(db_session):
     tables = get_valid_tables(db_session)
     assert "users" in tables
     assert tables == sorted(tables)

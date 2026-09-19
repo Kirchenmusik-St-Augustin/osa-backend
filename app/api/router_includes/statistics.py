@@ -17,6 +17,5 @@ def get_statistics(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, Depends(get_verified_user)],
 ) -> StatisticsOutput:
-    """No permission gate beyond being logged in -- 1:1 Legacy's
-    StatisticsController (no Policy/Gate exists for it at all)."""
+    """No permission gate beyond being logged in."""
     return statistics_service.get_statistics(db)

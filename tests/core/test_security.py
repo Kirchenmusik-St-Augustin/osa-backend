@@ -14,14 +14,14 @@ def test_get_password_hash_and_verify_roundtrip():
     assert not security.verify_password("wrong", hashed)
 
 
-def test_verify_password_normalizes_legacy_2y_prefix():
-    """Legacy passwords are real PHP `password_hash()` output ($2y$ prefix)
-    -- Python's bcrypt only accepts $2a$/$2b$, so verify_password must
-    normalize the prefix before checking, or every migrated user's password
-    would break on first login."""
-    php_style_hash = security.get_password_hash("hunter2").replace("$2b$", "$2y$", 1)
+def test_verify_password_normalizes_2y_prefix():
+    """Stored hashes may carry the `$2y$` bcrypt prefix -- Python's bcrypt
+    only accepts $2a$/$2b$, so verify_password must normalize the prefix
+    before checking, or every such user's password would break on first
+    login."""
+    y_prefix_hash = security.get_password_hash("hunter2").replace("$2b$", "$2y$", 1)
 
-    assert security.verify_password("hunter2", php_style_hash)
+    assert security.verify_password("hunter2", y_prefix_hash)
 
 
 def test_verify_password_rejects_none_or_empty_hash():
@@ -127,7 +127,7 @@ def test_email_verification_token_rejects_pre_migration_integer_user_id():
     must reject that the same way as any other invalid link, not crash,
     since a link emailed shortly before a cutover can still be clicked
     shortly after it (see the token's 60-minute TTL)."""
-    legacy_token = security._email_verification_serializer.dumps(
+    integer_id_token = security._email_verification_serializer.dumps(
         {
             "user_id": "42",
             "email_hash": security.hash_email_for_verification("user@example.test"),
@@ -135,7 +135,7 @@ def test_email_verification_token_rejects_pre_migration_integer_user_id():
     )
 
     with pytest.raises(security.InvalidVerificationTokenError):
-        security.decode_email_verification_token(legacy_token, max_age_seconds=3600)
+        security.decode_email_verification_token(integer_id_token, max_age_seconds=3600)
 
 
 def test_hash_email_for_verification_is_case_sensitive_and_deterministic():

@@ -13,9 +13,7 @@ if TYPE_CHECKING:
 
 
 class Role(Base):
-    """Mirrors legacy `roles` (Phase 1 structural parity), with one
-    additive DB-level rename layered on top in the Quick-Wins hardening
-    slice (2026-09): the `order` column is `sort_order` at the DB level
+    """Application role. The `order` column is `sort_order` at the DB level
     (Postgres always requires `order` to be double-quoted as an
     identifier); the Python attribute/ORM-facing name stays `order` via
     mapped_column's explicit column-name argument (same alias pattern as
@@ -23,11 +21,10 @@ class Role(Base):
     planner, disponent, billing, scores, shorturls -- `administrator` is a
     separate boolean flag on `users`, not a role row.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    Python."""
 
     __tablename__ = "roles"
 
@@ -43,10 +40,9 @@ class Role(Base):
         DateTime(timezone=True), server_onupdate=FetchedValue()
     )
 
-    # Back-reference to User.roles -- added for Schritt 7's "Meine
-    # Ansprechpersonen" (support_service.list_roles_with_contacts()), which
-    # needs one N+1-safe selectinload(Role.users) query for all roles+their
-    # assigned users at once.
+    # Back-reference to User.roles: the "Meine Ansprechpersonen" page loads all
+    # roles together with their assigned users in one N+1-safe
+    # selectinload(Role.users) query (support_service).
     users: Mapped[list["User"]] = relationship(
         "User",
         secondary="user_roles",

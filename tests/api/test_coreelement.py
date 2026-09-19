@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 def _unique(base: str = "Element") -> str:
     """Every test gets its own collision-free name -- tests/conftest.py's
-    shared test DB has no per-test rollback (1:1 make_user's uuid-based
-    emails for the same reason), and coreelement names are globally unique
+    shared test DB has no per-test rollback (same reason as make_user's
+    uuid-based emails), and coreelement names are globally unique
     per type, unlike Users."""
     return f"{base}-{uuid.uuid4().hex[:8]}"
 
@@ -244,10 +244,9 @@ class TestDeleteInUse:
 
 
 class TestDeleteInUseViaOrdinariumworkPosition:
-    """Retrofit regression guard: Instrument/Voice delete is now blocked
-    once Schritt 4 (Repertoire) wires them into an Ordinariumwork's setup
-    positions -- see _make_ordinariumwork_position_dependency_check in
-    coreelement_service.py."""
+    """Regression guard: Instrument/Voice delete is blocked while an
+    Ordinariumwork's setup positions reference them -- see
+    _make_ordinariumwork_position_dependency_check in coreelement_service.py."""
 
     def test_instrument_delete_blocked_while_referenced_by_ordinariumwork(
         self, client, make_user
@@ -306,7 +305,7 @@ def _make_performance_dependencies(
     client, make_user
 ) -> tuple[dict[str, str], int, int]:
     """Returns (planner_headers, composer_artist_id, ordinariumwork_id) --
-    shared scaffolding for the Performance-based retrofit tests below."""
+    shared scaffolding for the Performance-based dependency tests below."""
     planner_headers = _auth_headers(client, make_user, roles=["planner"])
     artist_response = client.post(
         "/artists",
@@ -362,11 +361,10 @@ def _performance_payload(
 
 
 class TestDeleteInUseViaPerformancePosition:
-    """Retrofit regression guard (Schritt 5): Instrument/Voice/Choirjob
-    delete is now also blocked once a Performance's Positionskonfiguration
-    references them -- Choirjob gets its FIRST real dependency check here
-    (it had none before Schritt 5, unlike Instrument/Voice which already
-    got the Ordinariumwork-position retrofit in Schritt 4)."""
+    """Regression guard: Instrument/Voice/Choirjob delete is also blocked
+    while a Performance's Positionskonfiguration references them -- for
+    Choirjob this is its only dependency check, since Ordinariumwork
+    positions never reference choirjobs."""
 
     def test_choirjob_delete_blocked_while_referenced_by_performance(
         self, client, make_user
@@ -410,8 +408,8 @@ class TestDeleteInUseViaPerformancePosition:
 
 
 class TestDeleteInUseViaPerformanceLocation:
-    """Retrofit regression guard (Schritt 5): Location's first-ever real
-    dependency check, against Performance.location_id."""
+    """Regression guard: Location's dependency check, against
+    Performance.location_id."""
 
     def test_location_delete_blocked_while_referenced_by_performance(
         self, client, make_user
@@ -441,8 +439,8 @@ class TestDeleteInUseViaPerformanceLocation:
 
 
 class TestDeleteInUseViaPerformanceProprium:
-    """Retrofit regression guard (Schritt 5): Propriumelement's first-ever
-    real dependency check, against performance_proprium.propriumelement_id."""
+    """Regression guard: Propriumelement's dependency check, against
+    performance_proprium.propriumelement_id."""
 
     def test_propriumelement_delete_blocked_while_referenced_by_performance(
         self, client, make_user

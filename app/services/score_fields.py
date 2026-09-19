@@ -1,7 +1,6 @@
 """Field-metadata registry for the Score (Notenarchiv) domain -- the single
-source of truth for label/type/length/required/allowed-values per field,
-1:1 transcribed from Legacy's `Score::$fields`+`$defaults` merge
-(`app/Models/Score.php::fields()`). Deliberately its own module (no
+source of truth for label/type/length/required/allowed-values per field.
+Deliberately its own module (no
 dependency on `app.schemas.score` or `app.services.score_service`): both
 of those import FROM here (schemas.score references `.length`/`.values`
 directly in its `Field()` declarations, score_service exposes this
@@ -9,19 +8,15 @@ registry as the `GET /scores/fields-config` response) -- putting the
 registry in either of them would create a circular import.
 
 Field shapes:
-- "text"/"textarea": free text, `length` is Legacy's SaveRequest `max:N`.
-- "select": `values` is the exact allowed-value list, including a leading
-  "" placeholder where Legacy's own config has one (kept even for
-  `required=True` fields like "inhalt" -- Legacy's own `required` rule
-  rejects an actually-empty submission before the `in:` rule is ever
-  reached, so the placeholder is effectively inert there, not a bug to
-  clean up here).
-- "number": Legacy's own defaults make EVERY input.number field required
-  UNLESS explicitly marked `nullable: true` (only geboren/gestorben/jahr) --
-  but Laravel's `nullable` rule short-circuits `required` when the value
-  is empty, so those three are practically optional despite technically
-  carrying both rules. `required=False` here reflects that practical
-  behavior, not the redundant literal rule list.
+- "text"/"textarea": free text, `length` is the maximum length.
+- "select": `values` is the exact allowed-value list. Optional selects
+  start with a leading "" entry, the blank option (submitted as an empty
+  string and normalized to None by the request schema). Required selects
+  (like "inhalt") have no blank entry: leaving one unchosen is rejected.
+- "number": every number field is required UNLESS explicitly marked
+  nullable (only geboren/gestorben/jahr), which makes those three
+  practically optional. `required=False` here reflects that practical
+  behavior.
 """
 
 from dataclasses import dataclass
@@ -41,11 +36,9 @@ class ScoreFieldSpec:
 
 _ART_VALUES: tuple[str, ...] = ("", "Original", "Kopie", "Original/Kopie")
 
-# Legacy's `HasCoreelementFeatures`-unrelated part-type holdings section:
-# 11 groups have verl(ag)/art/zust(and)/anz(ahl); "orch" alone only has
-# the first three (no quantity column at all, confirmed by the real
-# schema -- "orgel" DOES have one, unlike an earlier misreading of the
-# schema dump).
+# Part-type holdings section: 11 groups have verl(ag)/art/zust(and)/
+# anz(ahl); "orch" alone only has the first three (no quantity column at
+# all -- "orgel" DOES have one).
 _PART_GROUPS_WITH_COUNT: tuple[str, ...] = (
     "part1",
     "part2",
@@ -61,7 +54,7 @@ _PART_GROUPS_WITH_COUNT: tuple[str, ...] = (
 )
 _PART_GROUPS_WITHOUT_COUNT: tuple[str, ...] = ("orch",)
 
-# Instrumentation headcounts -- label only (no length/values), 1:1 Legacy.
+# Instrumentation headcounts -- label only (no length/values).
 _INSTRUMENT_LABELS: tuple[tuple[str, str], ...] = (
     ("violine1", "Violine 1"),
     ("violine2", "Violine 2"),
@@ -112,7 +105,6 @@ def _build_score_fields() -> dict[str, ScoreFieldSpec]:
             "select",
             required=True,
             values=(
-                "",
                 "Orchestermaterial",
                 "Chormaterial",
                 "Orch-/Chormaterial",

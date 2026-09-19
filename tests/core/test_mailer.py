@@ -31,8 +31,10 @@ def test_format_ymd_timestamp():
     assert mailer._format_ymd_timestamp(now) == "2026-03-05 09:07"
 
 
-def test_format_short_date_has_no_leading_zeros():
-    assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 3. 2026"
+def test_format_short_date_pads_month_but_not_day():
+    # Day without leading zeros, month WITH leading zeros -- a single-digit
+    # month must not be conflated with the day's no-padding rule.
+    assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 03. 2026"
 
 
 def test_format_notification_timestamp_has_no_leading_zeros():
@@ -77,8 +79,8 @@ def test_kill_switch_ignores_emails_outside_rolling_window(
 
 
 def test_kill_switch_fails_safe_to_active_on_db_error():
-    """1:1 Legacy's SentEmail::ensureThresholdCompliance(): a failed count
-    query must never silently look like "mail sending is fine"."""
+    """A failed count query must never silently look like "mail sending is
+    fine"."""
     broken_session = MagicMock()
     broken_session.execute.side_effect = SQLAlchemyError("boom")
 
@@ -120,7 +122,7 @@ def test_send_verification_email_subject_uses_app_timezone_not_utc(
     db_session, monkeypatch: pytest.MonkeyPatch
 ):
     """Regression: email subjects must show Settings.app_timezone
-    wall-clock, not UTC (previously datetime.now(UTC) leaked straight into
+    wall-clock, not UTC (datetime.now(UTC) must never leak straight into
     the subject). fixed_local is chosen so that UTC and Vienna (CEST,
     UTC+2) render both a different hour AND a different calendar day -- a
     coincidental hour match wouldn't catch the bug."""
@@ -239,17 +241,24 @@ def test_send_message_uses_starttls_when_available(monkeypatch: pytest.MonkeyPat
     assert mock_server.ehlo.call_count == 2
 
 
-def test_send_message_skips_starttls_when_unavailable(monkeypatch: pytest.MonkeyPatch):
+def test_send_message_refuses_to_send_when_starttls_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Silently falling back to plaintext would leak SMTP login credentials
+    # (and the mail body) to anyone on the network path -- a server that
+    # stops offering STARTTLS must fail the send, not degrade quietly.
     monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
     monkeypatch.setenv("SMTP_PORT", "587")
 
     with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
         mock_server = mock_smtp.return_value.__enter__.return_value
         mock_server.has_extn.return_value = False
-        mailer._send_message(MagicMock(), ["a@example.test"])
+        with pytest.raises(RuntimeError, match="STARTTLS"):
+            mailer._send_message(MagicMock(), ["a@example.test"])
 
     mock_server.starttls.assert_not_called()
-    assert mock_server.ehlo.call_count == 1
+    mock_server.login.assert_not_called()
+    mock_server.sendmail.assert_not_called()
 
 
 def test_send_message_skips_login_when_user_is_null_sentinel(
@@ -261,7 +270,7 @@ def test_send_message_skips_login_when_user_is_null_sentinel(
 
     with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
         mock_server = mock_smtp.return_value.__enter__.return_value
-        mock_server.has_extn.return_value = False
+        mock_server.has_extn.return_value = True
         mailer._send_message(MagicMock(), ["a@example.test"])
 
     mock_server.login.assert_not_called()
@@ -392,7 +401,7 @@ class TestSendUserMessageEmail:
     def test_sends_via_bcc_so_recipients_never_see_each_other(
         self, db_session, monkeypatch: pytest.MonkeyPatch
     ):
-        """Datenschutz (User-confirmed 2026-07-31): a MessageToCast blast
+        """Data protection: a MessageToCast blast
         can go out to dozens of musicians/singers who don't know each
         other -- none of their addresses may appear in a header any of
         them can see, even though every one of them still gets delivered

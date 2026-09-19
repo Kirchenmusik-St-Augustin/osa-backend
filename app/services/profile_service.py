@@ -5,7 +5,12 @@ from sqlalchemy import select
 from app.core.human_names import normalize_givenname, normalize_surname
 from app.core.security import get_password_hash, verify_password
 from app.db.models.user import User
-from app.schemas.validators import PASSWORD_POLICY_MESSAGE
+from app.schemas.validators import PASSWORD_UNCHANGED_MESSAGE
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -14,20 +19,19 @@ if TYPE_CHECKING:
 
     from app.schemas.profile import ProfileUpdateRequest
 
-
-class WrongCurrentPasswordError(Exception):
-    """`auth_password` doesn't match the user's actual current password --
-    1:1 Legacy's ValidAuthPassword rule ("Das bestehende Passwort ist
-    falsch.")."""
+_WRONG_PASSWORD_DETAIL = "Das bestehende Passwort ist falsch."  # noqa: S105 -- user-facing error text, not a credential
 
 
-class ProfileValidationError(Exception):
-    """Field-level validation failures, mirroring Legacy's UpdateRequest
-    error bag -- 1:1 user_service.UserValidationError pattern."""
+class WrongCurrentPasswordError(GeneralValidationError):
+    """`auth_password` doesn't match the user's actual current password."""
 
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Profile validation failed")
+    def __init__(self) -> None:
+        super().__init__(_WRONG_PASSWORD_DETAIL, field="auth_password")
+
+
+class ProfileValidationError(DomainValidationError):
+    """Field-level validation failures, one (field, message) pair per
+    failing field -- same pattern as user_service.UserValidationError."""
 
 
 def _name_combo_taken(
@@ -47,14 +51,13 @@ def _email_taken(db: Session, email: str, exclude_id: uuid.UUID) -> bool:
 def update_profile(
     db: Session, user: User, data: ProfileUpdateRequest
 ) -> tuple[User, bool]:
-    """Returns (user, email_changed) -- the router decides whether to send
-    a new verification mail (BackgroundTasks needs a request context this
+    """Returns (user, email_changed) -- the router decides whether to enqueue
+    a new verification mail (job queueing needs a request context this
     service deliberately doesn't have), this stays framework-agnostic.
 
-    Order mirrors Legacy: re-auth check first (ValidAuthPassword), then the
-    two composite-unique checks (`Rule::unique()->ignore(self)`), then the
-    "new password differs from the current one" sub-rule that only
-    ValidNewPassword's `auth()->check()` branch can run -- schema-level
+    Order: re-auth check (current password) first, then the two
+    composite-unique checks (ignoring the caller's own row), then the "new
+    password differs from the current one" sub-rule -- schema-level
     validators have no DB access, see app.schemas.profile."""
     if not verify_password(data.auth_password, user.auth_password):
         raise WrongCurrentPasswordError
@@ -62,24 +65,23 @@ def update_profile(
     surname = normalize_surname(data.surname)
     givenname = normalize_givenname(data.givenname)
 
-    errors: list[tuple[str, str]] = []
+    errors: list[FieldError] = []
     if _name_combo_taken(db, surname, givenname, exclude_id=user.id):
         msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(("surname", msg))
-        errors.append(("givenname", msg))
+        errors.append(FieldError("surname", msg))
+        errors.append(FieldError("givenname", msg))
     if _email_taken(db, data.email, exclude_id=user.id):
-        errors.append(("email", "Diese E-Mail-Adresse ist bereits vergeben."))
+        errors.append(FieldError("email", "Diese E-Mail-Adresse ist bereits vergeben."))
     if (
         data.change_password
         and data.password is not None
         and verify_password(data.password, user.auth_password)
     ):
-        errors.append(("password", PASSWORD_POLICY_MESSAGE))
+        errors.append(FieldError("password", PASSWORD_UNCHANGED_MESSAGE))
     if errors:
         raise ProfileValidationError(errors)
 
-    # Raw string comparison, not case-normalized -- 1:1 Legacy's
-    # `auth()->user()->email !== $validated['email']`.
+    # Raw string comparison, not case-normalized.
     email_changed = data.email != user.email
 
     if data.change_password and data.password:

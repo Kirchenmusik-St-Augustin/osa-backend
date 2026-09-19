@@ -16,20 +16,18 @@ _SEARCH_RESULT_LIMIT = 20
 
 class UserAdministrationNotFoundError(Exception):
     """Raised when `user_id` doesn't exist at all -- this domain always
-    operates `withTrashed()` (1:1 Legacy's UserAdministrationController
-    routes), unlike user_service's soft-delete-aware lookups."""
+    includes soft-deleted users, unlike user_service's soft-delete-aware
+    lookups."""
 
 
 class SelfTargetError(Exception):
-    """set_random_password() targeting the acting administrator themselves
-    -- 1:1 Legacy's `abort_if(auth()->user()->id === $user->id, 403, ...)`
-    in UserAdministrationController::setPassword()."""
+    """set_random_password() targeting the acting administrator
+    themselves."""
 
 
 def search_users_including_deleted(db: Session, query: str) -> Sequence[User]:
-    """1:1 Legacy's `User::search($q, true)` -- real indexed DB query (not
-    Legacy's in-memory-filter anti-pattern), deliberately including
-    soft-deleted users (Legacy's `withTrashed` argument)."""
+    """Filtered in the database (not in memory), deliberately including
+    soft-deleted users."""
     words = [word for word in query.lower().split() if word]
     if not words:
         return []
@@ -45,8 +43,8 @@ def search_users_including_deleted(db: Session, query: str) -> Sequence[User]:
 
 
 def list_deleted_users(db: Session) -> Sequence[User]:
-    """1:1 Legacy's `User::onlyTrashed()->get()`, shown directly on the
-    initial (queryless) Search page load."""
+    """All soft-deleted users, shown directly on the initial (queryless)
+    Search page load."""
     stmt = (
         select(User)
         .where(User.deleted_at.is_not(None))
@@ -85,8 +83,7 @@ def set_random_password(
     db: Session, user_id: uuid.UUID, current_user_id: uuid.UUID
 ) -> tuple[User, str]:
     """Generates a one-time password, shown ONCE in the response -- never
-    logged, never emailed (1:1 Legacy, which has no mail trigger for this
-    action either)."""
+    logged, never emailed."""
     user = _get_or_404(db, user_id)
     if user_id == current_user_id:
         raise SelfTargetError

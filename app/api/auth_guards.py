@@ -22,9 +22,8 @@ def ensure_permission(user: User, required_permission: str) -> None:
 
 
 def get_verified_user(current_user: User = Depends(get_current_user)) -> User:
-    """1:1 Legacy's `verified` middleware on the `content.*` route group --
-    everything except auth's own endpoints (login/refresh/logout/me/
-    verify-email/resend-verification-email) requires a verified email.
+    """Requires a verified email on every route except auth's own endpoints
+    (login/refresh/logout/me/verify-email/resend-verification-email).
     Deliberately a separate dependency from get_current_user (not merged
     into it) so those few auth endpoints stay reachable for an
     unverified-but-logged-in user -- otherwise nobody could ever reach the

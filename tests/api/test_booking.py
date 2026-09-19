@@ -272,6 +272,69 @@ class TestBookingStatusSelfService:
         assert cancel_response.status_code == 200
         assert cancel_response.json()["status"] == 1
 
+    def test_booked_user_canceling_enqueues_the_disponent_notification(
+        self, client, make_user, db_session, fake_arq_pool
+    ):
+        disponent_headers, disponent = _auth_headers(
+            client, make_user, roles=["disponent"]
+        )
+        instrument_id = _make_instrument(client, make_user)
+        performance_id = _make_performance(
+            client, make_user, disponent_headers, instrument_id=instrument_id
+        )
+        musician_headers, musician = _auth_headers(client, make_user, roles=[])
+        _qualify(db_session, musician.id, instrument_id)
+        client.post(
+            f"/performances/{performance_id}/cast",
+            json={
+                "cast": {
+                    "instruments": [
+                        {
+                            "id": instrument_id,
+                            "cast": [{"id": str(musician.id), "fee": 80}],
+                        }
+                    ],
+                    "voices": [],
+                    "choirjobs": [],
+                },
+                "not_booked": [],
+            },
+            headers=disponent_headers,
+        )
+
+        response = client.post(
+            f"/performances/{performance_id}/booking-status", headers=musician_headers
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == 1
+        fake_arq_pool.enqueue_job.assert_called_once()
+        job_name, disponent_emails, canceling_user_name, entry = (
+            fake_arq_pool.enqueue_job.call_args.args
+        )
+        assert job_name == "send_booked_or_standby_canceled_email_task"
+        assert disponent.email in disponent_emails
+        assert isinstance(canceling_user_name, str)
+        assert entry.previous_status == 4
+
+    def test_requesting_does_not_enqueue_any_notification(
+        self, client, make_user, db_session, fake_arq_pool
+    ):
+        disponent_headers, _ = _auth_headers(client, make_user, roles=["disponent"])
+        instrument_id = _make_instrument(client, make_user)
+        performance_id = _make_performance(
+            client, make_user, disponent_headers, instrument_id=instrument_id
+        )
+        musician_headers, musician = _auth_headers(client, make_user, roles=[])
+        _qualify(db_session, musician.id, instrument_id)
+
+        response = client.post(
+            f"/performances/{performance_id}/booking-status", headers=musician_headers
+        )
+
+        assert response.status_code == 200
+        fake_arq_pool.enqueue_job.assert_not_called()
+
 
 class TestBillingNoPastLock:
     def test_billing_available_for_past_performance(

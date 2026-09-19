@@ -6,7 +6,7 @@ Create Date: 2026-09-10 19:08:43.598877
 
 """
 
-from typing import Sequence, Union
+from typing import Sequence
 
 import sqlalchemy as sa
 
@@ -150,8 +150,8 @@ def downgrade() -> None:
     Fully lossless and mechanical: the old position_type/position_id
     columns are untouched by this migration (they're only dropped in the
     following one), so this just removes what was added here -- no
-    orphan-style data-loss risk like some of the FK-hardening slice's own
-    downgrades."""
+    orphan-style data-loss risk like the downgrades of the foreign-key
+    migrations have."""
     for table, column in reversed(_NEW_COLUMNS):
         op.drop_index(f"{table}_{column}_index", table_name=table)
 

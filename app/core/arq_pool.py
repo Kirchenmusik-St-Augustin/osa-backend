@@ -42,11 +42,11 @@ def build_redis_settings() -> RedisSettings:
 
 async def get_arq_pool() -> ArqRedis:
     """FastAPI dependency -- inject via Depends(get_arq_pool), never import
-    or call directly from router code. Declare this dependency AFTER any
-    auth/permission Depends() on the same route: FastAPI resolves
-    dependencies in declaration order, and creating this pool costs a real
-    Redis round-trip on the very first request after process start, which
-    an already-rejected (401/403) request must never pay for."""
+    or call directly from router code; routers enqueue through
+    app.api.job_queue.get_job_queue instead, which builds on this. Creating
+    the pool costs a real Redis round-trip on the very first request after
+    process start, which an already-rejected (401/403) request must never
+    pay for -- see get_job_queue for the required declaration order."""
     global _pool  # noqa: PLW0603 -- lazy singleton, mirrors app/db/database.py's own module-level engine/SessionLocal, just async-created here since create_pool() must be awaited
     if _pool is not None:
         return _pool

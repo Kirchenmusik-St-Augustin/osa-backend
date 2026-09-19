@@ -1,21 +1,17 @@
 import uuid
 from math import ceil
 from typing import Annotated
-from urllib.parse import urlencode
 
-from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from app.api.auth_guards import get_verified_user
 from app.api.deps import get_current_user, oauth2_scheme
-from app.api.error_responses import field_errors_to_detail
+from app.api.job_queue import JobQueue, get_job_queue
 from app.core import mailer
-from app.core.arq_pool import get_arq_pool
-from app.core.config import get_settings, require_setting
+from app.core.config import get_settings
 from app.core.rate_limit import limiter
 from app.core.redacted import Redacted
 from app.core.security import (
@@ -40,7 +36,6 @@ from app.services.auth_service import (
     AccountNotLinkedError,
     InvalidSessionError,
     OauthBindingNotFoundError,
-    RegistrationConflictError,
 )
 from app.services.permission_service import calculate_permissions
 from app.worker.tasks import (
@@ -108,12 +103,11 @@ def login(
     """Authenticate with email + password, receive a JWT access token plus
     an httponly refresh cookie.
 
-    Exact German error texts are hard Legacy parity (lang/de/auth.php):
     "Anmeldedaten unbekannt." covers BOTH unknown email and wrong password
-    (Laravel's Auth::attempt() fails generically for both -- there is no
-    separate "Passwort falsch." message in the login flow, that string
-    belongs to the unrelated self-service change-password form). Lockout
-    threshold/window (5 attempts / 60s) also hard parity, see
+    (the login fails generically for both, which prevents account
+    enumeration -- there is no separate "Passwort falsch." message in the
+    login flow, that string belongs to the unrelated self-service
+    change-password form). Lockout threshold/window (5 attempts / 60s), see
     auth_service.check_login_throttle.
     """
     ip_address = _client_ip(request)
@@ -189,8 +183,7 @@ def login(
 @limiter.limit("10/minute")  # type: ignore[reportUntypedFunctionDecorator]
 def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONResponse:
     """Exchange the refresh-token cookie for a new access token, rotating
-    the refresh secret on every use. No Legacy equivalent (Legacy has no
-    JWT refresh concept at all) -- per-IP rate limit only."""
+    the refresh secret on every use. Per-IP rate limit only."""
     _ensure_trusted_origin(request)
     cookie_value = request.cookies.get("refresh_token")
     if not cookie_value:
@@ -237,12 +230,10 @@ def get_current_user_profile(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> UserProfileResponse:
-    """No Legacy route equivalent -- Legacy's Inertia setup injects the
-    user into every server-rendered page's shared props, a pure SPA has
-    no such channel. The frontend calls this once after login/on boot to
-    populate its auth store (navbar display, permission-gated UI,
-    Schritt 7's email-kill-switch warning icon -- same lifecycle as
-    `permissions`, no separate polling endpoint)."""
+    """The frontend calls this once after login/on boot to populate its auth
+    store (navbar display, permission-gated UI, email-kill-switch warning
+    icon -- same lifecycle as `permissions`, no separate polling
+    endpoint)."""
     kill_switch = mailer.get_kill_switch_status(db)
     return UserProfileResponse(
         id=current_user.id,
@@ -260,44 +251,27 @@ def get_current_user_profile(
     )
 
 
-def _register_sync(data: RegisterRequest, db: Session) -> tuple[User, str, str, str]:
-    """Original synchronous handler body, logic unchanged -- extracted so
-    the async router function below can run it via run_in_threadpool
-    instead of executing this blocking DB code directly on the event loop.
-    Lets RegistrationConflictError propagate uncaught -- run_in_threadpool
-    re-raises it in the calling (async) context, where the router's own
-    try/except below turns it into a 422 response, exactly as before."""
+@auth_router.post("/register")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+def register(
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: RegisterRequest,
+    db: Annotated[Session, Depends(get_db)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
+) -> JSONResponse:
+    """Register + auto-login right after user creation, then notify the disponent
+    address in the background -- registration itself must not wait on (or fail because
+    of) mail delivery. No auth/permission dependency exists on this endpoint (it must
+    work logged-out), so there is no dependency-ordering concern here, unlike
+    resend_verification_email below. A RegistrationConflictError propagates
+    to app.api.exception_handlers' global DomainValidationError handler."""
     user = auth_service.register_user(db, data)
     access_token, session_id, refresh_secret = auth_service.create_user_session(
         db, user
     )
-    return user, access_token, session_id, refresh_secret
 
-
-@auth_router.post("/register")
-async def register(
-    data: RegisterRequest,
-    db: Annotated[Session, Depends(get_db)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
-) -> JSONResponse:
-    """Register + auto-login (mirrors Legacy's `Auth::login($user)` right
-    after `User::create()`), then notify the disponent address in the
-    background -- registration itself must not wait on (or fail because
-    of) mail delivery. No auth/permission dependency exists on this
-    endpoint (it must work logged-out), so there is no dependency-ordering
-    concern here, unlike resend_verification_email below."""
-    try:
-        user, access_token, session_id, refresh_secret = await run_in_threadpool(
-            _register_sync, data, db
-        )
-    except RegistrationConflictError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            content={"detail": field_errors_to_detail(exc.errors)},
-        )
-
-    await arq_pool.enqueue_job(
-        send_new_registration_notice_task.__name__,
+    job_queue.enqueue(
+        send_new_registration_notice_task,
         surname=user.surname,
         givenname=user.givenname,
         email=data.email.lower(),
@@ -305,40 +279,29 @@ async def register(
     )
     if user.email is not None:
         verify_url = auth_service.build_verification_email_url(user)
-        await arq_pool.enqueue_job(
-            send_verification_email_task.__name__, user.email, Redacted(verify_url)
+        job_queue.enqueue(
+            send_verification_email_task, user.email, Redacted(verify_url)
         )
 
     return _build_login_response(access_token, session_id, refresh_secret)
 
 
-def _resend_verification_email_sync(current_user: User) -> str | None:
-    if current_user.email_verified_at is None and current_user.email is not None:
-        return auth_service.build_verification_email_url(current_user)
-    return None
-
-
 @auth_router.post("/resend-verification-email")
 @limiter.limit("6/minute")  # type: ignore[reportUntypedFunctionDecorator]
-async def resend_verification_email(
+def resend_verification_email(
     request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
     current_user: Annotated[User, Depends(get_current_user)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
-    """1:1 Legacy's `POST verify-email` (EmailVerificationController::send()).
-    Deliberately uses get_current_user, not get_verified_user -- an
-    unverified user must be able to reach exactly this endpoint. No-op
-    (still 200) if already verified, matching Legacy's own idempotent
-    `hasVerifiedEmail()` short-circuit. current_user is declared BEFORE
-    arq_pool on purpose: FastAPI resolves Depends() in declaration order,
-    and an invalid/expired bearer token must be rejected (401) before this
-    request ever pays for creating/reusing the ARQ pool connection."""
-    verify_url = await run_in_threadpool(_resend_verification_email_sync, current_user)
-    if verify_url is not None and current_user.email is not None:
-        await arq_pool.enqueue_job(
-            send_verification_email_task.__name__,
-            current_user.email,
-            Redacted(verify_url),
+    """Re-sends the verification mail. Deliberately uses get_current_user,
+    not get_verified_user -- an unverified user must be able to reach
+    exactly this endpoint. Idempotent: no-op (still 200) if already
+    verified. current_user is declared BEFORE job_queue on purpose, see
+    get_job_queue."""
+    if current_user.email_verified_at is None and current_user.email is not None:
+        verify_url = auth_service.build_verification_email_url(current_user)
+        job_queue.enqueue(
+            send_verification_email_task, current_user.email, Redacted(verify_url)
         )
     return {
         "status": "ok",
@@ -347,14 +310,16 @@ async def resend_verification_email(
 
 
 @auth_router.post("/verify-email")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def verify_email(
-    data: VerifyEmailRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: VerifyEmailRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
     """Self-contained via the token alone (no prior login required) --
-    the token already encodes+signs the target user, playing the same
-    role Legacy's Laravel Signed Route + auth-middleware combination did.
-    Auto-logs the user in afterwards, since Legacy's equivalent flow
-    always already had an active session at this point."""
+    the token already encodes+signs the target user. Auto-logs the user in
+    afterwards, since the link is typically opened in a fresh browser
+    context without an active session."""
     try:
         user = auth_service.verify_email(db, data.token)
     except ValueError as exc:
@@ -369,39 +334,24 @@ def verify_email(
     return _build_login_response(access_token, session_id, refresh_secret)
 
 
-def _forgot_password_sync(data: ForgotPasswordRequest, db: Session) -> str | None:
-    """Original synchronous handler body, logic unchanged -- extracted so
-    the async router function below can run it via run_in_threadpool
-    instead of executing this blocking DB code directly on the event loop."""
-    token = auth_service.request_password_reset(db, data.email)
-    if token is None:
-        return None
-    settings = get_settings()
-    base_url = require_setting(
-        settings.frontend_reset_password_url, "FRONTEND_RESET_PASSWORD_URL"
-    )
-    return f"{base_url}?{urlencode({'token': token, 'email': data.email})}"
-
-
 @auth_router.post("/forgot-password")
-async def forgot_password(
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+def forgot_password(
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
     data: ForgotPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
-    arq_pool: Annotated[ArqRedis, Depends(get_arq_pool)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """Always responds 200 regardless of whether the email is registered
-    -- prevents account enumeration (1:1 Legacy UX, even though Legacy's
-    own server-side validation actually leaks this via a distinct
-    "passwords.user" error; the neutral-response behavior is the
-    hardening, not a Legacy replication). No auth/permission dependency
+    -- prevents account enumeration. No auth/permission dependency
     exists on this endpoint (must work logged-out), so unlike
     resend_verification_email above there is no dependency-ordering
-    concern here -- db and arq_pool are the only two dependencies and
+    concern here -- db and job_queue are the only two dependencies and
     neither one rejects the request."""
-    reset_url = await run_in_threadpool(_forgot_password_sync, data, db)
+    reset_url = auth_service.build_password_reset_url(db, data.email)
     if reset_url is not None:
-        await arq_pool.enqueue_job(
-            send_password_reset_email_task.__name__, data.email, Redacted(reset_url)
+        job_queue.enqueue(
+            send_password_reset_email_task, data.email, Redacted(reset_url)
         )
     return {
         "status": "ok",
@@ -412,8 +362,11 @@ async def forgot_password(
 
 
 @auth_router.post("/reset-password")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def reset_password(
-    data: ResetPasswordRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: ResetPasswordRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
     try:
         auth_service.execute_password_reset(db, data.email, data.token, data.password)
@@ -426,16 +379,16 @@ def reset_password(
 
 
 @auth_router.post("/google/callback")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def google_callback(
-    data: GoogleCallbackRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: GoogleCallbackRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
-    """Direct login via an existing Google binding. No Legacy-equivalent
-    redirect/callback dance (Socialite's server-side OAuth code exchange
-    needs session-stored CSRF `state`, which doesn't cleanly exist in a
-    stateless-JWT backend) -- uses Google Identity Services' ID-token
-    ("credential") flow instead, 1:1 the simpler pattern already proven
-    for this exact use case. Same business capability (log in if already
-    linked), leaner mechanism."""
+    """Direct login via an existing Google binding. Uses Google Identity
+    Services' ID-token ("credential") flow rather than a server-side OAuth
+    redirect/callback dance, which would need a session-stored CSRF `state`
+    that doesn't cleanly exist in a stateless-JWT backend."""
     try:
         user = auth_service.authenticate_google_user(db, data.credential)
     except AccountNotLinkedError:
@@ -455,8 +408,11 @@ def google_callback(
 
 
 @auth_router.post("/google/link")
+@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
 def google_link(
-    data: GoogleLinkRequest, db: Annotated[Session, Depends(get_db)]
+    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    data: GoogleLinkRequest,
+    db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
     try:
         user = auth_service.link_google_account(
@@ -479,8 +435,8 @@ def disconnect_oauth2_binding(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> dict[str, str]:
-    """IDOR-fixed replacement for Legacy's `oauth2disconnect($id)` -- see
-    auth_service.unlink_oauth_binding for the vulnerability this closes.
+    """Unlinks an OAuth binding, restricted to the caller's own bindings --
+    see auth_service.unlink_oauth_binding for the IDOR protection.
     """
     try:
         auth_service.unlink_oauth_binding(db, binding_id, current_user.id)

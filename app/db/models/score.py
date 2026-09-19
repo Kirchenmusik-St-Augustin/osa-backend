@@ -7,12 +7,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
 from app.db.uuid_pk import uuid_pk
 
-# Every numeric column below is a physical count (how many copies/parts/
-# instrument-headcount slots the archive card lists) -- negative counts
-# are never meaningful. All 42 are already validated `Field(ge=0, ...)`
-# at the Pydantic layer (app/schemas/score.py); these CHECK constraints
-# close the same "validated at the API, never enforced in the database"
-# gap the money-column CHECKs closed for fees/bookings/performances.
+# Every numeric column below is either a physical count (how many
+# copies/parts/instrument-headcount slots the archive card lists) or a
+# year (geboren/gestorben/jahr) -- negative values are never meaningful
+# for either. All 42 are already validated `Field(ge=0, ...)` at the
+# Pydantic layer (app/schemas/score.py); these CHECK constraints close
+# the same "validated at the API, never enforced in the database" gap the
+# money-column CHECKs closed for fees/bookings/performances. NULL passes
+# every one of these CHECKs unconditionally (standard SQL), which is what
+# keeps geboren/gestorben/jahr's now-nullable "no year entered" state
+# valid alongside the required counts.
 _COUNT_CHECKS: tuple[str, ...] = (
     "geboren",
     "gestorben",
@@ -58,17 +62,15 @@ _COUNT_CHECKS: tuple[str, ...] = (
     "soinstr4anz",
 )
 
-# Shared by all 12 "Original/Kopie/Original-Kopie" condition columns below
-# -- native Postgres ENUM as of the enum-hardening slice (2026-09),
-# replacing what used to be an identical CheckConstraint string duplicated
-# 12 times. Deliberately bare string literals, not a bound Python
-# enum.Enum class: binding a real Python Enum class here would silently
-# reintroduce SQLAlchemy's classic values_callable footgun (by default
-# `sa.Enum(SomeEnum)` sends each member's NAME to Postgres, not its
-# `.value`, unless `values_callable=...` is also supplied). soinstr1art..soinstr4art
-# deliberately do NOT use this type: despite the "art" name, they have no
-# CheckConstraint even before this slice (confirmed free-text fields, see
-# app.services.score_fields) and stay plain varchar.
+# Shared by all 12 "Original/Kopie/Original-Kopie" condition columns below:
+# one native Postgres ENUM type. Deliberately bare string literals, not a
+# bound Python enum.Enum class: binding a real Python Enum class here would
+# silently reintroduce SQLAlchemy's classic values_callable footgun (by
+# default `sa.Enum(SomeEnum)` sends each member's NAME to Postgres, not its
+# `.value`, unless `values_callable=...` is also supplied).
+# soinstr1art..soinstr4art deliberately do NOT use this type: despite the
+# "art" name, they are free-text fields (see app.services.score_fields) and
+# stay plain varchar.
 _ART_ENUM = Enum("Original", "Kopie", "Original/Kopie", name="score_art")
 
 _INHALT_ENUM = Enum(
@@ -104,28 +106,23 @@ _SPARTE_ENUM = Enum(
 
 
 class Score(Base):
-    """Mirrors legacy `scores` exactly (Phase 1) -- a physical sheet-music
-    archive card catalog (NOT a digital/PDF archive: no file storage
-    anywhere in this domain), one row per work. Legacy's own `Score::
-    $fields` config array (see app.services.score_service.SCORE_FIELDS,
-    the single source of truth reused for both validation and the
-    frontend's field metadata) is the authoritative field list -- this
-    model just mirrors the raw column shapes. No `has_dependencies`/delete
-    concept: Legacy's own route registration excludes `destroy` entirely
-    (`Route::resource(...)->except(['destroy'])`, its controller method is
-    dead code, "as an archive should archive things") -- this port has no
-    delete endpoint or service function at all, not even a stub.
+    """A physical sheet-music archive card catalog (NOT a digital/PDF
+    archive: no file storage anywhere in this domain), one row per work.
+    The field config (see app.services.score_service.SCORE_FIELDS, the
+    single source of truth reused for both validation and the frontend's
+    field metadata) is the authoritative field list -- this model just
+    mirrors the raw column shapes. No `has_dependencies`/delete concept:
+    an archive archives things, so there is no delete endpoint or service
+    function at all, not even a stub.
 
-    `inhalt`/`sparte`/the 12 `*art` columns are native Postgres ENUMs as
-    of the enum-hardening slice (2026-09), replacing what used to be 14
-    CheckConstraints -- `Mapped[str]` is unchanged, every existing string
-    comparison/lookup on these columns keeps working.
+    `inhalt`/`sparte`/the 12 `*art` columns are native Postgres ENUMs --
+    `Mapped[str]` keeps every string comparison/lookup on these columns
+    working.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore.
+    Python.
 
     Deliberately still a single flat table, not normalized into child
     tables for the holdings groups (part1/part2/klausz1/klausz2/
@@ -139,8 +136,7 @@ class Score(Base):
     config means no per-field business logic is duplicated 94 times
     despite the flat column count -- normalizing would only add joins on
     every access with no relational benefit. This table also has zero
-    foreign keys in either direction (confirmed against the live schema)
-    and stays that way by design: the instrumentation headcounts
+    foreign keys in either direction, by design: the instrumentation headcounts
     deliberately do NOT reference the shared instruments table other
     domains use, keeping this table fully self-contained."""
 
@@ -169,9 +165,7 @@ class Score(Base):
 
     # -- Holdings per part-type: verl(ag)/art/zust(and)/anz(ahl). "orch"
     # is the ONLY group with no `anz` column at all -- "orgel" does have
-    # one, confirmed by the real schema (a first read of it mistakenly
-    # assumed both lacked it; caught live via Playwright, since Legacy's
-    # own Score/Show.vue genuinely displays an Orgel-Stimme "Anzahl" cell).
+    # one.
     part1verl: Mapped[str | None] = mapped_column()
     part1art: Mapped[str | None] = mapped_column(_ART_ENUM)
     part1zust: Mapped[str | None] = mapped_column()

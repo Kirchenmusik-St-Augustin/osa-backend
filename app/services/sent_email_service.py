@@ -18,14 +18,10 @@ class SentEmailNotFoundError(Exception):
 def list_for_month(db: Session, year: int, month: int) -> list[SentEmailShortOutput]:
     """Filters/sorts by `created_at`, same real-indexed-query technique as
     performance_service.list_performances_for_month()'s year/month
-    extract() match. Legacy's `SentEmail::ofMonth()` used `updated_at`
-    instead -- harmless there since Laravel stamps both columns
-    identically on create() and a sent-email row is never updated
-    afterwards, so the two were always equal. As of the audit-trigger
-    hardening slice (2026-09), `updated_at` no longer gets a value on
-    insert (only a real UPDATE fires the set_updated_at() trigger, which
-    never happens for this write-once table) -- created_at is the only
-    column guaranteed to hold this row's timestamp."""
+    extract() match. `updated_at` is deliberately not used: it gets no
+    value on insert (only a real UPDATE fires the set_updated_at()
+    trigger, which never happens for this write-once table) -- created_at
+    is the only column guaranteed to hold this row's timestamp."""
     emails = (
         db.execute(
             select(SentEmail)
