@@ -7,8 +7,7 @@ from pydantic import BeforeValidator
 from app.core.config import get_settings
 
 # Genuinely-UTC audit/event columns (created_at/updated_at, token/session
-# timestamps, ...) are TIMESTAMPTZ as of the TIMESTAMPTZ + audit-trigger
-# hardening slice (2026-09) and come back timezone-aware from the DB
+# timestamps, ...) are TIMESTAMPTZ and come back timezone-aware from the DB
 # already. ensure_tz_aware() stays as a defensive normalization: comparing
 # a naive value against an aware one raises TypeError, and it protects any
 # remaining code path that might still hand it a naive datetime (a test
@@ -55,12 +54,12 @@ UtcDatetime = Annotated[datetime, BeforeValidator(ensure_tz_aware)]
 
 def get_app_timezone() -> ZoneInfo:
     """Single source of truth for Settings.app_timezone as a ZoneInfo
-    instance -- every call site that previously constructed
-    ZoneInfo(get_settings().app_timezone) independently (scheduler
-    construction/_format_next_run, local_now/local_day_bounds_utc,
+    instance -- every call site (the worker's cron timezone,
+    scheduler_service's next-run display, local_now/local_day_bounds_utc,
     request_log_service's local-day grouping, the logging formatter) goes
-    through this one helper instead, so a future APP_TIMEZONE change only
-    has one place to verify. ZoneInfo(key) is itself cache-keyed by the
+    through this one helper instead of constructing
+    ZoneInfo(get_settings().app_timezone) itself, so a future APP_TIMEZONE
+    change only has one place to verify. ZoneInfo(key) is itself cache-keyed by the
     zoneinfo module (repeated calls with the same key return the same
     cached instance), so no extra @lru_cache is needed here -- and none is
     wanted, since it would need its own cache_clear() coupled to

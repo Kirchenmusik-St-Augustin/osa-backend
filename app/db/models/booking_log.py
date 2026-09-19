@@ -17,9 +17,9 @@ from app.db.models.position_columns_mixin import PositionColumns
 from app.db.uuid_pk import uuid_pk
 
 # Native Postgres ENUM for this table's own booking_type column (see
-# alembic/versions/fa9e6613c5c1_convert_booking_type_to_enum.py). Unlike the
-# former position_type column, nothing else shares this type, so it's
-# declared directly here rather than in its own module -- same
+# alembic/versions/fa9e6613c5c1_convert_booking_type_to_enum.py). Nothing
+# else shares this type, so it's declared directly here rather than in its
+# own module -- same
 # bare-string-literal reasoning as PositionColumns' own docstring (avoids
 # the values_callable footgun a bound Python enum.Enum class would
 # reintroduce).

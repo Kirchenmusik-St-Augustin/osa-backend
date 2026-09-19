@@ -21,6 +21,12 @@ from app.schemas.ordinariumwork import (
 )
 from app.services.artist_service import label_for
 from app.services.coreelement_service import list_coreelements
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+    NotFoundError,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -75,22 +81,24 @@ def _position_key(
     raise ValueError(msg)
 
 
-class OrdinariumworkNotFoundError(Exception):
+_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
+
+
+class OrdinariumworkNotFoundError(NotFoundError):
     """Raised when `ordinariumwork_id` doesn't exist."""
 
 
-class OrdinariumworkValidationError(Exception):
+class OrdinariumworkValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as auth_service.RegistrationConflictError."""
 
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Ordinariumwork validation failed")
 
-
-class OrdinariumworkInUseError(Exception):
+class OrdinariumworkInUseError(GeneralValidationError):
     """Raised when delete is blocked by a Performance referencing this
     Ordinariumwork."""
+
+    def __init__(self) -> None:
+        super().__init__(_IN_USE_DETAIL)
 
 
 def _get_or_404(db: Session, ordinariumwork_id: uuid.UUID) -> Ordinariumwork:
@@ -107,30 +115,32 @@ def _validate_positions(
     db: Session,
     items: list[OrdinariumworkPositionInput],
     position_type: OrdinariumworkPositionType,
-) -> list[tuple[str, str]]:
+) -> list[FieldError]:
     model = _POSITION_MODELS[position_type]
-    errors: list[tuple[str, str]] = []
+    errors: list[FieldError] = []
     seen_ids: set[uuid.UUID] = set()
     for item in items:
         if item.id in seen_ids:
-            errors.append(("setup", f"{position_type}: doppelter Eintrag."))
+            errors.append(FieldError("setup", f"{position_type}: doppelter Eintrag."))
             continue
         seen_ids.add(item.id)
         exists = db.execute(
             select(model.id).where(model.id == item.id)
         ).scalar_one_or_none()
         if exists is None:
-            errors.append(("setup", f"{position_type}: Element nicht gefunden."))
+            errors.append(
+                FieldError("setup", f"{position_type}: Element nicht gefunden.")
+            )
     return errors
 
 
 def _validate(
     db: Session, data: OrdinariumworkRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
 
     if not _NAME_MIN_LENGTH <= len(data.name) <= _NAME_MAX_LENGTH:
-        errors.append(("name", _NAME_LENGTH_ERROR))
+        errors.append(FieldError("name", _NAME_LENGTH_ERROR))
 
     if (
         db.execute(
@@ -138,14 +148,16 @@ def _validate(
         ).scalar_one_or_none()
         is None
     ):
-        errors.append(("artist_id", "Komponist/in wurde nicht gefunden."))
+        errors.append(FieldError("artist_id", "Komponist/in wurde nicht gefunden."))
 
     if (
         data.duration is not None
         and not _DURATION_MIN <= data.duration <= _DURATION_MAX
     ):
         errors.append(
-            ("duration", f"Muss zwischen {_DURATION_MIN} und {_DURATION_MAX} liegen.")
+            FieldError(
+                "duration", f"Muss zwischen {_DURATION_MIN} und {_DURATION_MAX} liegen."
+            )
         )
 
     stmt = select(Ordinariumwork.id).where(
@@ -156,7 +168,9 @@ def _validate(
         stmt = stmt.where(Ordinariumwork.id != exclude_id)
     if db.execute(stmt).scalar_one_or_none() is not None:
         errors.append(
-            ("name", "Dieses Werk ist für diesen Komponisten bereits erfasst.")
+            FieldError(
+                "name", "Dieses Werk ist für diesen Komponisten bereits erfasst."
+            )
         )
 
     errors.extend(_validate_positions(db, data.setup.instruments, "instruments"))

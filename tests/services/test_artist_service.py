@@ -212,7 +212,7 @@ class TestDeleteArtist:
     def test_blocked_when_performance_references_artist_as_conductor(
         self, db_session: Session
     ):
-        """Retrofit regression guard (Schritt 5): Performance.artist_id is
+        """Regression guard: Performance.artist_id is
         the CONDUCTOR, a distinct role from Ordinariumwork/Propriumwork's
         composer artist_id, but both point at the same `artists` table and
         either role counts as "in use" alike."""

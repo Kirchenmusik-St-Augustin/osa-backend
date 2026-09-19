@@ -21,6 +21,12 @@ from app.schemas.user import (
     UserResponse,
 )
 from app.services import coreelement_service
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+    NotFoundError,
+)
 from app.services.position_types import POSITION_MODELS, PositionType
 from app.services.user_position_service import (
     get_position_ids_for_user,
@@ -34,30 +40,38 @@ if TYPE_CHECKING:
     from app.db.models.role import Role
 
 _SEARCH_RESULT_LIMIT = 20
+_ADMINISTRATOR_PROTECTED_DETAIL = (
+    "Administrator-Konten können hier nicht bearbeitet oder gelöscht werden."
+)
+_IN_USE_DETAIL = (
+    "Das Benutzerkonto kann nicht gelöscht werden, da es noch in Verwendung ist."
+)
 
 
-class UserNotFoundError(Exception):
+class UserNotFoundError(NotFoundError):
     """Raised when `user_id` doesn't exist among non-deleted users (unlike
     the administration domain, which also sees soft-deleted users, see
     user_administration_service.py)."""
 
 
-class UserValidationError(Exception):
+class UserValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as fee_service.FeeValidationError."""
 
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("User validation failed")
 
-
-class AdministratorProtectedError(Exception):
+class AdministratorProtectedError(GeneralValidationError):
     """update/destroy targeting a user with administrator=True. No
     exception even when the acting user is themselves an administrator."""
 
+    def __init__(self) -> None:
+        super().__init__(_ADMINISTRATOR_PROTECTED_DETAIL)
 
-class UserInUseError(Exception):
+
+class UserInUseError(GeneralValidationError):
     """delete blocked because deletable is False -- see _is_deletable()."""
+
+    def __init__(self) -> None:
+        super().__init__(_IN_USE_DETAIL)
 
 
 def _position_refs_for_user(
@@ -248,16 +262,16 @@ def _email_taken(db: Session, email: str, exclude_id: uuid.UUID | None) -> bool:
 
 def _validate(
     db: Session, data: UserRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
     surname = normalize_surname(data.surname)
     givenname = normalize_givenname(data.givenname)
     if _name_combo_taken(db, surname, givenname, exclude_id):
         msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(("surname", msg))
-        errors.append(("givenname", msg))
+        errors.append(FieldError("surname", msg))
+        errors.append(FieldError("givenname", msg))
     if data.email is not None and _email_taken(db, data.email, exclude_id):
-        errors.append(("email", "Diese E-Mail-Adresse ist bereits vergeben."))
+        errors.append(FieldError("email", "Diese E-Mail-Adresse ist bereits vergeben."))
     return errors
 
 

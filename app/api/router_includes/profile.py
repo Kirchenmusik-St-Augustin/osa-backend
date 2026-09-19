@@ -1,10 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import get_verified_user
-from app.api.error_responses import field_errors_to_detail
 from app.api.job_queue import JobQueue, get_job_queue
 from app.core.redacted import Redacted
 from app.db.database import get_db
@@ -12,15 +11,9 @@ from app.db.models.user import User
 from app.schemas.profile import ProfileUpdateRequest
 from app.schemas.user import UserResponse
 from app.services import auth_service, profile_service, user_service
-from app.services.profile_service import (
-    ProfileValidationError,
-    WrongCurrentPasswordError,
-)
 from app.worker.tasks import send_verification_email_task
 
 profile_router = APIRouter()
-
-_WRONG_PASSWORD_DETAIL = "Das bestehende Passwort ist falsch."  # noqa: S105 -- user-facing error text, not a credential
 
 
 @profile_router.get("")
@@ -42,18 +35,7 @@ def update_profile(
 ) -> UserResponse:
     """get_verified_user is declared before job_queue on purpose, see
     get_job_queue."""
-    try:
-        user, email_changed = profile_service.update_profile(db, current_user, data)
-    except WrongCurrentPasswordError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail([("auth_password", _WRONG_PASSWORD_DETAIL)]),
-        ) from None
-    except ProfileValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    user, email_changed = profile_service.update_profile(db, current_user, data)
 
     # Asymmetric with user_service.update_user() by design: a user changing
     # THEIR OWN email gets a new verification mail, unlike an admin editing

@@ -15,6 +15,12 @@ from app.db.models.role import Role
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+    NotFoundError,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -50,21 +56,23 @@ _ORDINARIUMWORK_POSITION_COLUMNS: dict[
 _ActiveCoreelementModel = Instrument | Voice | Choirjob
 
 
-class CoreelementNotFoundError(Exception):
+_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
+
+
+class CoreelementNotFoundError(NotFoundError):
     """Raised when `element_id` doesn't exist for the given CoreelementType."""
 
 
-class CoreelementValidationError(Exception):
+class CoreelementValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as auth_service.RegistrationConflictError."""
 
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Coreelement validation failed")
 
-
-class CoreelementInUseError(Exception):
+class CoreelementInUseError(GeneralValidationError):
     """Raised when delete is blocked by a dependent row."""
+
+    def __init__(self) -> None:
+        super().__init__(_IN_USE_DETAIL)
 
 
 @dataclass(frozen=True)
@@ -205,14 +213,14 @@ def _value_taken(
 
 def _validate_name(
     db: Session, config: CoreelementTypeConfig, name: str, exclude_id: uuid.UUID | None
-) -> tuple[str, str] | None:
+) -> FieldError | None:
     if not 3 <= len(name) <= config.name_max_length:
-        return (
+        return FieldError(
             "name",
             f"Muss zwischen 3 und {config.name_max_length} Zeichen lang sein.",
         )
     if _value_taken(db, config.model, "name", name, exclude_id):
-        return "name", "Der Name ist bereits vergeben."
+        return FieldError("name", "Der Name ist bereits vergeben.")
     return None
 
 
@@ -222,31 +230,31 @@ def _validate_extra_field(
     spec: FieldSpec,
     value: str | None,
     exclude_id: uuid.UUID | None,
-) -> tuple[str, str] | None:
+) -> FieldError | None:
     if value is None:
-        return spec.name, "Dieses Feld ist erforderlich."
+        return FieldError(spec.name, "Dieses Feld ist erforderlich.")
     if not spec.min_length <= len(value) <= spec.max_length:
-        return (
+        return FieldError(
             spec.name,
             f"Muss zwischen {spec.min_length} und {spec.max_length} Zeichen lang sein.",
         )
     if spec.unique and _value_taken(db, config.model, spec.name, value, exclude_id):
-        return spec.name, "Dieser Wert ist bereits vergeben."
+        return FieldError(spec.name, "Dieser Wert ist bereits vergeben.")
     return None
 
 
 def _validate_forbidden_fields(
     config: CoreelementTypeConfig, data: CoreelementRequest
-) -> list[tuple[str, str]]:
+) -> list[FieldError]:
     allowed = {spec.name for spec in config.extra_fields}
     forbidden_msg = "Dieses Feld ist für diesen Typ nicht zulässig."
     errors = [
-        (field_name, forbidden_msg)
+        FieldError(field_name, forbidden_msg)
         for field_name in ("label", "description", "address", "color")
         if field_name not in allowed and getattr(data, field_name) is not None
     ]
     if not config.has_active_field and data.active is not None:
-        errors.append(("active", forbidden_msg))
+        errors.append(FieldError("active", forbidden_msg))
     return errors
 
 
@@ -255,9 +263,9 @@ def _validate(
     type_: CoreelementType,
     data: CoreelementRequest,
     exclude_id: uuid.UUID | None,
-) -> list[tuple[str, str]]:
+) -> list[FieldError]:
     config = COREELEMENT_CONFIG[type_]
-    errors: list[tuple[str, str]] = []
+    errors: list[FieldError] = []
 
     name_error = _validate_name(db, config, data.name.strip(), exclude_id)
     if name_error:

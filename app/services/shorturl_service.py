@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.models.shorturl import Shorturl
 from app.schemas.shorturl import ShorturlListResponse, ShorturlRequest, ShorturlResponse
+from app.services.errors import DomainValidationError, FieldError, NotFoundError
 
 if TYPE_CHECKING:
     import uuid
@@ -14,17 +15,13 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class ShorturlNotFoundError(Exception):
+class ShorturlNotFoundError(NotFoundError):
     """Raised when `shorturl_id` doesn't exist."""
 
 
-class ShorturlValidationError(Exception):
+class ShorturlValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as fee_service.FeeValidationError."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Shorturl validation failed")
 
 
 def ensure_scheme(url: str) -> str:
@@ -44,12 +41,10 @@ def _path_taken(db: Session, path: str, exclude_id: uuid.UUID | None) -> bool:
     return db.execute(stmt).scalar_one_or_none() is not None
 
 
-def _validate(
-    db: Session, path: str, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+def _validate(db: Session, path: str, exclude_id: uuid.UUID | None) -> list[FieldError]:
+    errors: list[FieldError] = []
     if _path_taken(db, path, exclude_id):
-        errors.append(("path", "Der Pfad ist bereits vergeben."))
+        errors.append(FieldError("path", "Der Pfad ist bereits vergeben."))
     return errors
 
 

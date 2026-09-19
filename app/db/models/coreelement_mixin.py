@@ -15,27 +15,24 @@ class CoreelementColumns:
     role.py since it has label/description instead of a plain name-only
     shape.
 
-    `order`'s DB column is `sort_order` as of the Quick-Wins hardening
-    slice (2026-09) -- Postgres always requires `order` to be
-    double-quoted as an identifier (a classic footgun), so every table
+    `order`'s DB column is `sort_order`: Postgres always requires `order` to
+    be double-quoted as an identifier (a classic footgun), so every table
     built on this mixin (choirjobs/instruments/locations/propriumelements/
-    voices) got the same treatment Role's and Booking's own standalone
-    `order` columns got in the same slice. The Python attribute/ORM-facing
-    name stays `order` via mapped_column's explicit column-name argument
-    (same alias pattern as SentEmail.mail_from, see sent_email.py) --
-    every existing `.order`/`order=`/`order_by(<Model>.order)` call site
-    across coreelement_service.py/performance_service.py/user_service.py/
-    booking_service.py is untouched.
+    voices) uses the safe name, as do Role's and Booking's own standalone
+    `order` columns. The Python attribute/ORM-facing name stays `order` via
+    mapped_column's explicit column-name argument (same alias pattern as
+    SentEmail.mail_from, see sent_email.py), so every
+    `.order`/`order=`/`order_by(<Model>.order)` call site across
+    coreelement_service.py/performance_service.py/user_service.py/
+    booking_service.py uses the Python name.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger registered on every table built
-    on this mixin -- neither is ever assigned from Python anymore.
+    on this mixin -- neither is ever assigned from Python.
 
     `id` is a UUIDv7 primary key (server-generated via Postgres's native
-    `uuidv7()`, see app.db.uuid_pk) as of the UUID-migration slice
-    (2026-09), replacing the former integer autoincrement sequence."""
+    `uuidv7()`, see app.db.uuid_pk)."""
 
     id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(unique=True)

@@ -1,4 +1,4 @@
-"""Global request/response audit logging (Schritt 9) -- runs outside any
+"""Global request/response audit logging -- runs outside any
 request's own Depends() chain (ASGI middleware, not a route function), so it
 opens its own short-lived SessionLocal() per request, the same documented
 exception as app/core/mailer.py/app/services/booking_jobs.py (see

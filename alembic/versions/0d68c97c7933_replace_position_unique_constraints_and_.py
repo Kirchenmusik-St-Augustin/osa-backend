@@ -144,8 +144,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema.
 
-    Fully lossless and mechanical (unlike some of the FK-hardening slice's
-    own downgrades, which can legitimately fail on real historical NULL
+    Fully lossless and mechanical (unlike the downgrades of the foreign-key
+    migrations, which can legitimately fail on real historical NULL
     data): every value dropped here is still present on the instrument_id/
     voice_id/choirjob_id columns 7f5f0d1ca83e added, so it can always be
     reconstructed from them."""

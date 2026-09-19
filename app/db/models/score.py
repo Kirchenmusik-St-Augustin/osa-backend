@@ -7,12 +7,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
 from app.db.uuid_pk import uuid_pk
 
-# Every numeric column below is a physical count (how many copies/parts/
-# instrument-headcount slots the archive card lists) -- negative counts
-# are never meaningful. All 42 are already validated `Field(ge=0, ...)`
-# at the Pydantic layer (app/schemas/score.py); these CHECK constraints
-# close the same "validated at the API, never enforced in the database"
-# gap the money-column CHECKs closed for fees/bookings/performances.
+# Every numeric column below is either a physical count (how many
+# copies/parts/instrument-headcount slots the archive card lists) or a
+# year (geboren/gestorben/jahr) -- negative values are never meaningful
+# for either. All 42 are already validated `Field(ge=0, ...)` at the
+# Pydantic layer (app/schemas/score.py); these CHECK constraints close
+# the same "validated at the API, never enforced in the database" gap the
+# money-column CHECKs closed for fees/bookings/performances. NULL passes
+# every one of these CHECKs unconditionally (standard SQL), which is what
+# keeps geboren/gestorben/jahr's now-nullable "no year entered" state
+# valid alongside the required counts.
 _COUNT_CHECKS: tuple[str, ...] = (
     "geboren",
     "gestorben",
@@ -58,17 +62,15 @@ _COUNT_CHECKS: tuple[str, ...] = (
     "soinstr4anz",
 )
 
-# Shared by all 12 "Original/Kopie/Original-Kopie" condition columns below
-# -- native Postgres ENUM as of the enum-hardening slice (2026-09),
-# replacing what used to be an identical CheckConstraint string duplicated
-# 12 times. Deliberately bare string literals, not a bound Python
-# enum.Enum class: binding a real Python Enum class here would silently
-# reintroduce SQLAlchemy's classic values_callable footgun (by default
-# `sa.Enum(SomeEnum)` sends each member's NAME to Postgres, not its
-# `.value`, unless `values_callable=...` is also supplied). soinstr1art..soinstr4art
-# deliberately do NOT use this type: despite the "art" name, they have no
-# CheckConstraint even before this slice (confirmed free-text fields, see
-# app.services.score_fields) and stay plain varchar.
+# Shared by all 12 "Original/Kopie/Original-Kopie" condition columns below:
+# one native Postgres ENUM type. Deliberately bare string literals, not a
+# bound Python enum.Enum class: binding a real Python Enum class here would
+# silently reintroduce SQLAlchemy's classic values_callable footgun (by
+# default `sa.Enum(SomeEnum)` sends each member's NAME to Postgres, not its
+# `.value`, unless `values_callable=...` is also supplied).
+# soinstr1art..soinstr4art deliberately do NOT use this type: despite the
+# "art" name, they are free-text fields (see app.services.score_fields) and
+# stay plain varchar.
 _ART_ENUM = Enum("Original", "Kopie", "Original/Kopie", name="score_art")
 
 _INHALT_ENUM = Enum(
@@ -117,11 +119,10 @@ class Score(Base):
     `Mapped[str]` keeps every string comparison/lookup on these columns
     working.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore.
+    Python.
 
     Deliberately still a single flat table, not normalized into child
     tables for the holdings groups (part1/part2/klausz1/klausz2/

@@ -7,6 +7,12 @@ from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumwork import Propriumwork
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+    NotFoundError,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -19,24 +25,24 @@ if TYPE_CHECKING:
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 32
 _SEARCH_RESULT_LIMIT = 20
+_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
 
 
-class ArtistNotFoundError(Exception):
+class ArtistNotFoundError(NotFoundError):
     """Raised when `artist_id` doesn't exist."""
 
 
-class ArtistValidationError(Exception):
+class ArtistValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as auth_service.RegistrationConflictError."""
 
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Artist validation failed")
 
-
-class ArtistInUseError(Exception):
+class ArtistInUseError(GeneralValidationError):
     """Raised when delete is blocked by a dependent Ordinariumwork/
     Propriumwork/Performance row."""
+
+    def __init__(self) -> None:
+        super().__init__(_IN_USE_DETAIL)
 
 
 def label_for(artist: Artist) -> str:
@@ -45,23 +51,23 @@ def label_for(artist: Artist) -> str:
     return label_for_name(artist.surname or "", artist.givenname)
 
 
-def _name_year_range_error(field: str, value: int | None) -> tuple[str, str] | None:
+def _name_year_range_error(field: str, value: int | None) -> FieldError | None:
     if value is not None and not 1000 <= value <= 9999:
-        return field, "Muss eine vierstellige Jahreszahl sein."
+        return FieldError(field, "Muss eine vierstellige Jahreszahl sein.")
     return None
 
 
 def _validate(
     db: Session, data: ArtistRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
 
     length_error_msg = (
         f"Muss zwischen {_NAME_MIN_LENGTH} und {_NAME_MAX_LENGTH} Zeichen lang sein."
     )
     for field_name, value in (("surname", data.surname), ("givenname", data.givenname)):
         if not _NAME_MIN_LENGTH <= len(value) <= _NAME_MAX_LENGTH:
-            errors.append((field_name, length_error_msg))
+            errors.append(FieldError(field_name, length_error_msg))
 
     errors.extend(
         year_error
@@ -80,8 +86,8 @@ def _validate(
         stmt = stmt.where(Artist.id != exclude_id)
     if db.execute(stmt).scalar_one_or_none() is not None:
         msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(("surname", msg))
-        errors.append(("givenname", msg))
+        errors.append(FieldError("surname", msg))
+        errors.append(FieldError("givenname", msg))
 
     return errors
 

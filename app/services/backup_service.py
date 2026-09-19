@@ -2,10 +2,8 @@
 
 Filenames are stage-prefixed (`{app_environment}-{timestamp}[-manual].dump`);
 `.dump` is pg_dump's own `--format=custom` output, already a single binary
-file, nothing to tar. Backups that still carry an older `.tar.gz` name on
-Koofr (from a previous file-copy-based backup) no longer match
-_FILENAME_PATTERN -- an accepted, documented naming break, not a special
-case this module needs to handle.
+file, nothing to tar. Files on Koofr that do not match _FILENAME_PATTERN
+are ignored.
 
 Uses raw WebDAV HTTP verbs via `requests` (already a pinned dependency)
 instead of shelling out to rclone or adding a dedicated WebDAV client
@@ -56,8 +54,8 @@ _EPOCH = datetime.min  # noqa: DTZ901
 
 _TIMESTAMP_FORMAT = "%Y-%m-%d_%H-%M-%S"
 # Stage-prefixed, optionally "-manual"-suffixed --
-# f"{app_environment}-{timestamp}{suffix}" naming (User decision,
-# 2026-08-13, see module docstring). `stage` is intentionally not
+# f"{app_environment}-{timestamp}{suffix}" naming (see module
+# docstring). `stage` is intentionally not
 # constrained to Settings' exact _VALID_ENVIRONMENTS set here -- this
 # pattern only needs to recognize OUR OWN generated filenames well enough
 # to extract the timestamp, not to validate the settings enum.
@@ -323,21 +321,15 @@ def _parse_backup_filenames(propfind_xml: str) -> list[str]:
     return names
 
 
-# NOTE (2026-08-14): both the filename timestamp (run_backup()) and the
-# retention cutoff (cleanup_old_backups()) switched from datetime.now(UTC)
-# to local_now() -- Settings.app_timezone wall-clock, matching the
-# backup_koofr scheduler trigger's own timezone. Pre-2026-08-14 filenames
-# are genuinely UTC-stamped from before this fix; the resulting <=2h skew
-# for those older names is negligible against both the >=daily backup
-# cadence (their order relative to newer entries is unaffected across
-# calendar days) and the 28-day default retention window (~0.3% skew) --
-# no backfill/rename of already-uploaded names is needed.
+# Both the filename timestamp (run_backup()) and the retention cutoff
+# (cleanup_old_backups()) use local_now() -- Settings.app_timezone
+# wall-clock, matching the backup_koofr cron trigger's own timezone.
 def _parse_backup_timestamp(name: str) -> datetime | None:
     match = _FILENAME_PATTERN.match(name)
     if match is None:
         return None
-    # Deliberately naive -- see the module-level NOTE above for why this
-    # stays unattached to any tzinfo.
+    # Deliberately naive: the stamp is Settings.app_timezone wall-clock, the
+    # same convention as local_now(), so it compares directly against it.
     return datetime.strptime(match.group("timestamp"), _TIMESTAMP_FORMAT)  # noqa: DTZ007
 
 

@@ -59,7 +59,6 @@ class Settings(BaseSettings):
     refresh_token_lifetime_days: int = Field(
         default=7, validation_alias="REFRESH_TOKEN_LIFETIME_DAYS"
     )
-    password_min_length: int = Field(default=8, validation_alias="PASSWORD_MIN_LENGTH")
     # Single source of truth for interpreting/comparing naive wall-clock
     # columns like Performance.schedule (see
     # app.core.datetime_utils.local_now()). Not a Tier 1 setting: a sane

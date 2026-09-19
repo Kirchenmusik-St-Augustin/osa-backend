@@ -323,8 +323,8 @@ class TestLatestUnnotifiedEntries:
         assert result[(second_performance_id, user.id)] is second_log
 
     def test_entries_with_null_performance_id_or_user_id_are_skipped(self):
-        """performance_id/user_id are nullable (ON DELETE SET NULL) as of
-        the FK-hardening slice -- a log entry whose Performance or User was
+        """performance_id/user_id are nullable (ON DELETE SET NULL) -- a log
+        entry whose Performance or User was
         since deleted must not crash the grouping, and must not be
         notify-worthy (there's no one left to notify). Built in-memory,
         no DB round-trip needed for this pure-function guard."""
@@ -410,7 +410,7 @@ class TestNotifyUpcomingBookingStatus:
         # Doesn't create any data of its own -- only asserts this doesn't
         # crash. conftest.py's SessionLocal patch routes the job through
         # this test's own (empty, freshly-rolled-back-per-test) transaction,
-        # so there's no leftover-data flakiness concern here anymore.
+        # so there's no leftover-data flakiness concern here.
         with patch("app.core.mailer._send_message"):
             booking_jobs.notify_upcoming_booking_status()
 

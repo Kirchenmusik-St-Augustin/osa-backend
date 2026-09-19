@@ -68,10 +68,9 @@ def _count_recipients(value: str | None) -> int:
 @dataclass(frozen=True)
 class MailKillSwitchStatus:
     """Frontend-facing kill-switch status -- see get_kill_switch_status().
-    `sent` is exclusively for the Statistics page (Schritt 9) -- deliberately
-    NOT added to EmailKillSwitchStatusOutput/GET /auth/me (see Schritt 7's
-    cross-cutting decision: a live counter on every login is unnecessary
-    weight, it belongs on its own dedicated endpoint instead)."""
+    `sent` is exclusively for the Statistics page -- deliberately NOT part of
+    EmailKillSwitchStatusOutput/GET /auth/me: a live counter on every login
+    is unnecessary weight, it belongs on its own dedicated endpoint."""
 
     active: bool
     period_days: int
@@ -233,8 +232,7 @@ def _send_templated_email(
     # actual delivery, independent of this header) -- but the visible "To"
     # header shows only our own sender address instead of the full list, so
     # a multi-recipient blast (e.g. MessageToCast) never exposes one
-    # recipient's address to another (Datenschutz, User-confirmed
-    # 2026-07-31).
+    # recipient's address to another (data protection).
     msg["To"] = from_header if use_bcc else to_str
     msg["Reply-To"] = f'"{settings.smtp_from_name}" <{settings.mail_disponent}>'
     msg.attach(MIMEText(html_content, "html", "utf-8"))

@@ -22,16 +22,13 @@ class PersonalAccessToken(Base):
     no polymorphic owner type is needed.
 
     `id`/`user_id` are UUIDv7 (server-generated via Postgres's native
-    `uuidv7()`, see app.db.uuid_pk) as of the UUID-migration slice
-    (2026-09), replacing the former integer autoincrement sequence.
+    `uuidv7()`, see app.db.uuid_pk).
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. `last_used_at`/`expires_at` are also TIMESTAMPTZ now
-    (same slice) but stay Python-managed -- only their storage type
-    changed."""
+    Python. `last_used_at`/`expires_at` are TIMESTAMPTZ too but stay
+    Python-managed."""
 
     __tablename__ = "personal_access_tokens"
     __table_args__ = (

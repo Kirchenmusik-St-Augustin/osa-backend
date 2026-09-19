@@ -13,6 +13,16 @@ from app.services.score_fields import SCORE_FIELDS
 _ArtValue = Literal["Original", "Kopie", "Original/Kopie"]
 _OptionalArt = Annotated[_ArtValue | None, BlankToNone]
 
+# geboren/gestorben/jahr: the only number fields with no meaningful "empty
+# means 0" convention (see score_fields.py's docstring). A number input
+# left blank submits "" like any other blank form field, so it needs the
+# same BlankToNone normalization text/select fields get -- strict=True
+# would otherwise reject a bare "" for an int field. The `ge`/`le` range
+# check sits on the inner `int`, not the outer union -- Pydantic applies a
+# numeric constraint to whatever type it's attached to, and applied to the
+# union it raises a TypeError on the None branch instead of skipping it.
+_OptionalYear = Annotated[Annotated[int, Field(ge=0, le=9999)] | None, BlankToNone]
+
 _SparteValue = Literal[
     "Advent/Weihnacht",
     "Bundeshymne",
@@ -63,10 +73,10 @@ class ScoreRequest(StrictInputModel):
     """All 94 score card fields. The form always submits the full card, so
     every field must be present in the payload. Blank optional text/select
     values (submitted as "") are normalized to None and stored as NULL;
-    numbers default to 0 in the form, including the optional
-    geboren/gestorben/jahr. The service layer coalesces NULL back to "" / 0
-    on read (see score_service.py), so Optional never needs to cross the
-    response boundary."""
+    numbers default to 0 in the form and stay required, except
+    geboren/gestorben/jahr, which stay NULL when left blank -- there is no
+    meaningful year 0, so unlike every other number field they carry no
+    "empty means 0" convention (see score_service.py's get_defaults())."""
 
     # -- Fundort (physical location) --
     kasten: str = Field(min_length=1, max_length=SCORE_FIELDS["kasten"].length)
@@ -77,13 +87,13 @@ class ScoreRequest(StrictInputModel):
     # -- Werk identification --
     surname: OptionalText = Field(max_length=SCORE_FIELDS["surname"].length)
     givenname: OptionalText = Field(max_length=SCORE_FIELDS["givenname"].length)
-    geboren: int = Field(ge=0, le=9999)
-    gestorben: int = Field(ge=0, le=9999)
+    geboren: _OptionalYear
+    gestorben: _OptionalYear
     werk: str = Field(min_length=1, max_length=SCORE_FIELDS["werk"].length)
     teil: OptionalText = Field(max_length=SCORE_FIELDS["teil"].length)
     sparte: _OptionalSparte
     verz: OptionalText = Field(max_length=SCORE_FIELDS["verz"].length)
-    jahr: int = Field(ge=0, le=9999)
+    jahr: _OptionalYear
 
     # -- Holdings: Partitur 1/2 --
     part1verl: OptionalText = Field(max_length=SCORE_FIELDS["part1verl"].length)
@@ -187,7 +197,7 @@ class ScoreResponse(BaseModel):
     id: uuid.UUID
     created_at: UtcDatetime | None
     updated_at: UtcDatetime | None
-    fields: dict[str, str | int]
+    fields: dict[str, str | int | None]
 
 
 class ScoreSearchResult(BaseModel):

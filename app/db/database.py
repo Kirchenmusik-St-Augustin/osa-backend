@@ -10,15 +10,12 @@ from app.core.config import get_settings
 # unset, so by the time get_settings() returns, it is guaranteed non-None.
 SQLALCHEMY_DATABASE_URL = cast("str", get_settings().database_url)
 
-# Synchronous SQLAlchemy (Session, no AsyncSession/asyncpg/greenlet).
-# Schritt 1 originally chose the async engine; switched back here (User
-# decision, 2026-07-28) because osa-backend is a low-concurrency internal
-# scheduling tool (never more than ~10 concurrent users observed in
-# practice) -- async's real benefit
+# Synchronous SQLAlchemy (Session, no AsyncSession/asyncpg/greenlet):
+# osa-backend is a low-concurrency internal scheduling tool (never more
+# than ~10 concurrent users observed in practice), so async's real benefit
 # (serving many concurrent in-flight I/O waits without consuming a thread
-# each) buys nothing at this scale, while it already cost one concrete bug
-# class (coverage.py silently losing the trace across greenlet_spawn,
-# see the now-removed `concurrency = ["greenlet"]` in pyproject.toml).
+# each) buys nothing at this scale, while it comes with a concrete bug
+# class (coverage.py silently losing the trace across greenlet_spawn).
 #
 # pool_pre_ping: pings a pooled connection before handing it out,
 # transparently reconnecting if the server dropped it (e.g. after a

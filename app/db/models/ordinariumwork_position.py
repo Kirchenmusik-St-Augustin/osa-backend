@@ -27,15 +27,13 @@ class OrdinariumworkPosition(Base):
     create/update ("setup" payload), never directly (see
     ordinariumwork_service.py).
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. `ordinariumwork_id` is an ON DELETE CASCADE foreign key:
-    ordinariumwork_service.
-    delete_ordinariumwork() already deletes this table's own rows before
-    deleting their Ordinariumwork, CASCADE moves that cleanup to the
-    database."""
+    Python. `ordinariumwork_id` is an ON DELETE CASCADE foreign key:
+    ordinariumwork_service.delete_ordinariumwork() already deletes this
+    table's own rows before deleting their Ordinariumwork, CASCADE moves
+    that cleanup to the database."""
 
     __tablename__ = "ordinariumwork_positions"
     __table_args__ = (

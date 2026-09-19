@@ -13,15 +13,14 @@ class PerformanceProprium(Base):
     slot (e.g. "Graduale") for a Performance. Unique per (performance,
     element) -- only one work per liturgical slot per performance.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. Foreign keys are deliberately asymmetric as of the
-    FK-hardening slice (2026-09): `performance_id` is ON DELETE CASCADE
-    (performance_service.delete_performance() already deletes this table's
-    own rows before deleting their Performance), `propriumelement_id`/
-    `propriumwork_id` are ON DELETE RESTRICT (coreelement_service.
+    Python. Foreign keys are deliberately asymmetric: `performance_id` is ON
+    DELETE CASCADE (performance_service.delete_performance() already deletes
+    this table's own rows before deleting their Performance),
+    `propriumelement_id`/`propriumwork_id` are ON DELETE RESTRICT
+    (coreelement_service.
     _propriumelement_has_dependent_performances()/propriumwork_service.
     _propriumwork_has_dependencies() already block deleting either while
     referenced here)."""

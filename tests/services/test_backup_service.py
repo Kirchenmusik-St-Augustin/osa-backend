@@ -279,11 +279,11 @@ class TestRunBackup:
     def test_uses_the_configured_app_timezone_not_utc_for_the_filename_timestamp(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """Regression for the reported bug: run_backup()'s filename stamp
+        """Regression guard: run_backup()'s filename stamp
         must match the Vienna wall-clock the backup_koofr scheduler trigger
-        fires in (Settings.backup_hour/minute, app_timezone), not UTC --
-        previously a UTC-stamped filename disagreed with the scheduler's
-        own timezone by the current UTC offset."""
+        fires in (Settings.backup_hour/minute, app_timezone), not UTC -- a
+        UTC-stamped filename would disagree with the scheduler's own
+        timezone by the current UTC offset."""
         monkeypatch.setenv("DATABASE_URL", PG_URL)
         monkeypatch.setenv("KOOFR_USER", "user")
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")

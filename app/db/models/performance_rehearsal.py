@@ -13,17 +13,16 @@ class PerformanceRehearsal(Base):
     Location model) for a Performance. Always fully replaced (delete-all, recreate) on
     every Performance save, never diffed -- see performance_service.py.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. `schedule` deliberately stays a naive TIMESTAMP: it's
-    user-entered local wall-clock time in Settings.app_timezone, not a
-    UTC instant (see app.core.datetime_utils module docstring).
-    `performance_id` is an ON DELETE CASCADE foreign key as of the
-    FK-hardening slice (2026-09): performance_service.delete_performance()
-    already deletes this table's own rows before deleting their
-    Performance, CASCADE moves that cleanup to the database."""
+    Python. `schedule` deliberately stays a naive TIMESTAMP: it's
+    user-entered local wall-clock time in Settings.app_timezone, not a UTC
+    instant (see app.core.datetime_utils module docstring). `performance_id`
+    is an ON DELETE CASCADE foreign key:
+    performance_service.delete_performance() already deletes this table's
+    own rows before deleting their Performance, CASCADE moves that cleanup
+    to the database."""
 
     __tablename__ = "performance_rehearsals"
     __table_args__ = (UniqueConstraint("performance_id", "schedule"),)

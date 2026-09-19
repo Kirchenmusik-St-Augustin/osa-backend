@@ -184,10 +184,9 @@ class TestCreateOrdinariumwork:
             _request(uuid.uuid4(), name="ab")
 
     def test_rejects_out_of_range_duration(self):
-        # Same tightening as test_rejects_short_name, for
-        # OrdinariumworkRequest's new Field(le=999) -- the service-level
-        # 0-999 constant was previously unenforced (and untested) at the
-        # schema boundary.
+        # Like test_rejects_short_name: the schema itself rejects an
+        # out-of-range duration (OrdinariumworkRequest's Field(le=999)),
+        # matching the service-level 0-999 constant.
         with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
             _request(uuid.uuid4(), duration=1000)
 

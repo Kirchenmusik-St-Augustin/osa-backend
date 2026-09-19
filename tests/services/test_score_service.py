@@ -65,10 +65,15 @@ class TestGetFieldsConfig:
 
 
 class TestGetDefaults:
-    def test_numbers_default_to_zero(self):
+    def test_required_numbers_default_to_zero(self):
         defaults = score_service.get_defaults()
         assert defaults["violine1"] == 0
-        assert defaults["geboren"] == 0
+
+    def test_geboren_gestorben_jahr_default_to_none(self):
+        defaults = score_service.get_defaults()
+        assert defaults["geboren"] is None
+        assert defaults["gestorben"] is None
+        assert defaults["jahr"] is None
 
     def test_text_defaults_to_empty_string(self):
         defaults = score_service.get_defaults()
@@ -235,6 +240,41 @@ class TestBlankOptionalValues:
         assert score is not None
         assert score.surname is None
         assert score.givenname is None
+
+
+class TestOptionalYearFields:
+    def test_left_blank_they_are_stored_and_read_back_as_none(
+        self, db_session: Session
+    ):
+        created = score_service.create_score(db_session, _payload())
+        score = db_session.get(Score, created.id)
+        assert score is not None
+        assert score.geboren is None
+        assert score.gestorben is None
+        assert score.jahr is None
+        assert created.fields["geboren"] is None
+        assert created.fields["gestorben"] is None
+        assert created.fields["jahr"] is None
+
+    def test_a_real_year_is_kept_as_is(self, db_session: Session):
+        created = score_service.create_score(
+            db_session, _payload(geboren=1756, gestorben=1791, jahr=1787)
+        )
+        assert created.fields["geboren"] == 1756
+        assert created.fields["gestorben"] == 1791
+        assert created.fields["jahr"] == 1787
+
+    def test_blank_string_from_a_number_input_is_normalized_to_none(self):
+        # The form's <input type="number"> submits "" when left blank, not
+        # null (Vue's v-model.number modifier passes an empty field through
+        # as a string) -- same BlankToNone normalization text fields get.
+        payload = _payload(geboren="", jahr="")
+        assert payload.geboren is None
+        assert payload.jahr is None
+
+    def test_out_of_range_year_is_rejected(self):
+        with pytest.raises(ValidationError):
+            _payload(jahr=10000)
 
 
 class TestRequiredSelectRejectsBlank:

@@ -11,6 +11,12 @@ from app.schemas.propriumwork import (
     PropriumworkSearchResult,
 )
 from app.services.artist_service import label_for
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+    NotFoundError,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -31,24 +37,26 @@ _NAME_LENGTH_ERROR = (
 )
 
 
-class PropriumworkNotFoundError(Exception):
+_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
+
+
+class PropriumworkNotFoundError(NotFoundError):
     """Raised when `propriumwork_id` doesn't exist."""
 
 
-class PropriumworkValidationError(Exception):
+class PropriumworkValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as auth_service.RegistrationConflictError."""
 
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Propriumwork validation failed")
 
-
-class PropriumworkInUseError(Exception):
+class PropriumworkInUseError(GeneralValidationError):
     """Raised when delete is blocked by a Performance referencing this
     Propriumwork. Unlike Ordinariumwork
     (a direct `ordinariumwork_id` column on `performances`), a Propriumwork
     is only referenced through the `performance_proprium` pivot table."""
+
+    def __init__(self) -> None:
+        super().__init__(_IN_USE_DETAIL)
 
 
 def _get_or_404(db: Session, propriumwork_id: uuid.UUID) -> Propriumwork:
@@ -61,11 +69,11 @@ def _get_or_404(db: Session, propriumwork_id: uuid.UUID) -> Propriumwork:
 
 def _validate(
     db: Session, data: PropriumworkRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
 
     if not _NAME_MIN_LENGTH <= len(data.name) <= _NAME_MAX_LENGTH:
-        errors.append(("name", _NAME_LENGTH_ERROR))
+        errors.append(FieldError("name", _NAME_LENGTH_ERROR))
 
     if (
         db.execute(
@@ -73,14 +81,16 @@ def _validate(
         ).scalar_one_or_none()
         is None
     ):
-        errors.append(("artist_id", "Komponist/in wurde nicht gefunden."))
+        errors.append(FieldError("artist_id", "Komponist/in wurde nicht gefunden."))
 
     if (
         data.duration is not None
         and not _DURATION_MIN <= data.duration <= _DURATION_MAX
     ):
         errors.append(
-            ("duration", f"Muss zwischen {_DURATION_MIN} und {_DURATION_MAX} liegen.")
+            FieldError(
+                "duration", f"Muss zwischen {_DURATION_MIN} und {_DURATION_MAX} liegen."
+            )
         )
 
     stmt = select(Propriumwork.id).where(
@@ -91,7 +101,9 @@ def _validate(
         stmt = stmt.where(Propriumwork.id != exclude_id)
     if db.execute(stmt).scalar_one_or_none() is not None:
         errors.append(
-            ("name", "Dieses Werk ist für diesen Komponisten bereits erfasst.")
+            FieldError(
+                "name", "Dieses Werk ist für diesen Komponisten bereits erfasst."
+            )
         )
 
     return errors

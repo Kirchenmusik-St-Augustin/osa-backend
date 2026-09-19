@@ -22,11 +22,10 @@ class Fee(Base):
     booking time -- there is no FK from either table back to `fees.id`, so
     deleting a Fee never orphans a booking.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    Python."""
 
     __tablename__ = "fees"
     __table_args__ = (CheckConstraint("amount >= 0", name="fees_amount_check"),)

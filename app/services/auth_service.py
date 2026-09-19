@@ -35,6 +35,7 @@ from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
+from app.services.errors import DomainValidationError, FieldError
 
 if TYPE_CHECKING:
     import uuid
@@ -262,14 +263,10 @@ def logout_user(db: Session, token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-class RegistrationConflictError(Exception):
+class RegistrationConflictError(DomainValidationError):
     """Field-level conflicts (email or name-combo already taken), surfaced
     to the router as a 422 in the same {"detail": [...]} shape FastAPI's
     own validation errors use."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Registration conflict")
 
 
 def check_registration_conflicts(
@@ -278,7 +275,7 @@ def check_registration_conflicts(
     """Case-insensitive duplicate check, including soft-deleted users (User.deleted_at
     is deliberately NOT filtered out), so a deleted user's name/email can't be silently
     reused for a new registration."""
-    errors: list[tuple[str, str]] = []
+    errors: list[FieldError] = []
 
     name_taken = db.execute(
         select(User.id).where(
@@ -288,15 +285,15 @@ def check_registration_conflicts(
     ).first()
     if name_taken is not None:
         msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(("givenname", msg))
-        errors.append(("surname", msg))
+        errors.append(FieldError("givenname", msg))
+        errors.append(FieldError("surname", msg))
 
     email_taken = db.execute(
         select(User.id).where(func.lower(User.email) == email.lower())
     ).first()
     if email_taken is not None:
         msg = "Die E-Mail-Adresse wird bereits für ein bestehendes Konto verwendet."
-        errors.append(("email", msg))
+        errors.append(FieldError("email", msg))
 
     if errors:
         raise RegistrationConflictError(errors)

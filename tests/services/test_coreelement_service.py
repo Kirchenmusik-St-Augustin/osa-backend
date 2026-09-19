@@ -274,10 +274,9 @@ class TestDeleteCoreelement:
                 db_session, CoreelementType.instrument, uuid.uuid4()
             )
 
-    def test_simple_type_has_no_dependency_check_yet(self, db_session: Session):
-        """Instrument/Voice/Choirjob/Location/Propriumelement have zero real
-        dependents in osa-backend today (Performance/Repertoire domains
-        don't exist until Schritt 4/5) -- delete must always succeed."""
+    def test_unreferenced_element_can_be_deleted(self, db_session: Session):
+        """An element nothing references can always be deleted, and a second
+        delete then reports it as not found."""
         item = coreelement_service.create_coreelement(
             db_session, CoreelementType.instrument, _request()
         )

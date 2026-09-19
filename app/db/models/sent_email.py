@@ -15,11 +15,10 @@ class SentEmail(Base):
     "template key" marker (e.g. "password-reset") by the mailer, not real
     MIME headers.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore."""
+    Python."""
 
     __tablename__ = "sent_emails"
 

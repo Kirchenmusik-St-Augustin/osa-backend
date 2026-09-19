@@ -1,8 +1,7 @@
 """Shared pytest fixtures.
 
 The test suite runs against a dedicated PostgreSQL database
-(TEST_DATABASE_URL, falling back to DATABASE_URL) -- not a throwaway
-per-session file (see git history for that earlier fixture setup). Schema
+(TEST_DATABASE_URL, falling back to DATABASE_URL). Schema
 comes from the real Alembic migrations (command.upgrade(..., "head")), not
 Base.metadata.create_all() -- running the actual migration here is what
 would catch model/migration drift, not just a fixture rebuilt from the
@@ -360,8 +359,7 @@ def make_user(db_session: Session) -> Callable[..., User]:
 @pytest.fixture
 def make_instrument(db_session: Session) -> Callable[..., Instrument]:
     """Factory fixture: creates a persisted Instrument (unique name per
-    call unless overridden) -- since the polymorphy-redesign slice
-    (2026-09), bookings/booking_logs/performance_positions/
+    call unless overridden) -- bookings/booking_logs/performance_positions/
     ordinariumwork_positions/user_positions' instrument_id is a real
     foreign key, so any test row referencing one needs a backing Instrument
     to actually exist."""

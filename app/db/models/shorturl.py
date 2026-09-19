@@ -14,12 +14,10 @@ class Shorturl(Base):
     unauthenticated `go.`-subdomain redirect service (see
     app/api/router_includes/go.py) -- no FK from or to any other table.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. `latestcall_at` is also TIMESTAMPTZ now (same slice)
-    but stays Python-managed -- only its storage type changed."""
+    Python. `latestcall_at` is TIMESTAMPTZ too but stays Python-managed."""
 
     __tablename__ = "shorturls"
 

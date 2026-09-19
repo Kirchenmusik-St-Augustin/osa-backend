@@ -1,11 +1,10 @@
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import ensure_permission, get_verified_user
-from app.api.error_responses import field_errors_to_detail
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.coreelement import (
@@ -14,12 +13,7 @@ from app.schemas.coreelement import (
     CoreelementType,
 )
 from app.services import coreelement_service
-from app.services.coreelement_service import (
-    CoreelementInUseError,
-    CoreelementModel,
-    CoreelementNotFoundError,
-    CoreelementValidationError,
-)
+from app.services.coreelement_service import CoreelementModel
 
 coreelement_router = APIRouter()
 
@@ -35,14 +29,6 @@ _PERMISSION_BY_TYPE: dict[CoreelementType, str] = {
     CoreelementType.propriumelement: "propriumelementMaintain",
     CoreelementType.role: "roleMaintain",
 }
-
-_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
-
-
-def _not_found() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND, detail="Nicht gefunden."
-    )
 
 
 def _to_response(item: CoreelementModel) -> CoreelementResponse:
@@ -77,13 +63,7 @@ def create_item(
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
-    try:
-        item = coreelement_service.create_coreelement(db, element_type, data)
-    except CoreelementValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    item = coreelement_service.create_coreelement(db, element_type, data)
     return _to_response(item)
 
 
@@ -96,17 +76,7 @@ def update_item(
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
-    try:
-        item = coreelement_service.update_coreelement(
-            db, element_type, element_id, data
-        )
-    except CoreelementNotFoundError:
-        raise _not_found() from None
-    except CoreelementValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    item = coreelement_service.update_coreelement(db, element_type, element_id, data)
     return _to_response(item)
 
 
@@ -118,15 +88,7 @@ def delete_item(
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> dict[str, str]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
-    try:
-        coreelement_service.delete_coreelement(db, element_type, element_id)
-    except CoreelementNotFoundError:
-        raise _not_found() from None
-    except CoreelementInUseError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail([("general", _IN_USE_DETAIL)]),
-        ) from None
+    coreelement_service.delete_coreelement(db, element_type, element_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}
 
 
@@ -139,10 +101,7 @@ def move_item(
     current_user: Annotated[User, Depends(get_verified_user)],
 ) -> list[CoreelementResponse]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
-    try:
-        items = coreelement_service.move_coreelement(
-            db, element_type, element_id, direction
-        )
-    except CoreelementNotFoundError:
-        raise _not_found() from None
+    items = coreelement_service.move_coreelement(
+        db, element_type, element_id, direction
+    )
     return [_to_response(item) for item in items]

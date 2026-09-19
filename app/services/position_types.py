@@ -49,8 +49,8 @@ def position_kwargs(
 def position_key(row: PositionColumns) -> tuple[PositionType, uuid.UUID]:
     """Reconstruct the (position_type, position_id) pair from whichever of
     a PositionColumns row's three FK columns is populated -- the inverse of
-    position_kwargs(), for call sites that used to read row.position_type/
-    row.position_id directly."""
+    position_kwargs(), for call sites that need the (type, id) pair rather
+    than the three FK columns."""
     if row.instrument_id is not None:
         return "instruments", row.instrument_id
     if row.voice_id is not None:

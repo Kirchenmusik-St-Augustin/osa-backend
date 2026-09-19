@@ -317,9 +317,8 @@ def get_my_booking_status(
     """Public entry point for `GET /performances/{id}/my-booking-status` --
     deliberately its own small endpoint+service function (not a retrofit of
     performance_service.get_performance_detail) to keep performance_service
-    and booking_service decoupled at module-import time (Schritt 6 plan
-    B.4). Always reveals
-    the real status even for a past performance -- the Show page needs to
+    and booking_service decoupled at module-import time. Always reveals the
+    real status even for a past performance -- the Show page needs to
     render the self-service badge/trigger regardless of date."""
     performance = _get_performance_or_404(db, performance_id)
     return user_booking_status(db, performance, user_id, keep_past_status=True)
@@ -407,8 +406,7 @@ def user_booking_status_batch(
                 # (the set_updated_at() trigger never fires on a row that
                 # was only ever inserted, never modified in place -- see
                 # _save_cast_item's delete+recreate pattern) -- created_at
-                # is the meaningful fallback, same value updated_at always
-                # held here before the audit-trigger hardening slice.
+                # is the meaningful fallback.
                 at=booking.updated_at or booking.created_at,
             )
             continue
@@ -1499,7 +1497,7 @@ def get_requests_and_bookings(
     return PerformanceRequestsAndBookingsResponse(**short.model_dump(), entries=entries)
 
 
-# --- Selfadmin-Support (Schritt 7) --------------------------------------------
+# --- Selfadmin-Support --------------------------------------------------------
 
 
 def get_upcoming_requests_and_bookings_for_user(

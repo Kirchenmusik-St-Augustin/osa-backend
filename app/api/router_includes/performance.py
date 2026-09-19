@@ -1,11 +1,10 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import get_verified_user, require_permission
-from app.api.error_responses import field_errors_to_detail
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.performance import (
@@ -17,22 +16,10 @@ from app.schemas.performance import (
     PerformanceShowResponse,
 )
 from app.services import performance_service
-from app.services.performance_service import (
-    PerformanceInPastError,
-    PerformanceInUseError,
-    PerformanceNotFoundError,
-    PerformanceValidationError,
-)
 
 performance_router = APIRouter()
 
 _MAINTAIN = Depends(require_permission("performanceMaintain"))
-_NOT_FOUND_DETAIL = "Nicht gefunden."
-_IN_PAST_DETAIL = "Die Aufführung liegt bereits in der Vergangenheit."
-_IN_USE_DETAIL = (
-    "Die Aufführung kann nicht gelöscht werden, da bereits Buchungen oder "
-    "Anfragen vorliegen."
-)
 
 
 @performance_router.get("")
@@ -63,12 +50,7 @@ def get_performance(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, Depends(get_verified_user)],
 ) -> PerformanceShowResponse:
-    try:
-        return performance_service.get_performance_detail(db, performance_id)
-    except PerformanceNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
+    return performance_service.get_performance_detail(db, performance_id)
 
 
 @performance_router.get("/{performance_id}/form")
@@ -77,16 +59,7 @@ def get_performance_form_data(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceFormData:
-    try:
-        return performance_service.get_form_data(db, performance_id)
-    except PerformanceNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
-    except PerformanceInPastError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_IN_PAST_DETAIL
-        ) from None
+    return performance_service.get_form_data(db, performance_id)
 
 
 @performance_router.post("", status_code=status.HTTP_201_CREATED)
@@ -95,13 +68,7 @@ def create_performance(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceResponse:
-    try:
-        return performance_service.create_performance(db, data)
-    except PerformanceValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    return performance_service.create_performance(db, data)
 
 
 @performance_router.put("/{performance_id}")
@@ -111,21 +78,7 @@ def update_performance(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> PerformanceResponse:
-    try:
-        return performance_service.update_performance(db, performance_id, data)
-    except PerformanceNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
-    except PerformanceInPastError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_IN_PAST_DETAIL
-        ) from None
-    except PerformanceValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    return performance_service.update_performance(db, performance_id, data)
 
 
 @performance_router.delete("/{performance_id}")
@@ -134,18 +87,5 @@ def delete_performance(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:
-    try:
-        performance_service.delete_performance(db, performance_id)
-    except PerformanceNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
-    except PerformanceInPastError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=_IN_PAST_DETAIL
-        ) from None
-    except PerformanceInUseError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_IN_USE_DETAIL
-        ) from None
+    performance_service.delete_performance(db, performance_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}

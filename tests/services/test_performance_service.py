@@ -49,8 +49,7 @@ def _unique_schedule() -> datetime:
     schedule to test that rule. Normalized to a fixed minute/second so
     hour-boundary arithmetic in collision tests (+/- N minutes) is
     deterministic regardless of the wall-clock minute the suite happens to
-    run at (an earlier version of this helper was flaky right around the
-    top of an hour for exactly that reason). Naive local_now()-based, not
+    run at. Naive local_now()-based, not
     datetime.now(UTC) -- `schedule` is a naive wall-clock value, and
     comparing it against an aware datetime raises TypeError (see
     app.core.datetime_utils.local_now())."""
@@ -822,7 +821,7 @@ class TestUpdatePerformance:
     def test_setup_shrink_reconciles_bookings_via_booking_service(
         self, db_session: Session, make_user
     ):
-        """Retrofit A.5b (Schritt 6 plan): shrinking a position's quantity
+        """Shrinking a position's quantity
         must demote the now-standby booking, and removing a position
         entirely must purge its bookings -- both via
         booking_service.reconcile_setup_change, wired in from

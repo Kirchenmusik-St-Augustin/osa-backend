@@ -33,13 +33,12 @@ class Performance(Base):
     placeholder billing rates used only to price still-unfilled slots in
     the Abrechnung.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ as of the TIMESTAMPTZ +
-    audit-trigger hardening slice (2026-09): `created_at` is populated by
+    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
     the database's own DEFAULT now(), `updated_at` by the shared
     set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python anymore. `schedule` deliberately stays a naive TIMESTAMP: it's
-    user-entered local wall-clock time in Settings.app_timezone, not a
-    UTC instant (see app.core.datetime_utils module docstring)."""
+    Python. `schedule` deliberately stays a naive TIMESTAMP: it's
+    user-entered local wall-clock time in Settings.app_timezone, not a UTC
+    instant (see app.core.datetime_utils module docstring)."""
 
     __tablename__ = "performances"
     __table_args__ = (

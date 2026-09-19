@@ -10,6 +10,7 @@ from app.schemas.score import (
     ScoreResponse,
     ScoreSearchResult,
 )
+from app.services.errors import DomainValidationError, FieldError, NotFoundError
 from app.services.score_fields import SCORE_FIELDS
 
 if TYPE_CHECKING:
@@ -18,20 +19,18 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from app.services.score_fields import ScoreFieldSpec
+
 _SEARCH_RESULT_LIMIT = 50
 
 
-class ScoreNotFoundError(Exception):
+class ScoreNotFoundError(NotFoundError):
     """Raised when `score_id` doesn't exist."""
 
 
-class ScoreValidationError(Exception):
+class ScoreValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as fee_service.FeeValidationError."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Score validation failed")
 
 
 def get_fields_config() -> dict[str, ScoreFieldConfig]:
@@ -49,29 +48,42 @@ def get_fields_config() -> dict[str, ScoreFieldConfig]:
     }
 
 
-def get_defaults() -> dict[str, str | int]:
-    """Initial form value per field: 0 for every number field, "" for
-    everything else -- for a select that is the blank "nothing chosen yet"
-    state (optional selects offer it as a real blank option, required
-    selects reject it on submit)."""
+def get_defaults() -> dict[str, str | int | None]:
+    """Initial form value per field: 0 for every required number field, ""
+    for everything else -- for a select that is the blank "nothing chosen
+    yet" state (optional selects offer it as a real blank option, required
+    selects reject it on submit). geboren/gestorben/jahr are the only
+    number fields that are genuinely optional (no meaningful year 0), so
+    they default to None instead of 0."""
     return {
-        name: 0 if spec.kind == "number" else "" for name, spec in SCORE_FIELDS.items()
+        name: _number_default(spec) if spec.kind == "number" else ""
+        for name, spec in SCORE_FIELDS.items()
     }
 
 
-def _fields_dict(score: Score) -> dict[str, str | int]:
-    """Reads all 94 field values off `score`, coalescing NULL (possible
-    for pre-existing/imported rows) to the same "empty" value
-    get_defaults() would produce -- Optional never needs to cross the API
-    boundary (see ScoreRequest's docstring)."""
-    result: dict[str, str | int] = {}
-    for name, spec in SCORE_FIELDS.items():
-        value = getattr(score, name)
-        if spec.kind == "number":
-            result[name] = value if value is not None else 0
-        else:
-            result[name] = value if value is not None else ""
-    return result
+def _number_default(spec: ScoreFieldSpec) -> int | None:
+    return 0 if spec.required else None
+
+
+def _field_value(score: Score, name: str, spec: ScoreFieldSpec) -> str | int | None:
+    """Coalesces NULL (possible for pre-existing/imported rows) to "" for
+    text fields and to 0 for required number fields -- Optional never
+    needs to cross the API boundary for those (see ScoreRequest's
+    docstring). geboren/gestorben/jahr are the exception: NULL stays NULL,
+    since blank is a real state for those three, not a placeholder."""
+    value = getattr(score, name)
+    if spec.kind != "number":
+        return value if value is not None else ""
+    if value is not None:
+        return value
+    return 0 if spec.required else None
+
+
+def _fields_dict(score: Score) -> dict[str, str | int | None]:
+    """Reads all 94 field values off `score` (see `_field_value`)."""
+    return {
+        name: _field_value(score, name, spec) for name, spec in SCORE_FIELDS.items()
+    }
 
 
 def _normalized_name(value: str | None, normalize: Callable[[str], str]) -> str | None:
@@ -136,8 +148,8 @@ def _werk_taken(
 
 def _validate(
     db: Session, data: ScoreRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
     if _werk_taken(
         db,
         werk=data.werk,
@@ -147,7 +159,9 @@ def _validate(
         exclude_id=exclude_id,
     ):
         errors.append(
-            ("werk", "Name, Komponist und Werkteil müssen zusammen eindeutig sein")
+            FieldError(
+                "werk", "Name, Komponist und Werkteil müssen zusammen eindeutig sein"
+            )
         )
     return errors
 

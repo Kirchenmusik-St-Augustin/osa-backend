@@ -122,7 +122,7 @@ def test_send_verification_email_subject_uses_app_timezone_not_utc(
     db_session, monkeypatch: pytest.MonkeyPatch
 ):
     """Regression: email subjects must show Settings.app_timezone
-    wall-clock, not UTC (previously datetime.now(UTC) leaked straight into
+    wall-clock, not UTC (datetime.now(UTC) must never leak straight into
     the subject). fixed_local is chosen so that UTC and Vienna (CEST,
     UTC+2) render both a different hour AND a different calendar day -- a
     coincidental hour match wouldn't catch the bug."""
@@ -401,7 +401,7 @@ class TestSendUserMessageEmail:
     def test_sends_via_bcc_so_recipients_never_see_each_other(
         self, db_session, monkeypatch: pytest.MonkeyPatch
     ):
-        """Datenschutz (User-confirmed 2026-07-31): a MessageToCast blast
+        """Data protection: a MessageToCast blast
         can go out to dozens of musicians/singers who don't know each
         other -- none of their addresses may appear in a header any of
         them can see, even though every one of them still gets delivered

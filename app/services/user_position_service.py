@@ -90,9 +90,8 @@ def create_user_position(
     position_type: PositionType,
     position_id: uuid.UUID,
 ) -> UserPosition:
-    """Dev/test/fixture-seeding helper -- there is deliberately no router
-    endpoint for this in Schritt 6, the admin UI to assign these lands with
-    Schritt 7 (User-/System-Verwaltung)."""
+    """Seeding helper for tests and fixtures -- there is deliberately no
+    router endpoint for this."""
     user_position = UserPosition(
         user_id=user_id, **position_kwargs(position_type, position_id)
     )

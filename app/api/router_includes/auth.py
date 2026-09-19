@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.api.auth_guards import get_verified_user
 from app.api.deps import get_current_user, oauth2_scheme
-from app.api.error_responses import field_errors_to_detail
 from app.api.job_queue import JobQueue, get_job_queue
 from app.core import mailer
 from app.core.config import get_settings
@@ -37,7 +36,6 @@ from app.services.auth_service import (
     AccountNotLinkedError,
     InvalidSessionError,
     OauthBindingNotFoundError,
-    RegistrationConflictError,
 )
 from app.services.permission_service import calculate_permissions
 from app.worker.tasks import (
@@ -265,17 +263,12 @@ def register(
     address in the background -- registration itself must not wait on (or fail because
     of) mail delivery. No auth/permission dependency exists on this endpoint (it must
     work logged-out), so there is no dependency-ordering concern here, unlike
-    resend_verification_email below."""
-    try:
-        user = auth_service.register_user(db, data)
-        access_token, session_id, refresh_secret = auth_service.create_user_session(
-            db, user
-        )
-    except RegistrationConflictError as exc:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            content={"detail": field_errors_to_detail(exc.errors)},
-        )
+    resend_verification_email below. A RegistrationConflictError propagates
+    to app.api.exception_handlers' global DomainValidationError handler."""
+    user = auth_service.register_user(db, data)
+    access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db, user
+    )
 
     job_queue.enqueue(
         send_new_registration_notice_task,

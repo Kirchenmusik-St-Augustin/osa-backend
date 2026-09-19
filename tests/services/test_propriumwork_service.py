@@ -253,7 +253,7 @@ class TestDeletePropriumwork:
             propriumwork_service.get_propriumwork(db_session, created.id)
 
     def test_blocked_when_performance_proprium_references_it(self, db_session: Session):
-        """Retrofit regression guard (Schritt 5): unlike Ordinariumwork (a
+        """Regression guard: unlike Ordinariumwork (a
         direct column on `performances`), Propriumwork is only referenced
         through the `performance_proprium` pivot table."""
         artist_id = _make_artist(db_session)

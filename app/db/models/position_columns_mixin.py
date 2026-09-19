@@ -5,10 +5,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 
 class PositionColumns:
-    """Three mutually-exclusive nullable foreign keys replacing the old
-    `position_type` (native enum) + `position_id` (plain int, no FK) pair --
-    the standard relational "exclusive arc" pattern for representing a
-    polymorphic reference with real referential integrity. Exactly one of
+    """Three mutually-exclusive nullable foreign keys -- the standard
+    relational "exclusive arc" pattern for representing a polymorphic
+    reference with real referential integrity. Exactly one of
     the three is ever non-null, enforced per concrete table by a
     `num_nonnulls(...) = 1` CHECK constraint declared in that table's own
     __table_args__ (not here, to keep this mixin a pure column declaration).
@@ -25,8 +24,8 @@ class PositionColumns:
     voice_id directly instead of inheriting a column it must never
     populate.
 
-    UUIDv7 as of the UUID-migration slice (2026-09), matching
-    instruments/voices/choirjobs' own primary key type."""
+    The columns are UUIDv7, matching instruments/voices/choirjobs' own
+    primary key type."""
 
     instrument_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("instruments.id", ondelete="RESTRICT", onupdate="RESTRICT")

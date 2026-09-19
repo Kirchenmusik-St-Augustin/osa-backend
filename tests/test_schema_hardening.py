@@ -1,19 +1,12 @@
-"""Tests for the ongoing DB-hardening effort (2026-09): the Quick-Wins
-slice (missing indexes, money >= 0 CHECK constraints, the `order` ->
-`sort_order` DB-level rename), the enum-hardening slice
-(`booking_type`/`position_type`/scores' `*art`/`inhalt`/`sparte` columns
-converted from varchar+CHECK to native Postgres ENUMs), the
-JSONB-conversion slice (request_logs' three JSON-text columns and
-auth_logs.payload converted to native JSONB, sent_emails.attachments
-dropped as dead), the TIMESTAMPTZ + audit-trigger slice (every
-genuinely-UTC DateTime column converted to TIMESTAMPTZ, a shared Postgres
-trigger function now maintains `updated_at` on every table that has one),
-and the final cleanup slice of the UUIDv7 primary-key migration (the
-`id_previous_int`/`*_previous_int` bridge columns and their owned sequences,
-kept around as an inert forensic trail after the cutover, dropped for
-good once no longer needed). Also covers the job_runs table's own
-schema-level guarantees (native ENUMs, a CHECK constraint, a generated
-column) added alongside the persisted "last run" scheduler feature.
+"""Tests for the database's schema-level guarantees: indexes, money >= 0
+CHECK constraints, the `order` -> `sort_order` column rename, native
+Postgres ENUMs (`booking_type`/`position_type`/scores' `*art`/`inhalt`/
+`sparte` columns), native JSONB (request_logs' three JSON columns and
+auth_logs.payload), TIMESTAMPTZ on every genuinely-UTC DateTime column
+with a shared trigger function maintaining `updated_at` on every table
+that has one, and UUIDv7 primary keys without leftover bridge columns
+or sequences. Also covers the job_runs table's own schema-level
+guarantees (native ENUMs, a CHECK constraint, a generated column).
 Schema comes from the real Alembic migrations (see conftest.py's
 session-scoped _create_schema fixture) -- these tests verify actual
 migration output, not just model intent."""
@@ -55,10 +48,9 @@ if TYPE_CHECKING:
 
 
 def _make_ordinariumwork(db_session: Session) -> Ordinariumwork:
-    """FK-hardening slice (2026-09): ordinariumwork_positions.
-    ordinariumwork_id/performances.ordinariumwork_id/bookings.
-    performance_id-via-Performance now require a real parent row, an
-    arbitrary int id no longer round-trips."""
+    """A real parent row: ordinariumwork_positions.ordinariumwork_id/
+    performances.ordinariumwork_id/bookings.performance_id-via-Performance
+    are foreign keys, so an arbitrary id cannot stand in for it."""
     artist = Artist(surname="Schema-Hardening-Artist", givenname="Given", composer=True)
     db_session.add(artist)
     db_session.flush()
@@ -249,11 +241,10 @@ class TestOrderToSortOrderRename:
 
 
 class TestBookingTypeEnum:
-    """booking_logs.booking_type is a native Postgres ENUM as of this
-    slice (was varchar + CheckConstraint) -- see
+    """booking_logs.booking_type is a native Postgres ENUM -- see
     app.db.models.booking_log.booking_type_enum. Nothing narrows it
-    further, so an invalid value is now rejected by Postgres itself as an
-    invalid enum literal (DataError), not a CHECK violation
+    further, so an invalid value is rejected by Postgres itself as an
+    invalid enum literal (DataError), not as a CHECK violation
     (IntegrityError)."""
 
     def test_invalid_booking_type_is_rejected(
@@ -308,11 +299,9 @@ class TestBookingTypeEnum:
 
 
 class TestPositionExclusiveColumns:
-    """The old position_type (native enum) + position_id (plain int, no
-    FK) pair is replaced by three mutually-exclusive nullable foreign keys
-    -- instrument_id/voice_id/choirjob_id, see
-    app.db.models.position_columns_mixin.PositionColumns -- as of the
-    polymorphy-redesign slice (2026-09), enforced by a
+    """A position's owner is one of three mutually-exclusive nullable
+    foreign keys -- instrument_id/voice_id/choirjob_id, see
+    app.db.models.position_columns_mixin.PositionColumns -- enforced by a
     `num_nonnulls(...) = 1` CHECK constraint per table.
     ordinariumwork_positions structurally excludes choirjobs (it has no
     choirjob_id column at all, unlike the other four tables' three)."""
@@ -459,10 +448,10 @@ class TestPositionExclusiveColumns:
 
 class TestScoreEnums:
     """scores' inhalt/sparte/twelve *art columns are native Postgres
-    ENUMs as of this slice -- three distinct types (score_inhalt,
+    ENUMs -- three distinct types (score_inhalt,
     score_sparte, score_art), not one each; the twelve *art columns share
     one score_art type. soinstr1art..soinstr4art deliberately do NOT get
-    this treatment (free-text, no prior CheckConstraint)."""
+    this treatment (free-text)."""
 
     def test_invalid_art_value_is_rejected(self, db_session: Session):
         db_session.add(Score(part1art="Bogus"))
@@ -531,10 +520,8 @@ class TestScoreEnums:
 
 class TestRequestLogsJsonb:
     """request_logs.client_ips/request_input/response_content are native
-    JSONB columns as of this slice (were varchar, holding manually
-    json.dumps()-encoded text) -- see
-    app.services.request_log_service.record_request/get for the
-    (de)serialization this removed."""
+    JSONB columns -- see app.services.request_log_service.record_request/get,
+    which therefore need no manual json.dumps()/json.loads()."""
 
     @pytest.mark.parametrize(
         "column_name", ["client_ips", "request_input", "response_content"]
@@ -573,8 +560,8 @@ class TestRequestLogsJsonb:
 
 
 class TestAuthLogsPayloadJsonb:
-    """auth_logs.payload is a native JSONB column as of this slice (was
-    the generic sa.JSON() type, which Postgres renders as `json`, not
+    """auth_logs.payload is a native JSONB column (not the generic
+    sa.JSON() type, which Postgres renders as `json`, not
     `jsonb`)."""
 
     def test_column_is_jsonb(self):
@@ -592,8 +579,8 @@ class TestSentEmailsAttachmentsDropped:
 
 
 class TestTimestampsAreTimestamptz:
-    """Every genuinely-UTC DateTime column is TIMESTAMPTZ as of this
-    slice -- introspection only. Covers one column per structural
+    """Every genuinely-UTC DateTime column is TIMESTAMPTZ --
+    introspection only. Covers one column per structural
     category (mixin-based, individually-declared, created_at-only,
     NOT NULL business-event column) rather than all 66, matching this
     file's existing "representative, not exhaustive" style."""
@@ -727,12 +714,11 @@ class TestUpdatedAtTrigger:
 
 
 class TestClientUserAgentTimestamps:
-    """client_user_agents was the only table in the schema with no
-    created_at/updated_at at all -- a small follow-up migration (2026-09,
-    after the FK-onupdate= hardening slice) added both, same TIMESTAMPTZ +
-    set_updated_at() trigger convention as every other table, applied
-    retroactively to an already-populated table rather than at table
-    creation time like the tables TestUpdatedAtTrigger above covers."""
+    """client_user_agents has created_at/updated_at with the same
+    TIMESTAMPTZ + set_updated_at() trigger convention as every other
+    table; they were added to an already-populated table rather than at
+    table creation time like the tables TestUpdatedAtTrigger above
+    covers."""
 
     def test_trigger_exists(self, db_session: Session):
         rows = db_session.execute(
@@ -771,11 +757,11 @@ class TestClientUserAgentTimestamps:
 
 
 class TestPreviousIntBridgeColumnsDropped:
-    """Phase C of the UUIDv7 primary-key migration: every id_previous_int/
-    *_previous_int bridge column and its owned sequence is gone. Checked
+    """No id_previous_int/*_previous_int bridge column and no owned
+    sequence remains. Checked
     exhaustively via information_schema in a single query each, rather
     than the representative-sample style used elsewhere in this file --
-    completeness is the actual point of this slice."""
+    completeness is the actual point here."""
 
     def test_no_previous_int_columns_remain(self, db_session: Session):
         rows = db_session.execute(
@@ -795,9 +781,7 @@ class TestPreviousIntBridgeColumnsDropped:
 
 class TestJobRunsHardening:
     """job_runs' own schema-level guarantees -- see
-    app.db.models.job_run. Not part of the eight-slice DB-hardening
-    roadmap the classes above document; added alongside the persisted
-    "last run" scheduler feature that introduced this table."""
+    app.db.models.job_run."""
 
     def test_finished_before_started_is_rejected(self, db_session: Session):
         started_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)

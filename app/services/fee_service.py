@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.db.models.fee import Fee
 from app.schemas.fee import FeeRequest, FeeResponse
+from app.services.errors import DomainValidationError, FieldError, NotFoundError
 
 if TYPE_CHECKING:
     import uuid
@@ -11,18 +12,14 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class FeeNotFoundError(Exception):
+class FeeNotFoundError(NotFoundError):
     """Raised when `fee_id` doesn't exist."""
 
 
-class FeeValidationError(Exception):
+class FeeValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as
     coreelement_service.CoreelementValidationError."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Fee validation failed")
 
 
 def _name_taken(db: Session, name: str, exclude_id: uuid.UUID | None) -> bool:
@@ -34,10 +31,10 @@ def _name_taken(db: Session, name: str, exclude_id: uuid.UUID | None) -> bool:
 
 def _validate(
     db: Session, data: FeeRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
     if _name_taken(db, data.name.strip(), exclude_id):
-        errors.append(("name", "Der Name ist bereits vergeben."))
+        errors.append(FieldError("name", "Der Name ist bereits vergeben."))
     return errors
 
 

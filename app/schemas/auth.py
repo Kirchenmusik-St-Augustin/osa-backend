@@ -75,8 +75,8 @@ class GoogleLinkRequest(StrictInputModel):
 
 class EmailKillSwitchStatusOutput(BaseModel):
     """Mirrors app.core.mailer.MailKillSwitchStatus, minus `sent` (the live
-    counter belongs to the future Statistics page/Schritt 9, not every
-    login) -- drives the navbar warning icon (Schritt 7)."""
+    counter belongs to the Statistics page, not every login) -- drives the
+    navbar warning icon."""
 
     active: bool
     period_days: int

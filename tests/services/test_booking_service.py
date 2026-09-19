@@ -391,8 +391,7 @@ class TestUserBookingStatus:
 
 class TestUserBookingStatusForPerformances:
     """The other axis of user_booking_status_batch(): one user, many
-    performances -- what the calendar list needs (Schritt 6 plan B.4
-    correction)."""
+    performances -- what the calendar list needs."""
 
     def test_empty_performance_list_returns_empty_dict(
         self, db_session: Session, make_user
@@ -1185,9 +1184,9 @@ class TestGetRequestsAndBookings:
 
 
 class TestGetUpcomingRequestsAndBookingsForUser:
-    """Schritt 7 (Selfadmin-Support "Meine Anfragen und Buchungen" +
-    Baustelle 1's admin-side per-user requests-and-bookings view) -- both
-    backed by this one generic, user_id-scoped function."""
+    """The self-service "Meine Anfragen und Buchungen" page and the
+    admin-side per-user requests-and-bookings view are both backed by this
+    one generic, user_id-scoped function."""
 
     def test_includes_a_performance_with_a_booking(
         self, db_session: Session, make_user

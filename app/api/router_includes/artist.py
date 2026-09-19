@@ -1,28 +1,20 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import require_permission
-from app.api.error_responses import field_errors_to_detail
 from app.db.database import get_db
 from app.db.models.artist import Artist
 from app.db.models.user import User
 from app.schemas.artist import ArtistRequest, ArtistResponse, ArtistSearchResult
 from app.services import artist_service
-from app.services.artist_service import (
-    ArtistInUseError,
-    ArtistNotFoundError,
-    ArtistValidationError,
-    label_for,
-)
+from app.services.artist_service import label_for
 
 artist_router = APIRouter()
 
 _MAINTAIN = Depends(require_permission("artistMaintain"))
-_NOT_FOUND_DETAIL = "Nicht gefunden."
-_IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
 
 
 def _to_response(artist: Artist) -> ArtistResponse:
@@ -56,13 +48,7 @@ def create_artist(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> ArtistResponse:
-    try:
-        artist = artist_service.create_artist(db, data)
-    except ArtistValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    artist = artist_service.create_artist(db, data)
     return _to_response(artist)
 
 
@@ -83,12 +69,7 @@ def get_artist(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> ArtistResponse:
-    try:
-        artist = artist_service.get_artist(db, artist_id)
-    except ArtistNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
+    artist = artist_service.get_artist(db, artist_id)
     return _to_response(artist)
 
 
@@ -99,17 +80,7 @@ def update_artist(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> ArtistResponse:
-    try:
-        artist = artist_service.update_artist(db, artist_id, data)
-    except ArtistNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
-    except ArtistValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail(exc.errors),
-        ) from None
+    artist = artist_service.update_artist(db, artist_id, data)
     return _to_response(artist)
 
 
@@ -119,15 +90,5 @@ def delete_artist(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:
-    try:
-        artist_service.delete_artist(db, artist_id)
-    except ArtistNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
-        ) from None
-    except ArtistInUseError:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=field_errors_to_detail([("general", _IN_USE_DETAIL)]),
-        ) from None
+    artist_service.delete_artist(db, artist_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}

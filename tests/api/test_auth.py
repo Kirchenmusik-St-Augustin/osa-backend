@@ -229,7 +229,7 @@ def test_me_requires_authentication(client):
 def test_me_reflects_kill_switch_status(
     client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
 ):
-    """Schritt 7: /auth/me is the transport for the navbar warning icon --
+    """/auth/me is the transport for the navbar warning icon --
     see app.core.mailer.get_kill_switch_status()."""
     db_session.query(SentEmail).delete()
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")

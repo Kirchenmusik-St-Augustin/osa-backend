@@ -6,6 +6,11 @@ from app.core.human_names import normalize_givenname, normalize_surname
 from app.core.security import get_password_hash, verify_password
 from app.db.models.user import User
 from app.schemas.validators import PASSWORD_UNCHANGED_MESSAGE
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    GeneralValidationError,
+)
 
 if TYPE_CHECKING:
     import uuid
@@ -14,19 +19,19 @@ if TYPE_CHECKING:
 
     from app.schemas.profile import ProfileUpdateRequest
 
-
-class WrongCurrentPasswordError(Exception):
-    """`auth_password` doesn't match the user's actual current password
-    ("Das bestehende Passwort ist falsch.")."""
+_WRONG_PASSWORD_DETAIL = "Das bestehende Passwort ist falsch."  # noqa: S105 -- user-facing error text, not a credential
 
 
-class ProfileValidationError(Exception):
+class WrongCurrentPasswordError(GeneralValidationError):
+    """`auth_password` doesn't match the user's actual current password."""
+
+    def __init__(self) -> None:
+        super().__init__(_WRONG_PASSWORD_DETAIL, field="auth_password")
+
+
+class ProfileValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as user_service.UserValidationError."""
-
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Profile validation failed")
 
 
 def _name_combo_taken(
@@ -60,19 +65,19 @@ def update_profile(
     surname = normalize_surname(data.surname)
     givenname = normalize_givenname(data.givenname)
 
-    errors: list[tuple[str, str]] = []
+    errors: list[FieldError] = []
     if _name_combo_taken(db, surname, givenname, exclude_id=user.id):
         msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(("surname", msg))
-        errors.append(("givenname", msg))
+        errors.append(FieldError("surname", msg))
+        errors.append(FieldError("givenname", msg))
     if _email_taken(db, data.email, exclude_id=user.id):
-        errors.append(("email", "Diese E-Mail-Adresse ist bereits vergeben."))
+        errors.append(FieldError("email", "Diese E-Mail-Adresse ist bereits vergeben."))
     if (
         data.change_password
         and data.password is not None
         and verify_password(data.password, user.auth_password)
     ):
-        errors.append(("password", PASSWORD_UNCHANGED_MESSAGE))
+        errors.append(FieldError("password", PASSWORD_UNCHANGED_MESSAGE))
     if errors:
         raise ProfileValidationError(errors)
 

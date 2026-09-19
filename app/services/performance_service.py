@@ -38,6 +38,13 @@ from app.schemas.performance import (
 )
 from app.services.artist_service import label_for
 from app.services.coreelement_service import list_coreelements
+from app.services.errors import (
+    DomainValidationError,
+    FieldError,
+    ForbiddenError,
+    NotFoundError,
+    PlainError,
+)
 from app.services.position_types import (
     POSITION_MODELS,
     PositionType,
@@ -60,31 +67,42 @@ _LOCATION_HOUR_COLLISION = (
 _LOCATION_HOUR_ARTIST_COLLISION = (
     "Die Kombination aus Aufführungs-Stunde, Ort und Dirigent muss eindeutig sein."
 )
+_IN_PAST_DETAIL = "Die Aufführung liegt bereits in der Vergangenheit."
+_IN_USE_DETAIL = (
+    "Die Aufführung kann nicht gelöscht werden, da bereits Buchungen oder "
+    "Anfragen vorliegen."
+)
 
 
-class PerformanceNotFoundError(Exception):
+class PerformanceNotFoundError(NotFoundError):
     """Raised when `performance_id` doesn't exist."""
 
 
-class PerformanceValidationError(Exception):
+class PerformanceValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
     failing field -- same pattern as auth_service.RegistrationConflictError."""
 
-    def __init__(self, errors: list[tuple[str, str]]) -> None:
-        self.errors = errors
-        super().__init__("Performance validation failed")
 
-
-class PerformanceInPastError(Exception):
+class PerformanceInPastError(ForbiddenError):
     """Raised when a maintain-type action (edit-data fetch, update, delete)
     is attempted on a performance whose schedule has already passed -- a
     per-instance past-date lock, enforced at fetch-time too, not just at
     save."""
 
+    def __init__(self) -> None:
+        super().__init__(_IN_PAST_DETAIL)
 
-class PerformanceInUseError(Exception):
+
+class PerformanceInUseError(PlainError):
     """Raised when delete is blocked by an existing Booking/BookingRequest
-    row."""
+    row -- a bare-string 422, not DomainValidationError's field-array
+    shape, since the frontend shows this as a general banner message
+    rather than tying it to one input."""
+
+    status_code = 422
+
+    def __init__(self) -> None:
+        super().__init__(_IN_USE_DETAIL)
 
 
 def _get_or_404(db: Session, performance_id: uuid.UUID) -> Performance:
@@ -107,29 +125,33 @@ def _tomorrow_start() -> datetime:
 
 def _validate_positions(
     db: Session, items: list[PerformancePositionInput], position_type: PositionType
-) -> list[tuple[str, str]]:
+) -> list[FieldError]:
     model = POSITION_MODELS[position_type]
-    errors: list[tuple[str, str]] = []
+    errors: list[FieldError] = []
     seen_ids: set[uuid.UUID] = set()
     for item in items:
         if item.id in seen_ids:
-            errors.append(("setup", f"{position_type}: doppelter Eintrag."))
+            errors.append(FieldError("setup", f"{position_type}: doppelter Eintrag."))
             continue
         seen_ids.add(item.id)
         exists = db.execute(
             select(model.id).where(model.id == item.id)
         ).scalar_one_or_none()
         if exists is None:
-            errors.append(("setup", f"{position_type}: Element nicht gefunden."))
+            errors.append(
+                FieldError("setup", f"{position_type}: Element nicht gefunden.")
+            )
     return errors
 
 
-def _validate_proprium(db: Session, data: PerformanceRequest) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+def _validate_proprium(db: Session, data: PerformanceRequest) -> list[FieldError]:
+    errors: list[FieldError] = []
     seen_elements: set[uuid.UUID] = set()
     for entry in data.proprium:
         if entry.propriumelement_id in seen_elements:
-            errors.append(("proprium", "Doppelter Eintrag für dasselbe Element."))
+            errors.append(
+                FieldError("proprium", "Doppelter Eintrag für dasselbe Element.")
+            )
             continue
         seen_elements.add(entry.propriumelement_id)
         if (
@@ -140,33 +162,33 @@ def _validate_proprium(db: Session, data: PerformanceRequest) -> list[tuple[str,
             ).scalar_one_or_none()
             is None
         ):
-            errors.append(("proprium", "Element wurde nicht gefunden."))
+            errors.append(FieldError("proprium", "Element wurde nicht gefunden."))
         if (
             db.execute(
                 select(Propriumwork.id).where(Propriumwork.id == entry.propriumwork_id)
             ).scalar_one_or_none()
             is None
         ):
-            errors.append(("proprium", "Werk wurde nicht gefunden."))
+            errors.append(FieldError("proprium", "Werk wurde nicht gefunden."))
     return errors
 
 
-def _validate_rehearsals(data: PerformanceRequest) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+def _validate_rehearsals(data: PerformanceRequest) -> list[FieldError]:
+    errors: list[FieldError] = []
     tomorrow_start = _tomorrow_start()
     schedule = data.schedule
     for rehearsal in data.rehearsals:
         rehearsal_schedule = rehearsal.schedule
         if rehearsal_schedule < tomorrow_start:
-            errors.append(("rehearsals", _REHEARSAL_TOO_EARLY))
+            errors.append(FieldError("rehearsals", _REHEARSAL_TOO_EARLY))
         if rehearsal_schedule > schedule:
-            errors.append(("rehearsals", _REHEARSAL_AFTER_PERFORMANCE))
+            errors.append(FieldError("rehearsals", _REHEARSAL_AFTER_PERFORMANCE))
     return errors
 
 
 def _validate_collision(
     db: Session, data: PerformanceRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
+) -> list[FieldError]:
     """Collision check truncated to the HOUR (not the DB's exact-timestamp
     unique indexes), run on both create AND update."""
     schedule = data.schedule
@@ -182,22 +204,22 @@ def _validate_collision(
         stmt = stmt.where(Performance.id != exclude_id)
     same_hour = db.execute(stmt).scalars().all()
 
-    errors: list[tuple[str, str]] = []
+    errors: list[FieldError] = []
     if same_hour:
-        errors.append(("schedule", _LOCATION_HOUR_COLLISION))
+        errors.append(FieldError("schedule", _LOCATION_HOUR_COLLISION))
     if any(performance.artist_id == data.artist_id for performance in same_hour):
-        errors.append(("schedule", _LOCATION_HOUR_ARTIST_COLLISION))
+        errors.append(FieldError("schedule", _LOCATION_HOUR_ARTIST_COLLISION))
     return errors
 
 
 def _validate(
     db: Session, data: PerformanceRequest, exclude_id: uuid.UUID | None
-) -> list[tuple[str, str]]:
-    errors: list[tuple[str, str]] = []
+) -> list[FieldError]:
+    errors: list[FieldError] = []
     schedule = data.schedule
 
     if schedule < _tomorrow_start():
-        errors.append(("schedule", _SCHEDULE_TOO_EARLY))
+        errors.append(FieldError("schedule", _SCHEDULE_TOO_EARLY))
 
     if (
         db.execute(
@@ -205,7 +227,7 @@ def _validate(
         ).scalar_one_or_none()
         is None
     ):
-        errors.append(("location_id", "Ort wurde nicht gefunden."))
+        errors.append(FieldError("location_id", "Ort wurde nicht gefunden."))
 
     if (
         db.execute(
@@ -214,7 +236,9 @@ def _validate(
         is None
     ):
         errors.append(
-            ("ordinariumwork_id", "Ordinarium-Komposition wurde nicht gefunden.")
+            FieldError(
+                "ordinariumwork_id", "Ordinarium-Komposition wurde nicht gefunden."
+            )
         )
 
     if (
@@ -224,7 +248,7 @@ def _validate(
         ).scalar_one_or_none()
         is None
     ):
-        errors.append(("artist_id", "Dirigent wurde nicht gefunden."))
+        errors.append(FieldError("artist_id", "Dirigent wurde nicht gefunden."))
 
     errors.extend(_validate_positions(db, data.setup.instruments, "instruments"))
     errors.extend(_validate_positions(db, data.setup.voices, "voices"))
@@ -566,10 +590,9 @@ def get_rehearsals(
 @dataclass(frozen=True)
 class PerformanceBatchEntry:
     """Everything list_performances_for_month() and
-    booking_service.get_upcoming_requests_and_bookings_for_user() (Schritt
-    7) both need to enrich a raw Performance row -- extracted so the two
-    N+1-safe batch loaders share ONE implementation instead of duplicating
-    it."""
+    booking_service.get_upcoming_requests_and_bookings_for_user() both need
+    to enrich a raw Performance row -- extracted so the two N+1-safe batch
+    loaders share ONE implementation instead of duplicating it."""
 
     location: PerformanceLocationOutput
     ordinariumwork_id: uuid.UUID
@@ -589,7 +612,7 @@ def load_performance_batch_data(
     Rehearsals across an arbitrary list of Performances -- a fixed number
     of queries regardless of list length, the shared building block behind
     both list_performances_for_month() (month-filtered) and
-    booking_service's user-scoped equivalent (Schritt 7)."""
+    booking_service's user-scoped equivalent."""
     if not performances:
         return {}
 
