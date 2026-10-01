@@ -3,8 +3,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import func, select
 
 from app.core.security import verify_password
+from app.db.models.user import User
+from app.db.models.user_role import UserRole
 from app.services import user_administration_service
 
 if TYPE_CHECKING:
@@ -109,3 +112,75 @@ class TestSetRandomPassword:
             user_administration_service.set_random_password(
                 db_session, uuid.uuid4(), admin.id
             )
+
+
+def _soft_delete(db_session: Session, user) -> None:
+    user.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+
+class TestIsPurgeable:
+    def test_deleted_user_without_history_is_purgeable(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        _soft_delete(db_session, user)
+
+        assert user_administration_service.is_purgeable(db_session, user)
+
+    def test_active_user_is_not_purgeable(self, db_session: Session, make_user):
+        user = make_user()
+
+        assert not user_administration_service.is_purgeable(db_session, user)
+
+    @pytest.mark.parametrize("kind", ["booking", "request", "log"])
+    def test_any_booking_history_blocks(
+        self, db_session: Session, make_user, add_user_history, kind
+    ):
+        user = make_user()
+        add_user_history(user, kind)
+        _soft_delete(db_session, user)
+
+        assert not user_administration_service.is_purgeable(db_session, user)
+
+
+class TestPurgeUser:
+    def test_removes_the_row_and_cascades_account_owned_data(
+        self, db_session: Session, make_user
+    ):
+        user = make_user(roles=["purge-test-role"])
+        user_id = user.id
+        _soft_delete(db_session, user)
+
+        user_administration_service.purge_user(db_session, user_id)
+
+        assert db_session.get(User, user_id) is None
+        remaining_roles = db_session.execute(
+            select(func.count())
+            .select_from(UserRole)
+            .where(UserRole.user_id == user_id)
+        ).scalar_one()
+        assert remaining_roles == 0
+
+    def test_active_user_raises_not_deleted(self, db_session: Session, make_user):
+        user = make_user()
+
+        with pytest.raises(user_administration_service.UserNotDeletedError):
+            user_administration_service.purge_user(db_session, user.id)
+        assert db_session.get(User, user.id) is not None
+
+    @pytest.mark.parametrize("kind", ["booking", "request", "log"])
+    def test_booking_history_raises_has_history(
+        self, db_session: Session, make_user, add_user_history, kind
+    ):
+        user = make_user()
+        add_user_history(user, kind)
+        _soft_delete(db_session, user)
+
+        with pytest.raises(user_administration_service.UserHasHistoryError):
+            user_administration_service.purge_user(db_session, user.id)
+        assert db_session.get(User, user.id) is not None
+
+    def test_unknown_id_raises_not_found(self, db_session: Session):
+        with pytest.raises(user_administration_service.UserAdministrationNotFoundError):
+            user_administration_service.purge_user(db_session, uuid.uuid4())

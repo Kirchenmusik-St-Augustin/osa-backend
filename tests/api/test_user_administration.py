@@ -87,6 +87,28 @@ class TestShow:
         assert response.status_code == 200
         assert response.json()["user"]["deleted_at"] is not None
 
+    def test_includes_contact_data_and_last_activity(
+        self, client, make_user, db_session
+    ):
+        headers = _auth_headers(client, make_user, administrator=True)
+        user = make_user(email="contact@example.test")
+        user.phone = "+43 660 1234567"
+        user.auth_lastsignal = datetime.now(UTC)
+        db_session.commit()
+
+        response = client.get(f"/administrator/users/{user.id}", headers=headers)
+        payload = response.json()["user"]
+        assert payload["email"] == "contact@example.test"
+        assert payload["phone"] == "+43 660 1234567"
+        assert payload["auth_lastsignal"] is not None
+
+    def test_phone_is_null_when_not_set(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+        user = make_user()
+
+        response = client.get(f"/administrator/users/{user.id}", headers=headers)
+        assert response.json()["user"]["phone"] is None
+
     def test_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
         response = client.get(f"/administrator/users/{uuid.uuid4()}", headers=headers)
@@ -153,3 +175,71 @@ class TestSetPassword:
             f"/administrator/users/{admin.id}/set-password", headers=headers
         )
         assert response.status_code == 403
+
+
+class TestPurge:
+    def test_non_administrator_is_forbidden(self, client, make_user):
+        headers = _auth_headers(client, make_user, roles=["disponent"])
+        target = make_user()
+
+        response = client.delete(f"/administrator/users/{target.id}", headers=headers)
+        assert response.status_code == 403
+
+    def test_purges_a_deleted_user_without_history(self, client, make_user, db_session):
+        headers = _auth_headers(client, make_user, administrator=True)
+        target = make_user()
+        target.deleted_at = datetime.now(UTC)
+        db_session.commit()
+
+        response = client.delete(f"/administrator/users/{target.id}", headers=headers)
+        assert response.status_code == 200
+        follow_up = client.get(f"/administrator/users/{target.id}", headers=headers)
+        assert follow_up.status_code == 404
+
+    def test_active_user_is_rejected(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+        target = make_user()
+
+        response = client.delete(f"/administrator/users/{target.id}", headers=headers)
+        assert response.status_code == 422
+
+    def test_user_with_history_is_rejected(
+        self, client, make_user, db_session, add_user_history
+    ):
+        headers = _auth_headers(client, make_user, administrator=True)
+        target = make_user()
+        add_user_history(target, "booking")
+        target.deleted_at = datetime.now(UTC)
+        db_session.commit()
+
+        response = client.delete(f"/administrator/users/{target.id}", headers=headers)
+        assert response.status_code == 422
+        still_there = client.get(f"/administrator/users/{target.id}", headers=headers)
+        assert still_there.status_code == 200
+
+    def test_missing_id_returns_404(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+        response = client.delete(
+            f"/administrator/users/{uuid.uuid4()}", headers=headers
+        )
+        assert response.status_code == 404
+
+    def test_detail_reports_purgeable_flag(
+        self, client, make_user, db_session, add_user_history
+    ):
+        headers = _auth_headers(client, make_user, administrator=True)
+        clean = make_user()
+        clean.deleted_at = datetime.now(UTC)
+        with_history = make_user()
+        add_user_history(with_history, "request")
+        with_history.deleted_at = datetime.now(UTC)
+        active = make_user()
+        db_session.commit()
+
+        def purgeable(user) -> bool:
+            response = client.get(f"/administrator/users/{user.id}", headers=headers)
+            return response.json()["user"]["purgeable"]
+
+        assert purgeable(clean) is True
+        assert purgeable(with_history) is False
+        assert purgeable(active) is False

@@ -1,9 +1,13 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 
 from app.core.security import generate_random_password, get_password_hash
+from app.db.models.booking import Booking
+from app.db.models.booking_log import BookingLog
+from app.db.models.booking_request import BookingRequest
 from app.db.models.user import User
+from app.services.errors import GeneralValidationError
 
 if TYPE_CHECKING:
     import uuid
@@ -12,6 +16,11 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 _SEARCH_RESULT_LIMIT = 20
+
+# Tables whose rows are business history of a user (bookings, requests and the
+# booking audit log). Their FKs either RESTRICT or would silently anonymize
+# the history on delete, so any such row keeps the account from being purged.
+_HISTORY_MODELS = (Booking, BookingRequest, BookingLog)
 
 
 class UserAdministrationNotFoundError(Exception):
@@ -23,6 +32,25 @@ class UserAdministrationNotFoundError(Exception):
 class SelfTargetError(Exception):
     """set_random_password() targeting the acting administrator
     themselves."""
+
+
+class UserNotDeletedError(GeneralValidationError):
+    """purge_user() targeting an account that has not been soft-deleted first."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Nur gelöschte Benutzerkonten können dauerhaft gelöscht werden."
+        )
+
+
+class UserHasHistoryError(GeneralValidationError):
+    """purge_user() blocked by bookings, requests or booking log entries."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Das Benutzerkonto kann nicht dauerhaft gelöscht werden, da noch "
+            "Buchungen oder sonstige Verweise existieren."
+        )
 
 
 def search_users_including_deleted(db: Session, query: str) -> Sequence[User]:
@@ -92,3 +120,28 @@ def set_random_password(
     user.auth_password = get_password_hash(plain_password)
     db.commit()
     return user, plain_password
+
+
+def _has_history(db: Session, user_id: uuid.UUID) -> bool:
+    return any(
+        db.execute(select(exists().where(model.user_id == user_id))).scalar_one()
+        for model in _HISTORY_MODELS
+    )
+
+
+def is_purgeable(db: Session, user: User) -> bool:
+    """A soft-deleted account without any booking history can be removed for
+    good; everything else on the account (roles, positions, tokens, OAuth2
+    bindings) is cascaded away by the database."""
+    return user.deleted_at is not None and not _has_history(db, user.id)
+
+
+def purge_user(db: Session, user_id: uuid.UUID) -> None:
+    user = _get_or_404(db, user_id)
+    if user.deleted_at is None:
+        raise UserNotDeletedError
+    if _has_history(db, user.id):
+        raise UserHasHistoryError
+
+    db.delete(user)
+    db.commit()
