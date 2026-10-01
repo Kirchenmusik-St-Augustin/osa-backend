@@ -35,7 +35,7 @@ PERMISSION_RULES: list[PermissionRule] = [
     ),
     PermissionRule(
         permission="userAdministrate",
-        description="administrator-Flag (Restore soft-deleted Users)",
+        description="administrator-Flag (Restore, unlock, set password, purge users)",
         condition=lambda _roles, is_admin: is_admin,
     ),
     PermissionRule(

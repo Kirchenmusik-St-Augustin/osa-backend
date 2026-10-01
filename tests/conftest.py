@@ -56,7 +56,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -73,8 +73,15 @@ from app.core.config import get_settings
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
 from app.db.database import engine, get_db
+from app.db.models.artist import Artist
+from app.db.models.booking import Booking
+from app.db.models.booking_log import BookingLog
+from app.db.models.booking_request import BookingRequest
 from app.db.models.choirjob import Choirjob
 from app.db.models.instrument import Instrument
+from app.db.models.location import Location
+from app.db.models.ordinariumwork import Ordinariumwork
+from app.db.models.performance import Performance
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
@@ -404,6 +411,62 @@ def make_choirjob(db_session: Session) -> Callable[..., Choirjob]:
         return choirjob
 
     return _make_choirjob
+
+
+UserHistoryKind = Literal["booking", "request", "log"]
+
+
+@pytest.fixture
+def add_user_history(
+    db_session: Session, make_instrument: Callable[..., Instrument]
+) -> Callable[[User, UserHistoryKind], None]:
+    """Factory fixture: attaches one row of booking history (a Booking, a
+    BookingRequest or a BookingLog) to a user, including the Performance
+    it needs -- performances.location_id/ordinariumwork_id are RESTRICT
+    foreign keys, so real backing rows are required."""
+
+    def _add_user_history(user: User, kind: UserHistoryKind) -> None:
+        suffix = uuid.uuid4().hex[:8]
+        artist = Artist(surname=f"Komponist-{suffix}", givenname="Given", composer=True)
+        location = Location(
+            name=f"Ort-{suffix}", order=0, address="Adresse 1", color="000000"
+        )
+        db_session.add_all([artist, location])
+        db_session.flush()
+        work = Ordinariumwork(name=f"Werk-{suffix}", artist_id=artist.id)
+        db_session.add(work)
+        db_session.flush()
+        performance = Performance(
+            schedule=datetime(2099, 1, 1, 12, 0, 0),  # noqa: DTZ001 -- naive on purpose
+            location_id=location.id,
+            ordinariumwork_id=work.id,
+        )
+        db_session.add(performance)
+        db_session.flush()
+
+        history: Booking | BookingRequest | BookingLog
+        if kind == "booking":
+            history = Booking(
+                performance_id=performance.id,
+                user_id=user.id,
+                instrument_id=make_instrument().id,
+                fee=80,
+                order=0,
+            )
+        elif kind == "request":
+            history = BookingRequest(performance_id=performance.id, user_id=user.id)
+        else:
+            history = BookingLog(
+                performance_id=performance.id,
+                user_id=user.id,
+                booking_type="book",
+                instrument_id=make_instrument().id,
+                fee=0,
+            )
+        db_session.add(history)
+        db_session.commit()
+
+    return _add_user_history
 
 
 class QueryCounter:

@@ -21,17 +21,20 @@ class UserAdministrationDeletedEntryOutput(BaseModel):
 
 
 class UserAdministrationDetailOutput(BaseModel):
-    """Deliberately thinner than user_service's UserResponse (no phone, no abilities):
-    the Administration domain only ever needs status flags + the three actions."""
+    """Deliberately thinner than user_service's UserResponse (no abilities, roles
+    or bindings): the Administration domain only needs contact data, status flags
+    and the three actions."""
 
     id: uuid.UUID
     surname: str
     givenname: str
     email: str | None
+    phone: str | None
     email_verified_at: UtcDatetime | None
     auth_locked: bool
     deleted_at: UtcDatetime | None
     auth_lastsignal: UtcDatetime | None
+    purgeable: bool
 
 
 class UserAdministrationActionResponse(BaseModel):
