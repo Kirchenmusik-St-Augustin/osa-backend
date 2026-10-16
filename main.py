@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 
 import app.db.base
 from app.api.exception_handlers import register_exception_handlers
+from app.api.middleware.body_limit import MaxBodySizeMiddleware
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.api.router import api_router
 from app.api.router_includes.go import go_router
@@ -165,6 +166,11 @@ app.add_middleware(
 # the outermost layer -- it sees the actual final response, not an
 # intermediate one.
 app.add_middleware(RequestLoggingMiddleware)
+# Registered last, i.e. the outermost layer: an oversized body is rejected
+# before the request logger or any route buffers it in memory.
+app.add_middleware(
+    MaxBodySizeMiddleware, max_body_bytes=settings.max_request_body_bytes
+)
 
 app.include_router(system_router)  # root-level health check, no prefix
 app.include_router(api_router)  # every domain router, see app/api/router.py

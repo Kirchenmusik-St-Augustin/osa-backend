@@ -63,9 +63,15 @@ ENTRYPOINT ["./docker-entrypoint.sh"]
 # shutdown's grace period doesn't need to allow any more than that same
 # ceiling (see osa-deploy's osa-backend Quadlet StopTimeout=/TimeoutStopSec=,
 # which are sized off this same value plus a buffer).
+# --forwarded-allow-ips: the only client of the published port is Caddy, which
+# overwrites any X-Forwarded-For sent by a visitor, so the header is trusted
+# from every peer address. Without it request.client.host is the same
+# internal address for every visitor and all per-address rate limits and the
+# login lockout collapse into one shared bucket (see app/core/rate_limit.py).
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", \
-     "--graceful-timeout", "120", "--access-logfile", "-", "--no-control-socket"]
+     "--graceful-timeout", "120", "--forwarded-allow-ips", "*", \
+     "--access-logfile", "-", "--no-control-socket"]
 # --no-control-socket: this feature (gunicorn >= 25.1.0) is for gunicornc,
 # a CLI tool for runtime worker management -- unused here (Podman/systemd
 # own the container lifecycle instead). Without this flag, gunicorn tries

@@ -173,3 +173,17 @@ def test_performance_defaults_can_be_overridden(monkeypatch: pytest.MonkeyPatch)
 
     assert settings.performance_default_location_id == location_id
     assert settings.performance_default_conductor_artist_id == conductor_id
+
+
+def test_max_request_body_bytes_defaults_to_one_mebibyte(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("MAX_REQUEST_BODY_BYTES", raising=False)
+
+    assert Settings().max_request_body_bytes == 1_048_576
+
+
+def test_max_request_body_bytes_can_be_overridden(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "2048")
+
+    assert Settings().max_request_body_bytes == 2048

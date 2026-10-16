@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     secret_key: str | None = Field(default=None, validation_alias="SECRET_KEY")
 
     # Tier 2 -- optional with defaults, no boot-time validation.
+    # No endpoint accepts uploads, so 1 MiB is far above any legitimate request.
+    max_request_body_bytes: int = Field(
+        default=1_048_576, ge=1, validation_alias="MAX_REQUEST_BODY_BYTES"
+    )
     session_lifetime_minutes: int = Field(
         default=15, validation_alias="SESSION_LIFETIME_MINUTES"
     )

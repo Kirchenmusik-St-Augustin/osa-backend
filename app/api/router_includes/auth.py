@@ -12,7 +12,7 @@ from app.api.deps import get_current_user, oauth2_scheme
 from app.api.job_queue import JobQueue, get_job_queue
 from app.core import mailer
 from app.core.config import get_settings
-from app.core.rate_limit import limiter
+from app.core.rate_limit import client_ip, rate_limited
 from app.core.redacted import Redacted
 from app.core.security import (
     REFRESH_TOKEN_LIFETIME_DAYS,
@@ -52,10 +52,6 @@ auth_router = APIRouter()
 # cookie against "/api/auth/*" since that's the URL it actually requested.
 COOKIE_PATH = "/api/auth"
 COOKIE_MAX_AGE = REFRESH_TOKEN_LIFETIME_DAYS * 86400
-
-
-def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
 
 
 def _build_login_response(
@@ -110,7 +106,7 @@ def login(
     change-password form). Lockout threshold/window (5 attempts / 60s), see
     auth_service.check_login_throttle.
     """
-    ip_address = _client_ip(request)
+    ip_address = client_ip(request)
     user_agent = request.headers.get("user-agent")
 
     seconds_remaining = auth_service.check_login_throttle(
@@ -180,7 +176,7 @@ def login(
 
 
 @auth_router.post("/refresh")
-@limiter.limit("10/minute")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("10/minute")
 def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONResponse:
     """Exchange the refresh-token cookie for a new access token, rotating
     the refresh secret on every use. Per-IP rate limit only."""
@@ -252,9 +248,9 @@ def get_current_user_profile(
 
 
 @auth_router.post("/register")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def register(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: RegisterRequest,
     db: Annotated[Session, Depends(get_db)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
@@ -287,9 +283,9 @@ def register(
 
 
 @auth_router.post("/resend-verification-email")
-@limiter.limit("6/minute")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("6/minute")
 def resend_verification_email(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     current_user: Annotated[User, Depends(get_current_user)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
@@ -310,9 +306,9 @@ def resend_verification_email(
 
 
 @auth_router.post("/verify-email")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def verify_email(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: VerifyEmailRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
@@ -335,9 +331,9 @@ def verify_email(
 
 
 @auth_router.post("/forgot-password")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def forgot_password(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: ForgotPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
@@ -362,9 +358,9 @@ def forgot_password(
 
 
 @auth_router.post("/reset-password")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def reset_password(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: ResetPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
@@ -379,9 +375,9 @@ def reset_password(
 
 
 @auth_router.post("/google/callback")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def google_callback(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: GoogleCallbackRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
@@ -408,9 +404,9 @@ def google_callback(
 
 
 @auth_router.post("/google/link")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def google_link(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: GoogleLinkRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
