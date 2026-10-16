@@ -167,6 +167,99 @@ def test_check_login_throttle_ignores_failures_outside_window(db_session, make_u
     assert result is None
 
 
+def test_check_login_throttle_limits_one_account_across_addresses(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        auth_service.log_auth_event(
+            db_session, "Failed", created.email, ip_address=f"10.0.0.{index}"
+        )
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is not None
+    assert 0 < result <= auth_service.ACCOUNT_THROTTLE_WINDOW_SECONDS
+
+
+def test_check_login_throttle_allows_one_account_below_the_account_limit(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT - 1):
+        auth_service.log_auth_event(
+            db_session, "Failed", created.email, ip_address=f"10.0.0.{index}"
+        )
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
+def test_check_login_throttle_ignores_account_failures_outside_its_window(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        db_session.add(
+            AuthLog(
+                event="Failed",
+                fired_at=datetime.now(UTC)
+                - timedelta(seconds=auth_service.ACCOUNT_THROTTLE_WINDOW_SECONDS + 5),
+                ip_address=f"10.0.0.{index}",
+                email=created.email,
+                payload={},
+            )
+        )
+    db_session.commit()
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
+def test_check_login_throttle_account_window_clears_after_a_successful_login(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        auth_service.log_auth_event(
+            db_session, "Failed", created.email, ip_address=f"10.0.0.{index}"
+        )
+    auth_service.log_auth_event(
+        db_session, "Login", created.email, ip_address="198.51.100.5"
+    )
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
+def test_check_login_throttle_account_limit_ignores_other_accounts(
+    db_session, make_user
+):
+    victim = make_user()
+    bystander = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        auth_service.log_auth_event(
+            db_session, "Failed", victim.email, ip_address=f"10.0.0.{index}"
+        )
+
+    result = auth_service.check_login_throttle(
+        db_session, bystander.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
 def test_create_user_session_persists_token_and_lastlogin(db_session, make_user):
     created = make_user()
 

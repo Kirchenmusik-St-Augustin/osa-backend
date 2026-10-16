@@ -43,9 +43,14 @@ if TYPE_CHECKING:
     from app.core.json_types import JsonObject
     from app.schemas.auth import RegisterRequest
 
-# Login lockout: 5 failed attempts per 60s window.
+# Login lockout, two independent limits on the failures logged in auth_logs:
+# 5 per 60 s for one email from one IP, and 20 per 15 min for one email from
+# any IP (guessing spread over many addresses stays bounded per account).
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_THROTTLE_WINDOW_SECONDS = 60
+MAX_LOGIN_ATTEMPTS_PER_ACCOUNT = 20
+ACCOUNT_THROTTLE_WINDOW_SECONDS = 900
+
 
 AuthFailureReason = Literal["unknown_email", "wrong_password", "account_locked"]
 
@@ -75,56 +80,78 @@ def log_auth_event(
     db.commit()
 
 
-def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None:
-    """Returns seconds remaining if the email+IP pair is currently
-    rate-limited, None if the login attempt may proceed.
-
-    Asymmetric semantics (hit on failure, cleared on success, key =
-    lower(email)+ip) implemented as a derived query over AuthLog instead of
-    a separate counter/cache -- deliberately a sliding 60s window bounded by
-    the most recent successful login for this exact key. No new table,
-    reuses the audit trail as the source of truth (lean, DRY)."""
+def _retry_after_seconds(
+    db: Session,
+    normalized_email: str,
+    ip_address: str | None,
+    *,
+    max_attempts: int,
+    window_seconds: int,
+) -> int | None:
+    """Seconds until the failures inside the sliding window drop below
+    `max_attempts`, None if the limit is not reached. The window starts at
+    the most recent successful login for the same key. `ip_address=None`
+    counts the email from every address."""
     now = datetime.now(UTC)
-    window_start = now - timedelta(seconds=LOGIN_THROTTLE_WINDOW_SECONDS)
-    normalized_email = email.lower()
+    key = [func.lower(AuthLog.email) == normalized_email]
+    if ip_address is not None:
+        key.append(AuthLog.ip_address == ip_address)
 
     last_success_stmt = (
         select(AuthLog.fired_at)
-        .where(
-            AuthLog.event == "Login",
-            func.lower(AuthLog.email) == normalized_email,
-            AuthLog.ip_address == ip_address,
-        )
+        .where(AuthLog.event == "Login", *key)
         .order_by(AuthLog.fired_at.desc())
         .limit(1)
     )
     last_success = ensure_tz_aware(db.execute(last_success_stmt).scalar_one_or_none())
 
+    window_start = now - timedelta(seconds=window_seconds)
     effective_start = window_start
     if last_success is not None and last_success > effective_start:
         effective_start = last_success
 
     failed_stmt = (
         select(AuthLog.fired_at)
-        .where(
-            AuthLog.event == "Failed",
-            func.lower(AuthLog.email) == normalized_email,
-            AuthLog.ip_address == ip_address,
-            AuthLog.fired_at > effective_start,
-        )
+        .where(AuthLog.event == "Failed", *key, AuthLog.fired_at > effective_start)
         .order_by(AuthLog.fired_at.asc())
     )
     raw_failed_times = db.execute(failed_stmt).scalars().all()
     failed_times = [ensure_tz_aware(t) for t in raw_failed_times if t is not None]
 
-    if len(failed_times) < MAX_LOGIN_ATTEMPTS:
+    if len(failed_times) < max_attempts:
         return None
 
-    oldest_relevant = failed_times[-MAX_LOGIN_ATTEMPTS]
-    retry_after = (
-        oldest_relevant + timedelta(seconds=LOGIN_THROTTLE_WINDOW_SECONDS) - now
-    )
+    oldest_relevant = failed_times[-max_attempts]
+    retry_after = oldest_relevant + timedelta(seconds=window_seconds) - now
     return max(1, int(retry_after.total_seconds()))
+
+
+def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None:
+    """Returns the seconds to wait if the email+IP pair or the email alone is
+    currently rate-limited, None if the login attempt may proceed. Derived
+    from the AuthLog audit trail instead of a separate counter (lean, DRY)."""
+    normalized_email = email.lower()
+    waits = [
+        wait
+        for wait in (
+            _retry_after_seconds(
+                db,
+                normalized_email,
+                ip_address,
+                max_attempts=MAX_LOGIN_ATTEMPTS,
+                window_seconds=LOGIN_THROTTLE_WINDOW_SECONDS,
+            ),
+            _retry_after_seconds(
+                db,
+                normalized_email,
+                None,
+                max_attempts=MAX_LOGIN_ATTEMPTS_PER_ACCOUNT,
+                window_seconds=ACCOUNT_THROTTLE_WINDOW_SECONDS,
+            ),
+        )
+        if wait is not None
+    ]
+    return max(waits, default=None)
 
 
 def authenticate_user(

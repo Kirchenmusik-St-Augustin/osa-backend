@@ -90,6 +90,20 @@ def _ensure_trusted_origin(request: Request) -> None:
         )
 
 
+def _throttled_response(seconds_remaining: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "detail": (
+                f"Zu viele Anmeldeversuche. Bitte in {seconds_remaining} "
+                "Sekunden erneut versuchen."
+            ),
+            "seconds": seconds_remaining,
+            "minutes": ceil(seconds_remaining / 60),
+        },
+    )
+
+
 @auth_router.post("/login")
 def login(
     request: Request,
@@ -103,7 +117,8 @@ def login(
     (the login fails generically for both, which prevents account
     enumeration -- there is no separate "Passwort falsch." message in the
     login flow, that string belongs to the unrelated self-service
-    change-password form). Lockout threshold/window (5 attempts / 60s), see
+    change-password form). Lockout: 5 failed attempts / 60s per e-mail and
+    address, 20 / 15 min per e-mail from any address, see
     auth_service.check_login_throttle.
     """
     ip_address = client_ip(request)
@@ -120,18 +135,7 @@ def login(
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        minutes = ceil(seconds_remaining / 60)
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={
-                "detail": (
-                    f"Zu viele Anmeldeversuche. Bitte in {seconds_remaining} "
-                    "Sekunden erneut versuchen."
-                ),
-                "seconds": seconds_remaining,
-                "minutes": minutes,
-            },
-        )
+        return _throttled_response(seconds_remaining)
 
     user, reason = auth_service.authenticate_user(
         db, form_data.username, form_data.password
@@ -406,21 +410,49 @@ def google_callback(
 @auth_router.post("/google/link")
 @rate_limited("5/hour")
 def google_link(
-    request: Request,  # noqa: ARG001
+    request: Request,
     data: GoogleLinkRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
+    """Checks the local e-mail and password, so it shares the login lockout
+    and audit trail: otherwise it would be a way to guess passwords that
+    the login throttle never sees."""
+    ip_address = client_ip(request)
+    user_agent = request.headers.get("user-agent")
+
+    seconds_remaining = auth_service.check_login_throttle(db, data.email, ip_address)
+    if seconds_remaining is not None:
+        auth_service.log_auth_event(
+            db,
+            "Lockout",
+            data.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return _throttled_response(seconds_remaining)
+
     try:
         user = auth_service.link_google_account(
             db, data.credential, data.email, data.password
         )
     except ValueError as exc:
+        auth_service.log_auth_event(
+            db,
+            "Failed",
+            data.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            payload={"via": "google_link"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
         ) from None
 
     access_token, session_id, refresh_secret = auth_service.create_user_session(
         db, user
+    )
+    auth_service.log_auth_event(
+        db, "Login", user.email, ip_address=ip_address, user_agent=user_agent
     )
     return _build_login_response(access_token, session_id, refresh_secret)
 

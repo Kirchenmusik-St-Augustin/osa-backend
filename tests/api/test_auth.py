@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from app.core.rate_limit import limiter
 from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.sent_email import SentEmail
@@ -711,6 +712,88 @@ def test_google_link_rejects_wrong_password(
     )
 
     assert response.status_code == 401
+
+
+def test_google_link_shares_the_login_lockout(client, make_user):
+    user = make_user(password="correct-password", email=_com_email())
+    payload = {
+        "credential": "fake-credential",
+        "email": user.email,
+        "password": "wrong-password",
+    }
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        limiter.reset()
+        assert client.post("/auth/google/link", json=payload).status_code == 401
+
+    limiter.reset()
+    blocked = client.post("/auth/google/link", json=payload)
+    limiter.reset()
+    login = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+
+    assert blocked.status_code == 429
+    assert blocked.json()["seconds"] > 0
+    assert login.status_code == 429  # the same counter blocks the login form too
+
+
+def test_google_link_writes_failed_lockout_and_login_events(
+    client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    user = make_user(password="correct-password", email=_com_email())
+    wrong = {
+        "credential": "fake-credential",
+        "email": user.email,
+        "password": "wrong-password",
+    }
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        limiter.reset()
+        client.post("/auth/google/link", json=wrong)
+    limiter.reset()
+    client.post("/auth/google/link", json=wrong)
+
+    events = db_session.execute(
+        select(AuthLog.event, AuthLog.payload).where(AuthLog.email == user.email)
+    ).all()
+
+    assert [event for event, _payload in events].count("Failed") == (
+        auth_service.MAX_LOGIN_ATTEMPTS
+    )
+    assert [event for event, _payload in events].count("Lockout") == 1
+    assert all(
+        payload == {"via": "google_link"}
+        for event, payload in events
+        if event == "Failed"
+    )
+
+
+def test_google_link_success_is_recorded_as_a_login_event(
+    client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    user = make_user(password="correct-password", email=_com_email())
+
+    with patch(
+        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        return_value={"sub": "google-link-event-log", "name": "Max Muster"},
+    ):
+        response = client.post(
+            "/auth/google/link",
+            json={
+                "credential": "fake-credential",
+                "email": user.email,
+                "password": "correct-password",
+            },
+        )
+
+    events = (
+        db_session.execute(select(AuthLog.event).where(AuthLog.email == user.email))
+        .scalars()
+        .all()
+    )
+    assert response.status_code == 200
+    assert events == ["Login"]
 
 
 def test_google_link_rejects_oversized_password(client, make_user):
