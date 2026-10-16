@@ -1,8 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
 import jwt
+import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.api import deps
 from app.core.security import (
     ALGORITHM,
     SECRET_KEY,
@@ -184,3 +187,65 @@ def test_session_used_within_the_last_minute_does_not_bump_lastsignal(
     assert response.status_code == 200
     db_session.refresh(user)
     assert user.auth_lastsignal == stale_lastsignal
+
+
+def test_token_without_expiry_is_rejected(client, make_user, db_session):
+    """Signed, bound to a live session, but without an exp claim: such a
+    token would never expire on its own."""
+    user = make_user(password="correct-password")
+    client.post(
+        "/auth/login",
+        data={"username": user.email, "password": "correct-password"},
+    )
+    session_row = db_session.execute(
+        select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+    ).scalar_one()
+    token_without_exp = jwt.encode(
+        {"sub": user.email, "jti": session_row.token},
+        SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+
+    response = client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {token_without_exp}"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_session_of_another_user_does_not_authenticate_the_subject(
+    client, make_user, db_session
+):
+    """The JWT subject is an e-mail address. A token naming user B but
+    carrying the session id (jti) of user A's session must be rejected."""
+    user_a = make_user(password="correct-password")
+    user_b = make_user()
+    client.post(
+        "/auth/login",
+        data={"username": user_a.email, "password": "correct-password"},
+    )
+    session_a = db_session.execute(
+        select(PersonalAccessToken).where(PersonalAccessToken.user_id == user_a.id)
+    ).scalar_one()
+    forged_token, _jti = create_access_token(
+        subject=user_b.email, jti_override=session_a.token
+    )
+
+    response = client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {forged_token}"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_each_rejected_token_raises_its_own_exception_object(db_session):
+    """A shared exception object would collect the traceback of every failed
+    request and grow without bound, so each rejection must raise a new one."""
+    with pytest.raises(HTTPException) as first:
+        deps.get_current_user("not-a-jwt", db_session)
+    with pytest.raises(HTTPException) as second:
+        deps.get_current_user("not-a-jwt", db_session)
+
+    assert first.value is not second.value
+    assert first.value.status_code == 401
+    assert second.value.status_code == 401

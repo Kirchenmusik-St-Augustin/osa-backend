@@ -19,22 +19,33 @@ from app.db.models.user import User
 # visible URL is "/api/auth/login", but the in-process route is "/auth/login".
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-_CREDENTIALS_EXCEPTION = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail="Anmeldedaten ungültig.",
-    headers={"WWW-Authenticate": "Bearer"},
-)
+
+def _credentials_exception() -> HTTPException:
+    """A fresh instance per raise: a module-level exception object keeps
+    every traceback (and the frames behind them) it was ever raised with,
+    so one shared instance grows without bound under repeated failures --
+    a remote memory-exhaustion vector via any invalid bearer token."""
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Anmeldedaten ungültig.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _decode_token(token: str) -> tuple[str, str]:
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            options={"require": ["exp", "sub", "jti"]},
+        )
         email: str | None = payload.get("sub")
         token_id: str | None = payload.get("jti")
         if email is None or token_id is None:
-            raise _CREDENTIALS_EXCEPTION
+            raise _credentials_exception()
     except jwt.PyJWTError:
-        raise _CREDENTIALS_EXCEPTION from None
+        raise _credentials_exception() from None
     else:
         return email, token_id
 
@@ -61,7 +72,7 @@ def _get_session_record(db: Session, token_id: str) -> PersonalAccessToken:
     )
     session_record = result.scalar_one_or_none()
     if session_record is None:
-        raise _CREDENTIALS_EXCEPTION
+        raise _credentials_exception()
     return session_record
 
 
@@ -97,15 +108,21 @@ def _enforce_idle_timeout(db: Session, session_record: PersonalAccessToken) -> N
         db.commit()
 
 
-def _get_verified_user(db: Session, email: str) -> User:
+def _get_verified_user(
+    db: Session, email: str, session_record: PersonalAccessToken
+) -> User:
     result = db.execute(
         select(User)
         .options(selectinload(User.roles))
         .where(User.email == email, User.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
-    if user is None:
-        raise _CREDENTIALS_EXCEPTION
+    # The token's subject is an e-mail address, which can be reassigned; the
+    # server-side session must belong to the very user that address resolves
+    # to now, otherwise a session of the previous owner would authenticate
+    # the new owner.
+    if user is None or user.id != session_record.user_id:
+        raise _credentials_exception()
     if user.auth_locked:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Benutzerkonto gesperrt."
@@ -124,4 +141,4 @@ def get_current_user(
     email, token_id = _decode_token(token)
     session_record = _get_session_record(db, token_id)
     _enforce_idle_timeout(db, session_record)
-    return _get_verified_user(db, email)
+    return _get_verified_user(db, email, session_record)
