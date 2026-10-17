@@ -1,4 +1,6 @@
+import secrets
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from typing import TYPE_CHECKING, Literal, NoReturn, cast
 from urllib.parse import urlencode
 
@@ -39,6 +41,13 @@ from app.services.errors import DomainValidationError, FieldError
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Mapping
+
+    # Return type of the overridden transport call; google-auth names it only
+    # with a leading underscore.
+    from google.auth.transport.requests import (
+        _Response as GoogleResponse,  # pyright: ignore[reportPrivateUsage]
+    )
 
     from app.core.json_types import JsonObject
     from app.schemas.auth import RegisterRequest
@@ -53,6 +62,15 @@ ACCOUNT_THROTTLE_WINDOW_SECONDS = 900
 
 
 AuthFailureReason = Literal["unknown_email", "wrong_password", "account_locked"]
+
+# Upper bounds for what an unauthenticated client can make us store.
+_MAX_LOGGED_EMAIL_LENGTH = 254
+_MAX_LOGGED_USER_AGENT_LENGTH = 512
+_MAX_LOGGED_IP_LENGTH = 45
+
+
+def _clipped(value: str | None, limit: int) -> str | None:
+    return value[:limit] if value else value
 
 
 def log_auth_event(
@@ -71,9 +89,9 @@ def log_auth_event(
         AuthLog(
             event=event,
             fired_at=datetime.now(UTC),
-            ip_address=ip_address,
-            user_agent=user_agent,
-            email=email,
+            ip_address=_clipped(ip_address, _MAX_LOGGED_IP_LENGTH),
+            user_agent=_clipped(user_agent, _MAX_LOGGED_USER_AGENT_LENGTH),
+            email=_clipped(email, _MAX_LOGGED_EMAIL_LENGTH),
             payload=payload or {},
         )
     )
@@ -154,22 +172,28 @@ def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None
     return max(waits, default=None)
 
 
+@cache
+def _unmatchable_password_hash() -> str:
+    return get_password_hash(secrets.token_urlsafe(16))
+
+
 def authenticate_user(
     db: Session, email: str, password: str
 ) -> tuple[User | None, AuthFailureReason | Literal["ok"]]:
-    """Case-sensitive email match (no case-insensitive collation on
-    `users.email`) -- deliberately NOT lowercased here, unlike the throttle
-    key above."""
+    """Emails are stored and compared lower-case. An unknown account or one
+    without a local password still pays for one bcrypt verification, so the
+    response time does not reveal whether the address is registered."""
     result = db.execute(
         select(User)
         .options(selectinload(User.roles))
-        .where(User.email == email, User.deleted_at.is_(None))
+        .where(User.email == email.lower(), User.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
 
-    if user is None:
-        return None, "unknown_email"
-    if not user.auth_password or not verify_password(password, user.auth_password):
+    if user is None or not user.auth_password:
+        verify_password(password, _unmatchable_password_hash())
+        return None, "unknown_email" if user is None else "wrong_password"
+    if not verify_password(password, user.auth_password):
         return None, "wrong_password"
     if user.auth_locked:
         return None, "account_locked"
@@ -492,9 +516,69 @@ class OauthBindingNotFoundError(Exception):
     the router maps both cases to an identical 404 (no ID enumeration)."""
 
 
+_GOOGLE_ISSUERS = frozenset({"accounts.google.com", "https://accounts.google.com"})
+_GOOGLE_REQUEST_TIMEOUT_SECONDS = 5
+_GOOGLE_INVALID_TOKEN_MESSAGE = "Ungültiger oder abgelaufener Google-Token."  # noqa: S105
+
+
+class _BoundedGoogleRequest(google_requests.Request):
+    """google-auth hands every certificate download a 120 second timeout;
+    this transport caps it, so a slow or unreachable Google endpoint cannot
+    hold a request thread for two minutes."""
+
+    def __call__(
+        self,
+        url: str,
+        method: str = "GET",
+        body: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: int = _GOOGLE_REQUEST_TIMEOUT_SECONDS,
+        **kwargs: object,
+    ) -> GoogleResponse:
+        return super().__call__(
+            url,
+            method,
+            body,
+            headers,
+            min(timeout, _GOOGLE_REQUEST_TIMEOUT_SECONDS),
+            **kwargs,
+        )
+
+
+@cache
+def _google_request() -> _BoundedGoogleRequest:
+    return _BoundedGoogleRequest()
+
+
+def _reject_implausible_google_token(credential: str, client_id: str) -> None:
+    """Offline plausibility check (algorithm, issuer, audience, expiry) before
+    the signature check, which downloads Google's certificates on every call:
+    without it any unauthenticated garbage string would cost an outbound
+    request."""
+    try:
+        header = jwt.get_unverified_header(credential)
+        claims = jwt.decode(
+            credential,
+            options={
+                "verify_signature": False,
+                "verify_exp": True,
+                "verify_aud": False,
+            },
+        )
+    except jwt.PyJWTError:
+        raise ValueError(_GOOGLE_INVALID_TOKEN_MESSAGE) from None
+    if (
+        header.get("alg") != "RS256"
+        or claims.get("iss") not in _GOOGLE_ISSUERS
+        or claims.get("aud") != client_id
+    ):
+        raise ValueError(_GOOGLE_INVALID_TOKEN_MESSAGE)
+
+
 def _verify_google_id_token(credential: str) -> JsonObject:
     settings = get_settings()
     client_id = require_setting(settings.google_client_id, "GOOGLE_CLIENT_ID")
+    _reject_implausible_google_token(credential, client_id)
     try:
         # google-auth's verify_oauth2_token() is untyped (effectively
         # returns Any) -- cast at this boundary once, then narrow each
@@ -503,13 +587,12 @@ def _verify_google_id_token(credential: str) -> JsonObject:
             "JsonObject",
             dict(
                 google_id_token.verify_oauth2_token(
-                    credential, google_requests.Request(), client_id
+                    credential, _google_request(), client_id
                 )
             ),
         )
     except ValueError:
-        msg = "Ungültiger oder abgelaufener Google-Token."
-        raise ValueError(msg) from None
+        raise ValueError(_GOOGLE_INVALID_TOKEN_MESSAGE) from None
 
 
 def _string_claim(payload: JsonObject, key: str, *, default: str | None = None) -> str:

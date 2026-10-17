@@ -751,6 +751,41 @@ class TestRunRestore:
         assert calls[5][0] == FAKE_PG_RESTORE
         assert "--data-only" in calls[5]
 
+    def test_main_restore_ignores_ownership_and_privileges_of_the_dump(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A role without superuser rights cannot reassign objects, so the
+        main restore must not replay the dump's OWNER TO and GRANT
+        statements; the data-only reinsert of job_runs has none to skip."""
+        monkeypatch.setenv("DATABASE_URL", PG_URL)
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(status_code=200, content=b"DUMP_BYTES"),
+        )
+        monkeypatch.setattr(backup_service, "engine", _FakeEngine())
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            backup_service.subprocess, "run", _fake_pg_subprocess_run(calls)
+        )
+
+        backup_service.run_restore(
+            backup_name="production-2024-01-01_00-00-00.dump", force=True
+        )
+
+        main_restore = [
+            call
+            for call in calls
+            if call[0] == FAKE_PG_RESTORE and "--data-only" not in call
+        ]
+        assert len(main_restore) == 1
+        assert "--no-owner" in main_restore[0]
+        assert "--no-acl" in main_restore[0]
+
     def test_raises_when_the_restored_database_ends_up_empty(
         self, monkeypatch: pytest.MonkeyPatch
     ):

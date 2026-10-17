@@ -359,6 +359,33 @@ class TestCreateUser:
         assert response.surname == surname.upper()
         assert response.givenname == "Max"
 
+    def test_email_is_stored_in_lower_case(self, db_session: Session, make_user):
+        admin = make_user(administrator=True)
+        response = user_service.create_user(
+            db_session, _request(email=f"{_unique('Mixed')}@Example.AT"), admin
+        )
+        assert response.email == response.email.lower()
+        assert response.email.endswith("@example.at")
+
+    def test_update_stores_the_email_in_lower_case(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        created = user_service.create_user(
+            db_session, _request(email=f"{_unique('first')}@example.at"), admin
+        )
+        updated = user_service.update_user(
+            db_session,
+            created.id,
+            _request(
+                surname=created.surname,
+                givenname=created.givenname,
+                email=f"{_unique('Second')}@Example.AT",
+            ),
+            admin,
+        )
+        assert updated.email == updated.email.lower()
+
     def test_email_is_optional(self, db_session: Session, make_user):
         admin = make_user(administrator=True)
         response = user_service.create_user(db_session, _request(email=None), admin)

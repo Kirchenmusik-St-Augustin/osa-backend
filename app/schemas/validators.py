@@ -10,6 +10,14 @@ import re
 # fails.
 PHONE_PATTERN = re.compile(r"^\+?[0-9 /()-]{4,60}$")
 
+
+def lowercase_email(value: str | None) -> str | None:
+    """Addresses are stored and compared in lower case (the database
+    enforces it with a CHECK constraint), so every input that writes one
+    normalises it first."""
+    return value.lower() if value else value
+
+
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 16
 _PASSWORD_FORBIDDEN_CHARACTER_PATTERN = re.compile(r"[^a-zA-Z0-9./+!@:_-]")

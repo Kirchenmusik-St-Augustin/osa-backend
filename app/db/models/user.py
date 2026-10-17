@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, FetchedValue, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -22,7 +22,12 @@ class User(Base):
     non-created_at/updated_at business-event timestamp Python-managed."""
 
     __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("surname", "givenname"),)
+    __table_args__ = (
+        UniqueConstraint("surname", "givenname"),
+        CheckConstraint(
+            "email IS NULL OR email = lower(email)", name="users_email_lowercase_check"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     surname: Mapped[str]

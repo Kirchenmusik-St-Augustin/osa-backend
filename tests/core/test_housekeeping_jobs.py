@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.core.config import get_settings
+from app.db.models.auth_log import AuthLog
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.request_log import RequestLog
 from app.services import housekeeping_jobs
@@ -111,3 +112,77 @@ class TestPurgeOldRequestLogs:
             select(RequestLog).where(RequestLog.id == recent_entry.id)
         ).scalar_one_or_none()
         assert remaining is not None
+
+
+def _make_auth_log(db_session: Session, *, age_days: int) -> AuthLog:
+    entry = AuthLog(
+        event="Login",
+        fired_at=datetime.now(UTC) - timedelta(days=age_days),
+        email=f"{_unique('purge')}@example.test",
+        payload={},
+    )
+    db_session.add(entry)
+    db_session.commit()
+    return entry
+
+
+class TestPurgeOldAuthLogs:
+    def test_deletes_an_entry_older_than_a_year_and_keeps_a_recent_one(
+        self, db_session: Session
+    ):
+        old_entry = _make_auth_log(db_session, age_days=400)
+        recent_entry = _make_auth_log(db_session, age_days=30)
+        # Captured before the job's own session deletes the old row.
+        old_id, recent_id = old_entry.id, recent_entry.id
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        remaining = set(
+            db_session.execute(
+                select(AuthLog.id).where(AuthLog.id.in_([old_id, recent_id]))
+            ).scalars()
+        )
+        assert remaining == {recent_id}
+
+    def test_keeps_an_entry_just_inside_the_retention_period(self, db_session: Session):
+        inside_entry = _make_auth_log(db_session, age_days=364)
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        remaining = db_session.execute(
+            select(AuthLog.id).where(AuthLog.id == inside_entry.id)
+        ).scalar_one_or_none()
+        assert remaining is not None
+
+    def test_deletes_an_entry_just_outside_the_retention_period(
+        self, db_session: Session
+    ):
+        outside_entry = _make_auth_log(db_session, age_days=366)
+        outside_id = outside_entry.id
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        remaining = db_session.execute(
+            select(AuthLog.id).where(AuthLog.id == outside_id)
+        ).scalar_one_or_none()
+        assert remaining is None
+
+    def test_the_request_log_retention_is_unaffected(self, db_session: Session):
+        thirty_day_old_request_log = _make_request_log(
+            db_session, created_at=datetime.now(UTC) - timedelta(days=30)
+        )
+        old_request_log = _make_request_log(
+            db_session, created_at=datetime.now(UTC) - timedelta(days=41)
+        )
+        old_request_log_id = old_request_log.id
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        kept = db_session.execute(
+            select(RequestLog.id).where(RequestLog.id == thirty_day_old_request_log.id)
+        ).scalar_one_or_none()
+        gone = db_session.execute(
+            select(RequestLog.id).where(RequestLog.id == old_request_log_id)
+        ).scalar_one_or_none()
+        assert kept is not None
+        assert gone is None

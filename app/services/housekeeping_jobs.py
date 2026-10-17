@@ -16,11 +16,14 @@ from sqlalchemy import delete
 
 from app.core.config import get_settings
 from app.db.database import SessionLocal
+from app.db.models.auth_log import AuthLog
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.request_log import RequestLog
 
-# Fixed retention for request_logs rows (deliberately not a config value).
+# Fixed retention for the two log tables that hold personal data
+# (deliberately not config values).
 _REQUEST_LOG_RETENTION_DAYS = 40
+_AUTH_LOG_RETENTION_DAYS = 365
 
 
 def purge_expired_password_reset_tokens() -> None:
@@ -51,16 +54,24 @@ def purge_expired_password_reset_tokens() -> None:
 
 
 def purge_old_request_logs() -> None:
-    """Deletes request_logs rows older than the retention period (40 days,
-    see _REQUEST_LOG_RETENTION_DAYS)."""
-    cutoff = datetime.now(UTC) - timedelta(days=_REQUEST_LOG_RETENTION_DAYS)
+    """Retention sweep of the log tables: request_logs older than 40 days
+    (see _REQUEST_LOG_RETENTION_DAYS) and auth_logs older than a year (see
+    _AUTH_LOG_RETENTION_DAYS; the login throttle only reads the last 15
+    minutes). Registered under the one existing job id."""
+    now = datetime.now(UTC)
+    request_log_cutoff = now - timedelta(days=_REQUEST_LOG_RETENTION_DAYS)
+    auth_log_cutoff = now - timedelta(days=_AUTH_LOG_RETENTION_DAYS)
     db = SessionLocal()
     try:
         # synchronize_session=False -- see purge_expired_password_reset_
         # tokens() above for why (identical naive-column-vs-aware-cutoff
         # TypeError risk from the default "evaluate" strategy otherwise).
         db.execute(
-            delete(RequestLog).where(RequestLog.created_at <= cutoff),
+            delete(RequestLog).where(RequestLog.created_at <= request_log_cutoff),
+            execution_options={"synchronize_session": False},
+        )
+        db.execute(
+            delete(AuthLog).where(AuthLog.fired_at <= auth_log_cutoff),
             execution_options={"synchronize_session": False},
         )
         db.commit()

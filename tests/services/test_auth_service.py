@@ -1,3 +1,4 @@
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -27,6 +28,7 @@ from app.services.auth_service import (
     OauthBindingNotFoundError,
     RegistrationConflictError,
 )
+from tests.google_credential import google_credential, google_credential_key
 
 pytestmark = pytest.mark.usefixtures("db_session")
 
@@ -74,15 +76,96 @@ def test_authenticate_user_success(db_session, make_user):
     assert reason == "ok"
 
 
-def test_authenticate_user_email_match_is_case_sensitive(db_session, make_user):
-    make_user(email="CaseSensitive@example.test", password="pw")
+def test_authenticate_user_email_match_is_case_insensitive(db_session, make_user):
+    make_user(email="casesensitive@example.test", password="pw")
 
     user, reason = auth_service.authenticate_user(
-        db_session, "casesensitive@example.test", "pw"
+        db_session, "CaseSensitive@Example.test", "pw"
     )
 
-    assert user is None
-    assert reason == "unknown_email"
+    assert user is not None
+    assert reason == "ok"
+
+
+def test_authenticate_user_unknown_email_still_verifies_a_password_hash(db_session):
+    with patch.object(auth_service, "verify_password", return_value=False) as verify:
+        user, reason = auth_service.authenticate_user(
+            db_session, "nobody@example.test", "irrelevant"
+        )
+
+    assert (user, reason) == (None, "unknown_email")
+    verify.assert_called_once()
+    assert isinstance(verify.call_args.args[1], str)
+
+
+def test_authenticate_user_without_local_password_still_verifies_a_password_hash(
+    db_session, make_user
+):
+    created = make_user()
+    created.auth_password = None
+    db_session.commit()
+
+    with patch.object(auth_service, "verify_password", return_value=False) as verify:
+        user, reason = auth_service.authenticate_user(
+            db_session, created.email, "irrelevant"
+        )
+
+    assert (user, reason) == (None, "wrong_password")
+    verify.assert_called_once()
+    assert isinstance(verify.call_args.args[1], str)
+
+
+def test_authenticate_user_with_a_password_verifies_against_the_stored_hash(
+    db_session, make_user
+):
+    created = make_user(password="correct-password")
+
+    with patch.object(auth_service, "verify_password", return_value=True) as verify:
+        _user, reason = auth_service.authenticate_user(
+            db_session, created.email, "correct-password"
+        )
+
+    assert reason == "ok"
+    verify.assert_called_once_with("correct-password", created.auth_password)
+
+
+def test_log_auth_event_clips_values_chosen_by_an_unauthenticated_client(db_session):
+    auth_service.log_auth_event(
+        db_session,
+        "Failed",
+        "x" * 5000,
+        ip_address="1" * 100,
+        user_agent="u" * 5000,
+    )
+
+    row = db_session.execute(
+        select(AuthLog).order_by(AuthLog.fired_at.desc()).limit(1)
+    ).scalar_one()
+    assert row.email is not None
+    assert row.user_agent is not None
+    assert row.ip_address is not None
+    assert len(row.email) == 254
+    assert len(row.user_agent) == 512
+    assert len(row.ip_address) == 45
+
+
+def test_log_auth_event_keeps_values_within_the_limits_untouched(db_session):
+    auth_service.log_auth_event(
+        db_session,
+        "Failed",
+        "short@example.test",
+        ip_address="203.0.113.7",
+        user_agent="Mozilla/5.0",
+    )
+
+    row = db_session.execute(
+        select(AuthLog).order_by(AuthLog.fired_at.desc()).limit(1)
+    ).scalar_one()
+    assert (row.email, row.ip_address, row.user_agent) == (
+        "short@example.test",
+        "203.0.113.7",
+        "Mozilla/5.0",
+    )
 
 
 def test_check_login_throttle_allows_under_threshold(db_session, make_user):
@@ -803,7 +886,9 @@ def test_authenticate_google_user_raises_when_not_linked(db_session):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
         pytest.raises(AccountNotLinkedError),
     ):
-        auth_service.authenticate_google_user(db_session, "fake-credential")
+        auth_service.authenticate_google_user(
+            db_session, google_credential("client-id")
+        )
 
 
 def test_authenticate_google_user_logs_in_when_bound(db_session, make_user):
@@ -829,7 +914,7 @@ def test_authenticate_google_user_logs_in_when_bound(db_session, make_user):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
     ):
         logged_in_user = auth_service.authenticate_google_user(
-            db_session, "fake-credential"
+            db_session, google_credential("client-id")
         )
 
     assert logged_in_user.id == user.id
@@ -859,7 +944,9 @@ def test_authenticate_google_user_rejects_locked_account(db_session, make_user):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
         pytest.raises(ValueError, match="gesperrt"),
     ):
-        auth_service.authenticate_google_user(db_session, "fake-credential")
+        auth_service.authenticate_google_user(
+            db_session, google_credential("client-id")
+        )
 
 
 def test_link_google_account_rejects_wrong_local_credentials(db_session, make_user):
@@ -867,7 +954,7 @@ def test_link_google_account_rejects_wrong_local_credentials(db_session, make_us
 
     with pytest.raises(ValueError, match="Anmeldedaten unbekannt"):
         auth_service.link_google_account(
-            db_session, "fake-credential", user.email, "wrong-password"
+            db_session, google_credential("client-id"), user.email, "wrong-password"
         )
 
 
@@ -883,7 +970,7 @@ def test_link_google_account_creates_new_binding(db_session, make_user):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
     ):
         linked_user = auth_service.link_google_account(
-            db_session, "fake-credential", user.email, "correct-password"
+            db_session, google_credential("client-id"), user.email, "correct-password"
         )
 
     assert linked_user.id == user.id
@@ -920,7 +1007,7 @@ def test_link_google_account_rejects_binding_already_used_by_other_account(
         pytest.raises(ValueError, match="bereits verknüpft"),
     ):
         auth_service.link_google_account(
-            db_session, "fake-credential", user.email, "correct-password"
+            db_session, google_credential("client-id"), user.email, "correct-password"
         )
 
 
@@ -995,3 +1082,138 @@ def test_unlink_oauth_binding_rejects_unknown_id(db_session, make_user):
 
     with pytest.raises(OauthBindingNotFoundError):
         auth_service.unlink_oauth_binding(db_session, uuid.uuid4(), user.id)
+
+
+@pytest.mark.parametrize("credential", ["not-a-jwt", "a.b.c", ""])
+def test_google_garbage_credential_is_rejected_without_any_network_call(credential):
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(credential)
+
+    verify.assert_not_called()
+
+
+def test_google_token_for_another_audience_is_rejected_without_any_network_call():
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(google_credential("someone-elses-app"))
+
+    verify.assert_not_called()
+
+
+def _google_token_with(claims: dict[str, object], *, algorithm: str) -> str:
+    key = google_credential_key() if algorithm == "RS256" else "k" * 32
+    return jwt.encode(
+        {"aud": "client-id", "exp": int(time.time()) + 600, **claims},
+        key,
+        algorithm=algorithm,
+    )
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        _google_token_with({"iss": "https://accounts.google.com"}, algorithm="HS256"),
+        _google_token_with({"iss": "https://evil.example"}, algorithm="RS256"),
+        _google_token_with({}, algorithm="RS256"),
+    ],
+    ids=["wrong-algorithm", "wrong-issuer", "missing-issuer"],
+)
+def test_google_token_with_implausible_header_or_issuer_is_rejected_offline(credential):
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(credential)
+
+    verify.assert_not_called()
+
+
+def test_google_expired_token_is_rejected_without_any_network_call():
+    expired = jwt.encode(
+        {
+            "iss": "https://accounts.google.com",
+            "aud": "client-id",
+            "exp": int(time.time()) - 60,
+        },
+        google_credential_key(),
+        algorithm="RS256",
+    )
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(expired)
+
+    verify.assert_not_called()
+
+
+def test_google_plausible_token_proceeds_to_the_signature_check():
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token",
+            return_value={"sub": "abc"},
+        ) as verify,
+    ):
+        claims = auth_service._verify_google_id_token(google_credential("client-id"))
+
+    assert claims == {"sub": "abc"}
+    verify.assert_called_once()
+    assert isinstance(verify.call_args.args[1], auth_service._BoundedGoogleRequest)
+
+
+def test_google_failed_signature_check_is_reported_as_an_invalid_token():
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token",
+            side_effect=ValueError("Wrong number of segments"),
+        ),
+        pytest.raises(ValueError, match=r"Ungültiger oder abgelaufener Google-Token\."),
+    ):
+        auth_service._verify_google_id_token(google_credential("client-id"))
+
+
+@pytest.mark.parametrize(
+    ("requested_timeout", "expected"),
+    [(None, 5), (120, 5), (2, 2)],
+    ids=["default", "above-the-cap", "below-the-cap"],
+)
+def test_google_certificate_requests_use_the_bounded_timeout(
+    requested_timeout, expected
+):
+    captured: dict[str, object] = {}
+
+    def fake_request(_self, _method, _url, **kwargs):
+        captured.update(kwargs)
+        msg = "stop before any network access"
+        raise RuntimeError(msg)
+
+    call_kwargs = {} if requested_timeout is None else {"timeout": requested_timeout}
+    with (
+        patch("requests.Session.request", fake_request),
+        pytest.raises(Exception, match="stop before any network access"),
+    ):
+        auth_service._google_request()(
+            "https://www.googleapis.com/oauth2/v1/certs", **call_kwargs
+        )
+
+    assert captured["timeout"] == expected
+    assert expected <= auth_service._GOOGLE_REQUEST_TIMEOUT_SECONDS

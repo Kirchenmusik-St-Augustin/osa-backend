@@ -5,7 +5,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
 from app.schemas.performance import PositionRefOutput
-from app.schemas.validators import PHONE_PATTERN
+from app.schemas.validators import PHONE_PATTERN, lowercase_email
 
 
 class RoleRefOutput(BaseModel):
@@ -54,6 +54,11 @@ class UserRequest(StrictInputModel):
     choirjobs: list[LenientUuid] = Field(default_factory=list)
     roles: list[LenientUuid] = Field(default_factory=list)
     administrator: bool = False
+
+    @field_validator("email")
+    @classmethod
+    def _lowercase_email(cls, value: str | None) -> str | None:
+        return lowercase_email(value)
 
     @field_validator("phone")
     @classmethod

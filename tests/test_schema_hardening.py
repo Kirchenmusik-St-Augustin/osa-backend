@@ -117,6 +117,40 @@ class TestMissingIndexes:
         assert matching["column_names"] == ["user_id"]
 
 
+class TestAuthLogThrottleIndex:
+    """The login throttle filters auth_logs by lower(email), event and time
+    on every attempt, so that exact lookup has to be indexed."""
+
+    def test_expression_index_exists(self):
+        indexes = {
+            index["name"]: index for index in inspect(engine).get_indexes("auth_logs")
+        }
+        index = indexes["auth_logs_email_event_fired_at_index"]
+        assert index["expressions"] == ["lower(email::text)", "event", "fired_at"]
+
+
+class TestUserEmailLowercaseCheck:
+    """`users.email` is stored in lower case, so the case-insensitive login
+    and the unique constraint agree on what one address is."""
+
+    def test_mixed_case_email_is_rejected(self, db_session: Session, make_user):
+        user = make_user()
+        user.email = "Mixed.Case@example.test"
+        with pytest.raises(IntegrityError, match="users_email_lowercase_check"):
+            db_session.flush()
+        db_session.rollback()
+
+    def test_lower_case_email_is_accepted(self, db_session: Session, make_user):
+        user = make_user()
+        user.email = f"lower-{uuid.uuid4().hex}@example.test"
+        db_session.flush()
+
+    def test_missing_email_is_accepted(self, db_session: Session, make_user):
+        user = make_user()
+        user.email = None
+        db_session.flush()
+
+
 class TestMoneyCheckConstraints:
     """Two representative columns, not all seven -- one NOT NULL column
     (fees.amount) and the one NULLABLE column with the special `IS NULL OR

@@ -663,6 +663,12 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
                 f"--port={port}",
                 f"--username={db_user}",
                 f"--dbname={dbname}",
+                # The dump may carry the ownership and privileges of the
+                # database it came from. A connecting role without superuser
+                # rights cannot hand objects to another role, so every
+                # restored object simply belongs to the role that restores.
+                "--no-owner",
+                "--no-acl",
                 tmp_path,
             ],
             env=_build_pg_env(db_password),

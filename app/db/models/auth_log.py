@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,14 @@ class AuthLog(Base):
     server_default/trigger applies here)."""
 
     __tablename__ = "auth_logs"
+    __table_args__ = (
+        Index(
+            "auth_logs_email_event_fired_at_index",
+            text("lower(email)"),
+            "event",
+            "fired_at",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     event: Mapped[str | None]

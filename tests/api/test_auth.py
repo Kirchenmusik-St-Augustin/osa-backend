@@ -10,6 +10,7 @@ from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.sent_email import SentEmail
 from app.services import auth_service
+from tests.google_credential import google_credential
 
 
 def test_login_success_sets_refresh_cookie_and_returns_access_token(client, make_user):
@@ -64,6 +65,22 @@ def test_login_locked_account_returns_locked_message(client, make_user):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Benutzerkonto gesperrt."
+
+
+def test_login_with_an_oversized_username_is_a_plain_401_and_is_logged_clipped(
+    client, db_session
+):
+    response = client.post(
+        "/auth/login", data={"username": "x" * 6400, "password": "irrelevant"}
+    )
+
+    stored = (
+        db_session.execute(select(AuthLog.email).where(AuthLog.event == "Failed"))
+        .scalars()
+        .all()
+    )
+    assert response.status_code == 401
+    assert stored == ["x" * 254]
 
 
 def test_login_throttles_after_five_failed_attempts(client, make_user):
@@ -660,7 +677,8 @@ def test_google_callback_returns_404_when_not_linked(
         return_value={"sub": "google-not-linked", "name": "Nobody"},
     ):
         response = client.post(
-            "/auth/google/callback", json={"credential": "fake-credential"}
+            "/auth/google/callback",
+            json={"credential": google_credential("test-client-id")},
         )
 
     assert response.status_code == 404
@@ -681,7 +699,7 @@ def test_google_link_then_callback_logs_in(
         link_response = client.post(
             "/auth/google/link",
             json={
-                "credential": "fake-credential",
+                "credential": google_credential("test-client-id"),
                 "email": user.email,
                 "password": "correct-password",
             },
@@ -689,7 +707,8 @@ def test_google_link_then_callback_logs_in(
         assert link_response.status_code == 200
 
         callback_response = client.post(
-            "/auth/google/callback", json={"credential": "fake-credential"}
+            "/auth/google/callback",
+            json={"credential": google_credential("test-client-id")},
         )
 
     assert callback_response.status_code == 200
@@ -705,7 +724,7 @@ def test_google_link_rejects_wrong_password(
     response = client.post(
         "/auth/google/link",
         json={
-            "credential": "fake-credential",
+            "credential": google_credential("test-client-id"),
             "email": user.email,
             "password": "wrong-password",
         },
@@ -717,7 +736,7 @@ def test_google_link_rejects_wrong_password(
 def test_google_link_shares_the_login_lockout(client, make_user):
     user = make_user(password="correct-password", email=_com_email())
     payload = {
-        "credential": "fake-credential",
+        "credential": google_credential("test-client-id"),
         "email": user.email,
         "password": "wrong-password",
     }
@@ -743,7 +762,7 @@ def test_google_link_writes_failed_lockout_and_login_events(
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
     user = make_user(password="correct-password", email=_com_email())
     wrong = {
-        "credential": "fake-credential",
+        "credential": google_credential("test-client-id"),
         "email": user.email,
         "password": "wrong-password",
     }
@@ -781,7 +800,7 @@ def test_google_link_success_is_recorded_as_a_login_event(
         response = client.post(
             "/auth/google/link",
             json={
-                "credential": "fake-credential",
+                "credential": google_credential("test-client-id"),
                 "email": user.email,
                 "password": "correct-password",
             },
@@ -802,7 +821,7 @@ def test_google_link_rejects_oversized_password(client, make_user):
     response = client.post(
         "/auth/google/link",
         json={
-            "credential": "fake-credential",
+            "credential": google_credential("test-client-id"),
             "email": user.email,
             "password": "x" * 129,
         },
@@ -828,7 +847,7 @@ def test_oauth2_disconnect_removes_own_binding(
         client.post(
             "/auth/google/link",
             json={
-                "credential": "fake-credential",
+                "credential": google_credential("test-client-id"),
                 "email": user.email,
                 "password": "correct-password",
             },
@@ -951,9 +970,9 @@ def test_google_callback_and_link_are_rate_limited(
     client, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
-    callback_payload = {"credential": "fake-credential"}
+    callback_payload = {"credential": google_credential("test-client-id")}
     link_payload = {
-        "credential": "fake-credential",
+        "credential": google_credential("test-client-id"),
         "email": "nobody@example.com",
         "password": "irrelevant",
     }

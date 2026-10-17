@@ -81,7 +81,8 @@ def update_profile(
     if errors:
         raise ProfileValidationError(errors)
 
-    # Raw string comparison, not case-normalized.
+    # Both sides are lower case: the request normalises its input and the
+    # database enforces it for the stored value.
     email_changed = data.email != user.email
 
     if data.change_password and data.password:

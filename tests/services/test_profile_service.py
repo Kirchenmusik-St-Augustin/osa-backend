@@ -116,6 +116,14 @@ class TestUpdateProfile:
         assert updated.givenname == "Max"
         assert updated.phone == "+43 664 7654321"
 
+    def test_email_is_stored_in_lower_case(self, db_session: Session, make_user):
+        user = make_user(password=_CURRENT_PASSWORD)
+        mixed = f"{_unique('Mixed')}@Example.COM"
+        updated, _ = profile_service.update_profile(
+            db_session, user, _request(email=mixed)
+        )
+        assert updated.email == mixed.lower()
+
     def test_duplicate_name_combo_against_another_user_is_rejected(
         self, db_session: Session, make_user
     ):
@@ -189,23 +197,22 @@ class TestUpdateProfile:
         assert updated.email == new_email
         assert updated.email_verified_at is None
 
-    def test_email_case_change_counts_as_changed_raw_comparison(
-        self, db_session: Session, make_user
-    ):
-        # Raw strings are compared, not case-normalized.
-        # Local-part casing specifically (not the domain): Pydantic's
-        # EmailStr already lowercases the domain itself, so only a
-        # local-part-only case change actually reaches update_profile()
-        # with a different string.
+    def test_email_case_change_is_not_a_change(self, db_session: Session, make_user):
+        # Addresses are stored in lower case and the request lower-cases its
+        # input, so a case-only edit is the same address: the verification
+        # must survive it.
         base = _unique("case")
         user = make_user(email=f"{base}@example.com", password=_CURRENT_PASSWORD)
-        user.email_verified_at = datetime.now(UTC)
+        verified_at = datetime.now(UTC)
+        user.email_verified_at = verified_at
         db_session.commit()
 
-        _, email_changed = profile_service.update_profile(
+        updated, email_changed = profile_service.update_profile(
             db_session, user, _request(email=f"{base.upper()}@example.com")
         )
-        assert email_changed is True
+        assert email_changed is False
+        assert updated.email == f"{base}@example.com"
+        assert updated.email_verified_at == verified_at
 
     def test_new_password_equal_to_current_is_rejected(
         self, db_session: Session, make_user
