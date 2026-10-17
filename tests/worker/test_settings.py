@@ -61,3 +61,7 @@ def test_job_completion_wait_gives_in_flight_jobs_a_real_shutdown_grace_period()
     # mid-pg_dump/pg_restore (backup_koofr, downsync). Guards against a
     # future refactor silently dropping this back to arq's default.
     assert WorkerSettings.job_completion_wait > 0
+
+
+def test_finished_jobs_keep_no_result_so_one_time_links_do_not_stay_in_valkey():
+    assert WorkerSettings.keep_result == 0

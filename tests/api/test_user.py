@@ -225,6 +225,35 @@ class TestQuirks:
         fields = {error["loc"][1] for error in response.json()["detail"]}
         assert fields == {"surname", "givenname"}
 
+    def test_disponent_cannot_change_the_email_of_an_account_with_roles(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        holder = make_user(
+            email=f"{_unique('holder').lower()}@example.com", roles=[_unique("billing")]
+        )
+
+        response = client.put(
+            f"/users/{holder.id}",
+            json={
+                "givenname": holder.givenname,
+                "surname": holder.surname,
+                "email": f"{_unique('mine').lower()}@example.com",
+                "phone": None,
+                "auth_locked": False,
+                "instruments": [],
+                "voices": [],
+                "choirjobs": [],
+                "roles": [],
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        error = response.json()["detail"][0]
+        assert error["loc"][-1] == "email"
+        assert "nur ein Administrator" in error["msg"]
+
     def test_administrator_target_cannot_be_updated(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
         target_admin = make_user(administrator=True)

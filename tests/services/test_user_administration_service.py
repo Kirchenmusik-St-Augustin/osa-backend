@@ -6,9 +6,10 @@ import pytest
 from sqlalchemy import func, select
 
 from app.core.security import verify_password
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
-from app.services import user_administration_service
+from app.services import auth_service, user_administration_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -87,6 +88,22 @@ class TestUnlockUser:
 
 
 class TestSetRandomPassword:
+    def test_ends_every_session_of_the_account(self, db_session: Session, make_user):
+        admin = make_user(administrator=True)
+        target = make_user()
+        bystander = make_user()
+        auth_service.create_user_session(db_session, target)
+        auth_service.create_user_session(db_session, target)
+        auth_service.create_user_session(db_session, bystander)
+
+        user_administration_service.set_random_password(db_session, target.id, admin.id)
+
+        remaining_owners = {
+            row.user_id for row in db_session.query(PersonalAccessToken).all()
+        }
+        assert target.id not in remaining_owners
+        assert bystander.id in remaining_owners
+
     def test_generates_a_new_working_password(self, db_session: Session, make_user):
         admin = make_user(administrator=True)
         target = make_user(password="original-password")

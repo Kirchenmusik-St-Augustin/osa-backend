@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.datetime_utils import local_now
@@ -9,6 +9,7 @@ from app.core.human_names import normalize_givenname, normalize_surname
 from app.db.models.booking import Booking
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.performance import Performance
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
 from app.schemas.coreelement import CoreelementType
@@ -45,6 +46,11 @@ _ADMINISTRATOR_PROTECTED_DETAIL = (
 )
 _IN_USE_DETAIL = (
     "Das Benutzerkonto kann nicht gelöscht werden, da es noch in Verwendung ist."
+)
+
+
+_EMAIL_OF_ROLE_HOLDER_DETAIL = (
+    "Die E-Mail-Adresse eines Kontos mit Rollen darf nur ein Administrator ändern."
 )
 
 
@@ -360,15 +366,25 @@ def update_user(
         raise AdministratorProtectedError
 
     errors = _validate(db, data, exclude_id=user_id)
+    email_changed = data.email != user.email
+    # The password reset mails a link to the address on file, so whoever can
+    # set the address of an account can take it over. Accounts with roles
+    # carry rights that only administrators may hand out; a disponent must
+    # not be able to reach them through the address.
+    if email_changed and user.roles and not current_user.administrator:
+        errors.append(FieldError("email", _EMAIL_OF_ROLE_HOLDER_DETAIL))
     if errors:
         raise UserValidationError(errors)
 
     # Asymmetric with profile_service.update_profile() by design: an admin
     # changing someone ELSE's email resets verification but does NOT send a
     # new verification mail -- only the user's own Selfadmin-Profil edit
-    # does that.
-    if data.email != user.email:
+    # does that. Existing sessions end with the old address.
+    if email_changed:
         user.email_verified_at = None
+        db.execute(
+            delete(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+        )
 
     user.surname = normalize_surname(data.surname)
     user.givenname = normalize_givenname(data.givenname)

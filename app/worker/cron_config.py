@@ -84,8 +84,9 @@ def build_cron_catalog(settings: Settings) -> list[CronSchedule]:
             job_id="purge_old_request_logs",
             description=(
                 "Löscht täglich um 23:00 Uhr Logbuch-Einträge, die älter "
-                "als 40 Tage sind, und Anmelde-Protokolle, die älter als ein "
-                "Jahr sind. Nur in Production registriert."
+                "als 40 Tage sind, Anmelde-Protokolle, die älter als ein "
+                "Jahr sind, sowie abgelaufene Sitzungen. Nur in Production "
+                "registriert."
             ),
             active=is_production,
             hour=23,

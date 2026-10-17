@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.models.auth_log import AuthLog
 from app.db.models.password_reset_token import PasswordResetToken
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.request_log import RequestLog
 from app.services import housekeeping_jobs
 
@@ -186,3 +187,129 @@ class TestPurgeOldAuthLogs:
         ).scalar_one_or_none()
         assert kept is not None
         assert gone is None
+
+
+def _make_session(
+    db_session: Session,
+    user_id: uuid.UUID,
+    *,
+    created_ago: timedelta,
+    last_used_ago: timedelta | None,
+) -> uuid.UUID:
+    now = datetime.now(UTC)
+    session = PersonalAccessToken(
+        user_id=user_id,
+        name="session",
+        token=_unique("jti"),
+        created_at=now - created_ago,
+        last_used_at=None if last_used_ago is None else now - last_used_ago,
+    )
+    db_session.add(session)
+    db_session.commit()
+    return session.id
+
+
+def _surviving(db_session: Session, ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    return set(
+        db_session.execute(
+            select(PersonalAccessToken.id).where(PersonalAccessToken.id.in_(ids))
+        ).scalars()
+    )
+
+
+class TestPurgeDeadSessions:
+    def test_deletes_a_session_past_the_absolute_lifetime(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        lifetime = timedelta(days=get_settings().refresh_token_lifetime_days)
+        old = _make_session(
+            db_session,
+            user.id,
+            created_ago=lifetime + timedelta(hours=1),
+            last_used_ago=timedelta(minutes=1),
+        )
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert _surviving(db_session, [old]) == set()
+
+    def test_deletes_a_session_idle_for_longer_than_the_timeout(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        idle = timedelta(minutes=get_settings().session_idle_timeout_minutes)
+        stale = _make_session(
+            db_session,
+            user.id,
+            created_ago=timedelta(hours=5),
+            last_used_ago=idle + timedelta(minutes=1),
+        )
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert _surviving(db_session, [stale]) == set()
+
+    def test_keeps_a_live_session_and_one_just_inside_both_limits(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        settings = get_settings()
+        live = _make_session(
+            db_session,
+            user.id,
+            created_ago=timedelta(days=1),
+            last_used_ago=timedelta(minutes=5),
+        )
+        at_the_edge = _make_session(
+            db_session,
+            user.id,
+            created_ago=timedelta(days=settings.refresh_token_lifetime_days)
+            - timedelta(hours=1),
+            last_used_ago=timedelta(minutes=settings.session_idle_timeout_minutes)
+            - timedelta(minutes=1),
+        )
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert _surviving(db_session, [live, at_the_edge]) == {live, at_the_edge}
+
+    def test_a_session_never_used_counts_from_its_creation(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        idle = timedelta(minutes=get_settings().session_idle_timeout_minutes)
+        fresh = _make_session(
+            db_session, user.id, created_ago=timedelta(minutes=5), last_used_ago=None
+        )
+        stale = _make_session(
+            db_session,
+            user.id,
+            created_ago=idle + timedelta(minutes=1),
+            last_used_ago=None,
+        )
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert _surviving(db_session, [fresh, stale]) == {fresh}
+
+    def test_only_dead_sessions_of_a_user_with_a_live_one_are_deleted(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        live = _make_session(
+            db_session,
+            user.id,
+            created_ago=timedelta(hours=1),
+            last_used_ago=timedelta(minutes=2),
+        )
+        dead = _make_session(
+            db_session,
+            user.id,
+            created_ago=timedelta(days=30),
+            last_used_ago=timedelta(days=29),
+        )
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert _surviving(db_session, [live, dead]) == {live}

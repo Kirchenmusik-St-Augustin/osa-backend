@@ -12,12 +12,13 @@ actually invokes these functions.
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func, or_
 
 from app.core.config import get_settings
 from app.db.database import SessionLocal
 from app.db.models.auth_log import AuthLog
 from app.db.models.password_reset_token import PasswordResetToken
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.request_log import RequestLog
 
 # Fixed retention for the two log tables that hold personal data
@@ -54,13 +55,19 @@ def purge_expired_password_reset_tokens() -> None:
 
 
 def purge_old_request_logs() -> None:
-    """Retention sweep of the log tables: request_logs older than 40 days
-    (see _REQUEST_LOG_RETENTION_DAYS) and auth_logs older than a year (see
+    """Retention sweep of what grows with use: request_logs older than 40 days
+    (see _REQUEST_LOG_RETENTION_DAYS), auth_logs older than a year (see
     _AUTH_LOG_RETENTION_DAYS; the login throttle only reads the last 15
-    minutes). Registered under the one existing job id."""
+    minutes) and sessions that can no longer be used, past the absolute
+    lifetime or idle for longer than the idle timeout (a dead session's row
+    would otherwise stay until its owner happens to present the dead token).
+    Registered under the one existing job id."""
+    settings = get_settings()
     now = datetime.now(UTC)
     request_log_cutoff = now - timedelta(days=_REQUEST_LOG_RETENTION_DAYS)
     auth_log_cutoff = now - timedelta(days=_AUTH_LOG_RETENTION_DAYS)
+    session_lifetime_cutoff = now - timedelta(days=settings.refresh_token_lifetime_days)
+    session_idle_cutoff = now - timedelta(minutes=settings.session_idle_timeout_minutes)
     db = SessionLocal()
     try:
         # synchronize_session=False -- see purge_expired_password_reset_
@@ -72,6 +79,18 @@ def purge_old_request_logs() -> None:
         )
         db.execute(
             delete(AuthLog).where(AuthLog.fired_at <= auth_log_cutoff),
+            execution_options={"synchronize_session": False},
+        )
+        db.execute(
+            delete(PersonalAccessToken).where(
+                or_(
+                    PersonalAccessToken.created_at <= session_lifetime_cutoff,
+                    func.coalesce(
+                        PersonalAccessToken.last_used_at, PersonalAccessToken.created_at
+                    )
+                    <= session_idle_cutoff,
+                )
+            ),
             execution_options={"synchronize_session": False},
         )
         db.commit()

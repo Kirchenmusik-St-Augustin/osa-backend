@@ -1,11 +1,12 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import delete, exists, func, select
 
 from app.core.security import generate_random_password, get_password_hash
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.booking_request import BookingRequest
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
 from app.schemas.user_administration import UserAdministrationDetailOutput
 from app.services.errors import GeneralValidationError
@@ -112,13 +113,17 @@ def set_random_password(
     db: Session, user_id: uuid.UUID, current_user_id: uuid.UUID
 ) -> tuple[User, str]:
     """Generates a one-time password, shown ONCE in the response -- never
-    logged, never emailed."""
+    logged, never emailed. All sessions of the account end: an administrator
+    resets a password when the old one may be known to someone else."""
     user = _get_or_404(db, user_id)
     if user_id == current_user_id:
         raise SelfTargetError
 
     plain_password = generate_random_password()
     user.auth_password = get_password_hash(plain_password)
+    db.execute(
+        delete(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+    )
     db.commit()
     return user, plain_password
 

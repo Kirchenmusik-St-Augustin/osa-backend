@@ -14,11 +14,12 @@ from app.db.models.location import Location
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.voice import Voice
 from app.schemas.user import UserRequest
-from app.services import user_position_service, user_service
+from app.services import auth_service, user_position_service, user_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -524,6 +525,119 @@ class TestUpdateUser:
             db_session, user.id, _request(email=email), admin
         )
         assert response.email_verified_at is not None
+
+    def _role_holder(self, make_user):
+        return make_user(
+            email=f"{_unique('holder')}@example.com", roles=[_unique("billing")]
+        )
+
+    def _session_ids(self, db_session: Session, user) -> set[str]:
+        return {
+            row.token
+            for row in db_session.query(PersonalAccessToken)
+            .filter(PersonalAccessToken.user_id == user.id)
+            .all()
+        }
+
+    def test_disponent_cannot_change_the_email_of_an_account_with_roles(
+        self, db_session: Session, make_user
+    ):
+        disponent = make_user(roles=["disponent"])
+        holder = self._role_holder(make_user)
+
+        with pytest.raises(user_service.UserValidationError) as exc_info:
+            user_service.update_user(
+                db_session,
+                holder.id,
+                _request(email=f"{_unique('mine')}@example.com"),
+                disponent,
+            )
+
+        assert exc_info.value.errors == [
+            (
+                "email",
+                (
+                    "Die E-Mail-Adresse eines Kontos mit Rollen darf nur ein "
+                    "Administrator ändern."
+                ),
+            )
+        ]
+
+    def test_disponent_can_change_the_email_of_an_ordinary_member(
+        self, db_session: Session, make_user
+    ):
+        disponent = make_user(roles=["disponent"])
+        member = make_user(email=f"{_unique('member')}@example.com")
+        new_email = f"{_unique('new')}@example.com"
+
+        response = user_service.update_user(
+            db_session, member.id, _request(email=new_email), disponent
+        )
+
+        assert response.email == new_email
+
+    def test_disponent_can_edit_other_fields_of_an_account_with_roles(
+        self, db_session: Session, make_user
+    ):
+        disponent = make_user(roles=["disponent"])
+        holder = self._role_holder(make_user)
+
+        response = user_service.update_user(
+            db_session,
+            holder.id,
+            _request(email=holder.email, phone="+43 660 1234567"),
+            disponent,
+        )
+
+        assert response.phone == "+43 660 1234567"
+        assert response.email == holder.email
+
+    def test_administrator_can_change_the_email_of_an_account_with_roles(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        holder = self._role_holder(make_user)
+        new_email = f"{_unique('new')}@example.com"
+
+        response = user_service.update_user(
+            db_session, holder.id, _request(email=new_email), admin
+        )
+
+        assert response.email == new_email
+
+    def test_changing_the_email_ends_every_session_of_the_account(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        user = make_user(email=f"{_unique('old')}@example.com")
+        bystander = make_user()
+        auth_service.create_user_session(db_session, user)
+        auth_service.create_user_session(db_session, user)
+        _token, bystander_session, _secret = auth_service.create_user_session(
+            db_session, bystander
+        )
+
+        user_service.update_user(
+            db_session,
+            user.id,
+            _request(email=f"{_unique('new')}@example.com"),
+            admin,
+        )
+
+        assert self._session_ids(db_session, user) == set()
+        assert self._session_ids(db_session, bystander) == {bystander_session}
+
+    def test_sessions_stay_when_the_email_is_kept(self, db_session: Session, make_user):
+        admin = make_user(administrator=True)
+        email = f"{_unique('same')}@example.com"
+        user = make_user(email=email)
+        _token, session_id, _secret = auth_service.create_user_session(db_session, user)
+
+        user_service.update_user(
+            db_session, user.id, _request(email=email, phone="+43 660 1234567"), admin
+        )
+
+        assert self._session_ids(db_session, user) == {session_id}
 
     def test_disponent_cannot_assign_roles(self, db_session: Session, make_user):
         disponent = make_user(roles=["disponent"])

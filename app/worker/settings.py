@@ -114,3 +114,7 @@ class WorkerSettings:
     # sync with osa-deploy's osa-backend-worker Quadlet
     # StopTimeout=/TimeoutStopSec=, which are sized off this same value.
     job_completion_wait: ClassVar[int] = 300
+    # arq keeps every finished job's result, including its arguments, for an
+    # hour by default. The arguments of the mail tasks are one-time links and
+    # message texts, and nothing reads a result, so none is kept.
+    keep_result: ClassVar[int] = 0
