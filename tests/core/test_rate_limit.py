@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from app.api.exception_handlers import _handle_rate_limit_exceeded
 from app.core.rate_limit import client_ip
 from main import app
 
@@ -40,6 +42,30 @@ def test_rate_limit_buckets_are_kept_per_client_address():
 
     assert exhausted.status_code == 429
     assert other_visitor.status_code != 429
+
+
+def test_exceeded_limit_answers_with_a_german_detail_and_retry_after():
+    headers = {"Origin": os.environ["CORS_ORIGINS"]}
+    visitor = TestClient(app, client=("198.51.100.3", 50000), headers=headers)
+    for _ in range(5):
+        visitor.post(_VERIFY_EMAIL_PATH, json=_VERIFY_EMAIL_PAYLOAD)
+
+    response = visitor.post(_VERIFY_EMAIL_PATH, json=_VERIFY_EMAIL_PAYLOAD)
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "detail": "Zu viele Anfragen. Bitte später erneut versuchen."
+    }
+    assert 1 <= int(response.headers["retry-after"]) <= 3600
+
+
+def test_exceeded_limit_without_a_recorded_window_has_no_retry_after():
+    request = _request_from(("203.0.113.9", 4711))
+
+    response = asyncio.run(_handle_rate_limit_exceeded(request, Exception()))
+
+    assert response.status_code == 429
+    assert "retry-after" not in response.headers
 
 
 def test_production_command_trusts_the_forwarded_address_of_the_proxy():

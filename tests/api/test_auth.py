@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.core.rate_limit import limiter
 from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.sent_email import SentEmail
 from app.services import auth_service
 from tests.google_credential import google_credential
@@ -436,13 +437,31 @@ def test_register_rejects_invalid_phone(client):
 
 
 def test_verify_email_success_auto_logs_in(client, make_user):
-    user = make_user()
+    user = make_user(verified=False)
     token = auth_service.build_email_verification_token(user)
 
     response = client.post("/auth/verify-email", json={"token": token})
 
     assert response.status_code == 200
     assert response.json()["access_token"]
+
+
+def test_verify_email_link_cannot_be_used_twice_to_log_in(
+    client, make_user, db_session
+):
+    user = make_user(verified=False)
+    token = auth_service.build_email_verification_token(user)
+
+    first = client.post("/auth/verify-email", json={"token": token})
+    sessions_after_first = db_session.query(PersonalAccessToken).count()
+    second = client.post("/auth/verify-email", json={"token": token})
+
+    assert first.status_code == 200
+    assert second.status_code == 400
+    assert second.json() == {"detail": "Der Bestätigungslink wurde bereits verwendet."}
+    assert "access_token" not in second.json()
+    assert "set-cookie" not in second.headers
+    assert db_session.query(PersonalAccessToken).count() == sessions_after_first
 
 
 def test_verify_email_rejects_invalid_token(client):

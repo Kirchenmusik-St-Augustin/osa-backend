@@ -1,3 +1,16 @@
+from app.db.models.password_reset_token import PasswordResetToken
+from app.db.models.sent_email import SentEmail
+
+
+def _auth_headers_for(
+    client, user, password: str = "correct-password"
+) -> dict[str, str]:
+    response = client.post(
+        "/auth/login", data={"username": user.email, "password": password}
+    )
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
 def _auth_headers(client, make_user, *, administrator: bool = False) -> dict[str, str]:
     user = make_user(password="correct-password", administrator=administrator)
     response = client.post(
@@ -105,3 +118,68 @@ class TestTableData:
         )
 
         assert response.status_code == 422
+
+
+class TestCredentialMasking:
+    """The table browser lists every column but never shows the values of
+    credentials and credential equivalents."""
+
+    _MASKED = "__masked__"
+
+    def _rows(self, client, headers, table_name: str) -> dict:
+        response = client.get(
+            f"/administrator/sql-inspector/tables/{table_name}",
+            params={"page_size": 100},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def test_credential_columns_are_masked_but_still_listed(
+        self, client, make_user, db_session
+    ):
+        admin = make_user(
+            password="correct-password", administrator=True, email="mask@example.test"
+        )
+        admin.auth_remember_token = "remember-secret"
+        db_session.add(
+            PasswordResetToken(email="mask@example.test", token="reset-hash-secret")
+        )
+        db_session.add(SentEmail(subject="Mask probe", body="https://x.test/?t=secret"))
+        db_session.commit()
+        headers = _auth_headers_for(client, admin)
+
+        masked_columns = {
+            "users": ["auth_password", "auth_remember_token"],
+            "personal_access_tokens": ["token", "abilities"],
+            "password_reset_tokens": ["token"],
+            "sent_emails": ["body"],
+        }
+        for table_name, columns in masked_columns.items():
+            data = self._rows(client, headers, table_name)
+            listed = {column["name"] for column in data["columns"]}
+            for column in columns:
+                values = {
+                    row[column] for row in data["rows"] if row[column] is not None
+                }
+                assert column in listed
+                assert values == {self._MASKED}, f"{table_name}.{column}"
+
+    def test_other_columns_keep_their_values(self, client, make_user):
+        admin = make_user(
+            password="correct-password", administrator=True, email="plain@example.test"
+        )
+        headers = _auth_headers_for(client, admin)
+
+        data = self._rows(client, headers, "users")
+
+        assert "plain@example.test" in {row["email"] for row in data["rows"]}
+
+    def test_empty_credential_values_stay_empty(self, client, make_user):
+        admin = make_user(password="correct-password", administrator=True)
+        headers = _auth_headers_for(client, admin)
+
+        data = self._rows(client, headers, "users")
+
+        remember_tokens = {row["auth_remember_token"] for row in data["rows"]}
+        assert remember_tokens == {None}

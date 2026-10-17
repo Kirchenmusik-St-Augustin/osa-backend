@@ -1,11 +1,16 @@
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
 from app.api.job_queue import JobQueue, get_job_queue
+from app.api.rate_limiting import (
+    MAIL_ACTION_LIMIT,
+    MAIL_ACTION_SCOPE,
+    rate_limited_per_user,
+)
 from app.db.database import get_db
 from app.schemas.booking import (
     BookingStatusOutput,
@@ -149,9 +154,12 @@ def get_message_recipients(
 
 
 @booking_router.post("/{performance_id}/message-to-cast/send")
+@rate_limited_per_user(MAIL_ACTION_LIMIT, MAIL_ACTION_SCOPE)
 def send_message_to_cast(
+    request: Request,  # noqa: ARG001
     performance_id: uuid.UUID,
     data: SendMessageRequest,
+    *,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthUser, _MAINTAIN],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],

@@ -8,6 +8,23 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+# (table, column) pairs whose values are credentials or credential equivalents:
+# password hash, remember-token, session identifier, refresh-token hash,
+# reset-token hash and stored mail bodies that contain one-time links. The
+# table browser shows their structure but never their values.
+_MASKED_COLUMNS = frozenset(
+    {
+        ("users", "auth_password"),
+        ("users", "auth_remember_token"),
+        ("personal_access_tokens", "token"),
+        ("personal_access_tokens", "abilities"),
+        ("password_reset_tokens", "token"),
+        ("sent_emails", "body"),
+    }
+)
+_MASKED_VALUE = "__masked__"
+
+
 class TableNotFoundError(Exception):
     """Raised when `table_name` is not a table SQLAlchemy currently sees in
     the live schema (see get_valid_tables())."""
@@ -19,6 +36,14 @@ def get_valid_tables(db: Session) -> list[str]:
     a hardcoded or cached set."""
     inspector = inspect(db.get_bind())
     return sorted(inspector.get_table_names())
+
+
+def _display_value(table_name: str, column_name: str, value: object) -> str | None:
+    if value is None:
+        return None
+    if (table_name, column_name) in _MASKED_COLUMNS:
+        return _MASKED_VALUE
+    return str(value)
 
 
 def get_table_data(
@@ -59,7 +84,7 @@ def get_table_data(
         {"limit": page_size, "offset": (page - 1) * page_size},
     ).mappings()
     rows = [
-        {key: str(value) if value is not None else None for key, value in row.items()}
+        {key: _display_value(table_name, key, value) for key, value in row.items()}
         for row in rows_result
     ]
 

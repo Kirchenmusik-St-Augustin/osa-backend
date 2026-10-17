@@ -646,7 +646,7 @@ def test_register_user_rejects_reusing_soft_deleted_users_identity(
 
 
 def test_build_and_verify_email_verification_token_roundtrip(db_session, make_user):
-    user = make_user()
+    user = make_user(verified=False)
 
     token = auth_service.build_email_verification_token(user)
     verified_user = auth_service.verify_email(db_session, token)
@@ -656,17 +656,25 @@ def test_build_and_verify_email_verification_token_roundtrip(db_session, make_us
     assert user.email_verified_at is not None
 
 
-def test_verify_email_is_idempotent_on_already_verified_user(db_session, make_user):
-    user = make_user()
+def test_verify_email_link_is_single_use(db_session, make_user):
+    user = make_user(verified=False)
     token = auth_service.build_email_verification_token(user)
     auth_service.verify_email(db_session, token)
     db_session.refresh(user)
     first_verified_at = user.email_verified_at
 
-    auth_service.verify_email(db_session, token)
+    with pytest.raises(auth_service.VerificationLinkAlreadyUsedError):
+        auth_service.verify_email(db_session, token)
 
     db_session.refresh(user)
     assert user.email_verified_at == first_verified_at
+
+
+def test_used_link_error_is_a_value_error_with_a_user_message():
+    error = auth_service.VerificationLinkAlreadyUsedError()
+
+    assert isinstance(error, ValueError)
+    assert str(error) == "Der Bestätigungslink wurde bereits verwendet."
 
 
 def test_verify_email_rejects_unknown_user_id(db_session):

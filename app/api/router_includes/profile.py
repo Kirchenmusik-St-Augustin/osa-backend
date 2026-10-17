@@ -1,10 +1,15 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, get_verified_user
 from app.api.job_queue import JobQueue, get_job_queue
+from app.api.rate_limiting import (
+    MAIL_ACTION_LIMIT,
+    MAIL_ACTION_SCOPE,
+    rate_limited_per_user,
+)
 from app.core.redacted import Redacted
 from app.db.database import get_db
 from app.schemas.profile import ProfileUpdateRequest
@@ -26,7 +31,9 @@ def get_profile(
 
 
 @profile_router.put("")
+@rate_limited_per_user(MAIL_ACTION_LIMIT, MAIL_ACTION_SCOPE)
 def update_profile(
+    request: Request,  # noqa: ARG001
     data: ProfileUpdateRequest,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthUser, Depends(get_verified_user)],

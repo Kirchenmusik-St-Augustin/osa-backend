@@ -394,6 +394,14 @@ def build_verification_email_url(user: User) -> str:
     return f"{base_url}?{urlencode({'token': token})}"
 
 
+class VerificationLinkAlreadyUsedError(ValueError):
+    """The verification link was already redeemed (the e-mail address is
+    verified); the router answers 400 without creating a session."""
+
+    def __init__(self) -> None:
+        super().__init__("Der Bestätigungslink wurde bereits verwendet.")
+
+
 def verify_email(db: Session, token: str) -> User:
     settings = get_settings()
     invalid_msg = "Der Bestätigungslink ist ungültig oder abgelaufen."
@@ -411,9 +419,13 @@ def verify_email(db: Session, token: str) -> User:
         # Email changed since the link was issued.
         raise ValueError(invalid_msg)
 
-    if user.email_verified_at is None:
-        user.email_verified_at = datetime.now(UTC)
-        db.commit()
+    if user.email_verified_at is not None:
+        # The link is a one-time proof of mailbox ownership. Accepting it
+        # again would let anyone who sees the mail (forwarding, shared
+        # mailbox, mail logs) obtain a fresh session until it expires.
+        raise VerificationLinkAlreadyUsedError
+    user.email_verified_at = datetime.now(UTC)
+    db.commit()
     return user
 
 

@@ -7,8 +7,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
 from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -150,7 +148,6 @@ app.add_exception_handler(Exception, _unhandled_exception_handler)
 register_exception_handlers(app)
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Same-origin in the default deployment -- never triggers today. Kept
 # real and typed so a future domain split is a pure config change
