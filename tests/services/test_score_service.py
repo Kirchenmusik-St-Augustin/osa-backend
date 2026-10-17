@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -142,6 +143,204 @@ class TestSearchScores:
         assert surnames.index(
             next(s for s in surnames if surname_a.upper() in s)
         ) < surnames.index(next(s for s in surnames if surname_z.upper() in s))
+
+
+class TestSearchLabelDisambiguation:
+    """Several versions of one work are normal in the archive, so hits that
+    would read identically get just enough of verz, box, year, genre (or the
+    entry date) to be told apart; every other hit keeps its plain label."""
+
+    def _cards(self, db_session: Session, marker: str, *variants: dict[str, object]):
+        return [
+            score_service.create_score(
+                db_session,
+                _payload(
+                    werk=marker, surname="Mozart", givenname="Wolfgang", **variant
+                ),
+            )
+            for variant in variants
+        ]
+
+    def _labels(self, db_session: Session, marker: str) -> list[str]:
+        return [
+            result.label
+            for result in score_service.search_scores(db_session, marker.lower())
+        ]
+
+    def test_catalogue_number_tells_versions_apart(self, db_session: Session):
+        marker = _unique("Sonate")
+        self._cards(db_session, marker, {"verz": "KV 263"}, {"verz": "KV 336"})
+
+        labels = self._labels(db_session, marker)
+
+        assert labels == [
+            f"MOZART, Wolfgang: {marker} - KV 263",
+            f"MOZART, Wolfgang: {marker} - KV 336",
+        ]
+
+    def test_box_is_used_when_the_catalogue_number_does_not_differ(
+        self, db_session: Session
+    ):
+        marker = _unique("Pueri")
+        self._cards(db_session, marker, {"boxnr": "A2.07"}, {"boxnr": "10.02"})
+
+        labels = self._labels(db_session, marker)
+
+        assert sorted(labels) == [
+            f"MOZART, Wolfgang: {marker} - Box 10.02",
+            f"MOZART, Wolfgang: {marker} - Box A2.07",
+        ]
+
+    def test_year_is_used_when_catalogue_number_and_box_are_equal(
+        self, db_session: Session
+    ):
+        marker = _unique("Christus")
+        self._cards(db_session, marker, {"jahr": 1884}, {"jahr": 1873})
+
+        labels = self._labels(db_session, marker)
+
+        assert sorted(labels) == [
+            f"MOZART, Wolfgang: {marker} - 1873",
+            f"MOZART, Wolfgang: {marker} - 1884",
+        ]
+
+    def test_genre_is_the_last_field_tried(self, db_session: Session):
+        marker = _unique("Martin")
+        self._cards(
+            db_session, marker, {"sparte": "Lied"}, {"sparte": "Advent/Weihnacht"}
+        )
+
+        labels = self._labels(db_session, marker)
+
+        assert sorted(labels) == [
+            f"MOZART, Wolfgang: {marker} - Advent/Weihnacht",
+            f"MOZART, Wolfgang: {marker} - Lied",
+        ]
+
+    def test_a_field_that_does_not_differ_is_left_out(self, db_session: Session):
+        marker = _unique("Gleich")
+        self._cards(
+            db_session,
+            marker,
+            {"verz": "KV 1", "boxnr": "1"},
+            {"verz": "KV 1", "boxnr": "2"},
+        )
+
+        labels = self._labels(db_session, marker)
+
+        assert labels == [
+            f"MOZART, Wolfgang: {marker} - Box 1",
+            f"MOZART, Wolfgang: {marker} - Box 2",
+        ]
+
+    def test_fields_are_added_until_every_card_is_unique(self, db_session: Session):
+        marker = _unique("Mehrfach")
+        self._cards(
+            db_session,
+            marker,
+            {"verz": "KV 1", "boxnr": "1"},
+            {"verz": "KV 1", "boxnr": "2"},
+            {"verz": "KV 2", "boxnr": "1"},
+        )
+
+        labels = self._labels(db_session, marker)
+
+        assert sorted(labels) == [
+            f"MOZART, Wolfgang: {marker} - KV 1, Box 1",
+            f"MOZART, Wolfgang: {marker} - KV 1, Box 2",
+            f"MOZART, Wolfgang: {marker} - KV 2, Box 1",
+        ]
+
+    def test_a_card_without_the_field_keeps_the_plain_label(self, db_session: Session):
+        marker = _unique("Teils")
+        self._cards(db_session, marker, {"verz": "KV 329"}, {"verz": ""})
+
+        labels = self._labels(db_session, marker)
+
+        assert sorted(labels) == [
+            f"MOZART, Wolfgang: {marker}",
+            f"MOZART, Wolfgang: {marker} - KV 329",
+        ]
+
+    def test_entry_date_is_the_last_resort(self, db_session: Session):
+        marker = _unique("Datum")
+        first, second = self._cards(db_session, marker, {}, {})
+        for created, when in (
+            (first, datetime(2020, 1, 2, tzinfo=UTC)),
+            (second, datetime(2021, 8, 4, tzinfo=UTC)),
+        ):
+            db_session.query(Score).filter(Score.id == created.id).update(
+                {Score.created_at: when}
+            )
+        db_session.commit()
+
+        labels = self._labels(db_session, marker)
+
+        assert sorted(labels) == [
+            f"MOZART, Wolfgang: {marker} - erfasst am 02.01.2020",
+            f"MOZART, Wolfgang: {marker} - erfasst am 04.08.2021",
+        ]
+
+    def test_cards_that_cannot_be_told_apart_keep_the_plain_label(
+        self, db_session: Session
+    ):
+        marker = _unique("Identisch")
+        first, second = self._cards(db_session, marker, {}, {})
+        db_session.query(Score).filter(Score.id.in_([first.id, second.id])).update(
+            {Score.created_at: datetime(2020, 1, 2, tzinfo=UTC)}
+        )
+        db_session.commit()
+
+        labels = self._labels(db_session, marker)
+
+        assert labels == [f"MOZART, Wolfgang: {marker}"] * 2
+
+    def test_hits_without_a_clash_are_untouched(self, db_session: Session):
+        marker = _unique("Einzeln")
+        other_marker = f"{marker} anderes"
+        self._cards(db_session, marker, {"verz": "KV 1"}, {"verz": "KV 2"})
+        score_service.create_score(
+            db_session,
+            _payload(
+                werk=other_marker, surname="Mozart", givenname="Wolfgang", verz="KV 9"
+            ),
+        )
+
+        labels = self._labels(db_session, marker)
+
+        assert f"MOZART, Wolfgang: {other_marker}" in labels
+        assert f"MOZART, Wolfgang: {marker} - KV 1" in labels
+
+    def test_hits_of_one_composer_are_ordered_by_work_then_part(
+        self, db_session: Session
+    ):
+        marker = _unique("Ordnung")
+        score_service.create_score(
+            db_session, _payload(werk=f"{marker} Z", surname="Mozart")
+        )
+        score_service.create_score(
+            db_session, _payload(werk=f"{marker} A", surname="Mozart")
+        )
+
+        labels = self._labels(db_session, marker)
+
+        assert [label.split(": ")[1] for label in labels] == [
+            f"{marker} A",
+            f"{marker} Z",
+        ]
+
+    def test_search_costs_one_statement_however_many_hits_clash(
+        self, db_session: Session, count_queries
+    ):
+        marker = _unique("Zaehler")
+        self._cards(
+            db_session, marker, *({"verz": f"KV {number}"} for number in range(6))
+        )
+
+        with count_queries() as counter:
+            score_service.search_scores(db_session, marker.lower())
+
+        assert counter.count == 1
 
 
 class TestCreateScore:

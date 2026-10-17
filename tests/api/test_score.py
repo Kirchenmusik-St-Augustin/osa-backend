@@ -108,6 +108,28 @@ class TestCrudRoundtrip:
         assert response.status_code == 404
 
 
+class TestSearchLabels:
+    def test_versions_of_one_work_read_differently_in_the_hit_list(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        werk = _unique("Kirchensonate")
+        for verz in ("KV 329", "KV 328"):
+            client.post(
+                "/scores",
+                json=_payload(werk=werk, surname="Mozart", verz=verz),
+                headers=headers,
+            )
+
+        response = client.get("/scores/search", params={"q": werk}, headers=headers)
+
+        labels = sorted(item["label"] for item in response.json())
+        assert labels == [
+            f"MOZART: {werk} - KV 328",
+            f"MOZART: {werk} - KV 329",
+        ]
+
+
 class TestValidation:
     def test_the_same_work_can_be_created_twice(self, client, make_user):
         headers = _auth_headers(client, make_user)

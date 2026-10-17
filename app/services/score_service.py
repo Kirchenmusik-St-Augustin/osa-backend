@@ -15,7 +15,7 @@ from app.services.score_fields import SCORE_FIELDS
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from sqlalchemy.orm import Session
 
@@ -137,13 +137,15 @@ def search_scores(db: Session, query: str) -> list[ScoreSearchResult]:
     stmt = (
         select(Score)
         .where(*[combined.like(f"%{word}%") for word in words])
-        .order_by(Score.surname)
+        # werk, teil and id make the order of hits with the same composer
+        # stable, so versions of one work keep their place between searches.
+        .order_by(Score.surname, Score.werk, Score.teil, Score.id)
         .limit(_SEARCH_RESULT_LIMIT)
     )
     scores = db.execute(stmt).scalars().all()
     return [
-        ScoreSearchResult(id=score.id, label=_label_for_score(score))
-        for score in scores
+        ScoreSearchResult(id=score.id, label=label)
+        for score, label in zip(scores, _disambiguated_labels(scores), strict=True)
     ]
 
 
@@ -153,6 +155,82 @@ def _label_for_score(score: Score) -> str:
     if score.teil:
         label += f" / {score.teil}"
     return label
+
+
+def _catalogue_number(score: Score) -> str:
+    return score.verz or ""
+
+
+def _box(score: Score) -> str:
+    return f"Box {score.boxnr}" if score.boxnr else ""
+
+
+def _year(score: Score) -> str:
+    return str(score.jahr) if score.jahr is not None else ""
+
+
+def _genre(score: Score) -> str:
+    return score.sparte or ""
+
+
+def _entered_on(score: Score) -> str:
+    if score.created_at is None:
+        return ""
+    return f"erfasst am {score.created_at:%d.%m.%Y}"
+
+
+# What tells apart cards of the same work, in the order it is tried: the
+# archive holds several versions of one work (catalogue number, box, year,
+# genre differ), which would otherwise read identically in the hit list.
+_DISAMBIGUATION_FIELDS: tuple[Callable[[Score], str], ...] = (
+    _catalogue_number,
+    _box,
+    _year,
+    _genre,
+)
+
+
+def _distinguishing_suffixes(group: Sequence[Score]) -> list[str]:
+    """For cards whose label is identical: a field only counts when it
+    differs within the group, and fields are added until every card is
+    unique. The entry date is the last resort, and only when it differs;
+    cards that nothing can tell apart keep the plain label."""
+    chosen: list[Callable[[Score], str]] = []
+
+    def _values(score: Score) -> tuple[str, ...]:
+        return tuple(field(score) for field in chosen)
+
+    def _unique() -> bool:
+        return len({_values(score) for score in group}) == len(group)
+
+    for field in _DISAMBIGUATION_FIELDS:
+        if len({field(score) for score in group}) < 2:
+            continue
+        chosen.append(field)
+        if _unique():
+            break
+    if not _unique() and len({_entered_on(score) for score in group}) > 1:
+        chosen.append(_entered_on)
+    return [", ".join(part for part in _values(score) if part) for score in group]
+
+
+def _disambiguated_labels(scores: Sequence[Score]) -> list[str]:
+    """The search labels, with a suffix only for hits that would otherwise
+    read exactly like another hit of the same result list."""
+    labels = [_label_for_score(score) for score in scores]
+    positions_by_label: dict[str, list[int]] = {}
+    for position, label in enumerate(labels):
+        positions_by_label.setdefault(label, []).append(position)
+    for label, positions in positions_by_label.items():
+        if len(positions) < 2:
+            continue
+        suffixes = _distinguishing_suffixes(
+            [scores[position] for position in positions]
+        )
+        for position, suffix in zip(positions, suffixes, strict=True):
+            if suffix:
+                labels[position] = f"{label} - {suffix}"
+    return labels
 
 
 def get_score(db: Session, score_id: uuid.UUID) -> ScoreResponse:
