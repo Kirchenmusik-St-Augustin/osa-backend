@@ -57,6 +57,9 @@ class Performance(Base):
             name="performances_extracost_amount_check",
         ),
         Index("performances_schedule_index", "schedule"),
+        Index("performances_location_id_index", "location_id"),
+        Index("performances_ordinariumwork_id_index", "ordinariumwork_id"),
+        Index("performances_artist_id_index", "artist_id"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

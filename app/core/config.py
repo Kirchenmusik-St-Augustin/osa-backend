@@ -32,6 +32,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _VALID_ENVIRONMENTS = frozenset({"development", "test", "qa", "production"})
 
+# The template value of SECRET_KEY in the example env files used to be a
+# 49-character placeholder, which passes the length check: a copied template
+# must never boot with a publicly known signing key.
+_TEMPLATE_PLACEHOLDER_MARKER = "changeme"
+
 
 def _fail(message: str) -> NoReturn:
     sys.stderr.write(f"FATAL: {message} Aborting.\n")
@@ -187,6 +192,8 @@ class Settings(BaseSettings):
             _fail("SECRET_KEY is not set.")
         if len(self.secret_key) < 32:
             _fail("SECRET_KEY must be at least 32 characters long.")
+        if _TEMPLATE_PLACEHOLDER_MARKER in self.secret_key.lower():
+            _fail("SECRET_KEY still contains the template placeholder.")
         return self
 
     @property

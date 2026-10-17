@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     FetchedValue,
     ForeignKey,
+    Index,
     UniqueConstraint,
     func,
 )
@@ -47,6 +48,9 @@ class PerformancePosition(PositionColumns, Base):
             "num_nonnulls(instrument_id, voice_id, choirjob_id) = 1",
             name="performance_positions_position_exactly_one_check",
         ),
+        Index("performance_positions_instrument_id_index", "instrument_id"),
+        Index("performance_positions_voice_id_index", "voice_id"),
+        Index("performance_positions_choirjob_id_index", "choirjob_id"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

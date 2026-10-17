@@ -1,7 +1,14 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    FetchedValue,
+    ForeignKey,
+    Index,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -25,7 +32,10 @@ class UserRole(Base):
     grant instead, which is security-relevant and must fail loudly)."""
 
     __tablename__ = "user_roles"
-    __table_args__ = (UniqueConstraint("user_id", "role_id"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_id"),
+        Index("user_roles_role_id_index", "role_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(

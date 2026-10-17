@@ -79,6 +79,10 @@ class BookingLog(PositionColumns, Base):
             "user_id",
             "created_at",
         ),
+        Index("booking_logs_user_id_index", "user_id"),
+        Index("booking_logs_instrument_id_index", "instrument_id"),
+        Index("booking_logs_voice_id_index", "voice_id"),
+        Index("booking_logs_choirjob_id_index", "choirjob_id"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

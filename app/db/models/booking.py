@@ -81,6 +81,9 @@ class Booking(PositionColumns, Base):
         ),
         CheckConstraint("fee >= 0", name="bookings_fee_check"),
         Index("bookings_user_id_index", "user_id"),
+        Index("bookings_instrument_id_index", "instrument_id"),
+        Index("bookings_voice_id_index", "voice_id"),
+        Index("bookings_choirjob_id_index", "choirjob_id"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

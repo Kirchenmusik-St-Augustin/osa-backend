@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -11,6 +12,7 @@ from starlette.routing import Route
 
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.db.models.request_log import RequestLog
+from app.services import request_log_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -95,6 +97,34 @@ def _make_skip_header_app() -> Starlette:
     app = Starlette(routes=[Route("/skip-me", _skip_endpoint)])
     app.add_middleware(RequestLoggingMiddleware)
     return app
+
+
+def test_a_failing_log_write_does_not_fail_the_request(
+    client, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    def _database_unavailable(*_args: object, **_kwargs: object) -> None:
+        statement = "INSERT INTO request_logs DEFAULT VALUES"
+        raise OperationalError(statement, {}, Exception("database unavailable"))
+
+    monkeypatch.setattr(request_log_service, "record_request", _database_unavailable)
+
+    response = client.get("/auth/me", headers={"Authorization": "Bearer not-a-jwt"})
+
+    assert response.status_code == 401
+    assert "Could not write the request log entry." in caplog.text
+
+
+def test_only_database_errors_are_swallowed_by_the_log_write(
+    client, monkeypatch: pytest.MonkeyPatch
+):
+    def _programming_error(*_args: object, **_kwargs: object) -> None:
+        msg = "not a database problem"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(request_log_service, "record_request", _programming_error)
+
+    with pytest.raises(RuntimeError, match="not a database problem"):
+        client.get("/auth/me", headers={"Authorization": "Bearer not-a-jwt"})
 
 
 def test_strips_the_skip_header_before_it_reaches_the_client():

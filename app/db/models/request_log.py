@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, ForeignKey, func
+from sqlalchemy import DateTime, FetchedValue, ForeignKey, Index, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +25,10 @@ class RequestLog(Base):
     Python."""
 
     __tablename__ = "request_logs"
+    __table_args__ = (
+        Index("request_logs_client_user_agent_id_index", "client_user_agent_id"),
+        Index("request_logs_user_id_index", "user_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     client_ip: Mapped[str]

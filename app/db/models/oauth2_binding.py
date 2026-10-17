@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -18,7 +18,10 @@ class Oauth2Binding(Base):
     server_default/trigger applies here)."""
 
     __tablename__ = "oauth2_bindings"
-    __table_args__ = (UniqueConstraint("provider", "remote_id"),)
+    __table_args__ = (
+        UniqueConstraint("provider", "remote_id"),
+        Index("oauth2_bindings_local_id_index", "local_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     provider: Mapped[str]

@@ -25,6 +25,11 @@ system for the church musicians of Kirchenmusik St. Augustin.
   `~/.config/containers/systemd/osa/osa-backend/` on the dev host)
 - Python dev dependencies are installed inside the container
   (`requirements-dev.txt`)
+- Both lock files (`requirements.lock`, `requirements-dev.lock`) carry the
+  hashes of every release file, and the image build and the pipeline install
+  them with hash checking. Regenerate them with the command in their header
+  (it includes `--generate-hashes`); a lock without hashes fails the tests
+  and the build.
 
 ### After cloning
 
@@ -78,6 +83,13 @@ generate a new migration after changing a model:
 ```bash
 podman exec osa-backend alembic revision --autogenerate -m "describe the change"
 ```
+
+`alembic` takes `DATABASE_URL` from the application settings, so it needs the
+same boot-critical variables as the app (`APP_ENVIRONMENT`, `CORS_ORIGINS`,
+`SECRET_KEY`); the container and the pipeline provide them. `alembic check`
+(also run by the pipeline after `alembic upgrade head`) fails when a model
+and the migrated schema have drifted apart, for example an index that a
+migration created but no model declares.
 
 Always review the generated migration before committing it — autogenerate
 can miss things Alembic doesn't detect on its own (renamed columns,
@@ -244,6 +256,11 @@ Besetzungssystem für die Kirchenmusiker von Kirchenmusik St. Augustin.
   `~/.config/containers/systemd/osa/osa-backend/` auf der Dev-Umgebung)
 - Die Python-Dev-Abhängigkeiten sind im Container bereits installiert
   (`requirements-dev.txt`)
+- Beide Lock-Dateien (`requirements.lock`, `requirements-dev.lock`) enthalten
+  die Hashes jeder Release-Datei, Image-Build und Pipeline installieren sie mit
+  Hash-Prüfung. Neu erzeugen mit dem Befehl in ihrem Kopf (er enthält
+  `--generate-hashes`); eine Lock-Datei ohne Hashes lässt Tests und Build
+  scheitern.
 
 ### Nach dem Klonen
 
@@ -298,6 +315,13 @@ nötig. Neue Migration nach einer Modell-Änderung erzeugen:
 ```bash
 podman exec osa-backend alembic revision --autogenerate -m "Änderung beschreiben"
 ```
+
+`alembic` bezieht `DATABASE_URL` aus den Anwendungs-Settings und braucht daher
+dieselben boot-kritischen Variablen wie die App (`APP_ENVIRONMENT`,
+`CORS_ORIGINS`, `SECRET_KEY`); Container und Pipeline stellen sie bereit.
+`alembic check` (läuft in der Pipeline nach `alembic upgrade head`) schlägt
+fehl, wenn Modell und migriertes Schema auseinanderlaufen, zum Beispiel bei
+einem Index, den eine Migration angelegt hat, den aber kein Modell deklariert.
 
 Die generierte Migration immer vor dem Committen durchlesen — Autogenerate
 erkennt nicht alles zuverlässig selbst (umbenannte Spalten, manche

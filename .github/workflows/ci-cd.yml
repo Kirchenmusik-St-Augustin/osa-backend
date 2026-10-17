@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
-      - run: uv pip install --system -r requirements-dev.lock
+      - run: uv pip install --system --require-hashes -r requirements-dev.lock
       - run: ruff check --output-format github .
       - run: ruff format --check .
       - run: python scripts/check_router_soc.py
@@ -65,8 +65,16 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
-      - run: uv pip install --system -r requirements-dev.lock
+      - run: uv pip install --system --require-hashes -r requirements-dev.lock
       - run: pyright
+      - name: Verify that the models match the migrated schema
+        run: |
+          alembic upgrade head
+          alembic check
+        env:
+          APP_ENVIRONMENT: test
+          CORS_ORIGINS: http://localhost
+          SECRET_KEY: ci-alembic-check-dummy-secret-key-not-for-real-use
       - run: pytest --tb=short -q
 
   security:

@@ -1,7 +1,14 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    FetchedValue,
+    ForeignKey,
+    Index,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -26,7 +33,11 @@ class PerformanceProprium(Base):
     referenced here)."""
 
     __tablename__ = "performance_proprium"
-    __table_args__ = (UniqueConstraint("performance_id", "propriumelement_id"),)
+    __table_args__ = (
+        UniqueConstraint("performance_id", "propriumelement_id"),
+        Index("performance_proprium_propriumelement_id_index", "propriumelement_id"),
+        Index("performance_proprium_propriumwork_id_index", "propriumwork_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(

@@ -1,7 +1,14 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    FetchedValue,
+    ForeignKey,
+    Index,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -29,7 +36,10 @@ class BookingRequest(Base):
     meaning without the user who made it)."""
 
     __tablename__ = "booking_requests"
-    __table_args__ = (UniqueConstraint("performance_id", "user_id"),)
+    __table_args__ = (
+        UniqueConstraint("performance_id", "user_id"),
+        Index("booking_requests_user_id_index", "user_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(

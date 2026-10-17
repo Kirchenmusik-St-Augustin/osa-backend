@@ -794,6 +794,44 @@ def test_request_password_reset_replaces_previous_token(db_session, make_user):
     assert len(rows) == 1
 
 
+def test_request_password_reset_updates_the_existing_row_in_place(
+    db_session, make_user
+):
+    user = make_user()
+    first_token = auth_service.request_password_reset(db_session, user.email)
+    first_row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
+    ).scalar_one()
+    first_id = first_row.id
+
+    second_token = auth_service.request_password_reset(db_session, user.email)
+
+    db_session.refresh(first_row)
+    assert first_row.id == first_id
+    assert first_row.token == hash_reset_token(second_token)
+    with pytest.raises(ValueError, match="ungültig"):
+        auth_service.execute_password_reset(
+            db_session, user.email, first_token, "Passw0rd1"
+        )
+
+
+def test_request_password_reset_restarts_the_token_lifetime(db_session, make_user):
+    user = make_user()
+    auth_service.request_password_reset(db_session, user.email)
+    row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
+    ).scalar_one()
+    row.created_at = datetime.now(UTC) - timedelta(hours=2)
+    db_session.commit()
+
+    new_token = auth_service.request_password_reset(db_session, user.email)
+
+    db_session.refresh(row)
+    assert row.created_at is not None
+    assert datetime.now(UTC) - row.created_at < timedelta(minutes=1)
+    auth_service.execute_password_reset(db_session, user.email, new_token, "Passw0rd1")
+
+
 def test_execute_password_reset_success_sets_password_and_invalidates_sessions(
     db_session, make_user
 ):

@@ -8,6 +8,7 @@ import jwt
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings, require_setting
@@ -432,16 +433,17 @@ def request_password_reset(db: Session, email: str) -> str | None:
     if user is None:
         return None
 
-    db.execute(
-        delete(PasswordResetToken).where(PasswordResetToken.email == normalized_email)
-    )
-
     token = generate_reset_token()
-    db.add(
-        PasswordResetToken(
-            email=normalized_email,
-            token=hash_reset_token(token),
-            created_at=datetime.now(UTC),
+    hashed_token = hash_reset_token(token)
+    # One statement instead of delete-then-insert: two concurrent requests for
+    # the same address cannot both insert, and the loser must not fail with a
+    # constraint error (a 500 here would reveal that the address is registered).
+    db.execute(
+        pg_insert(PasswordResetToken)
+        .values(email=normalized_email, token=hashed_token)
+        .on_conflict_do_update(
+            index_elements=[PasswordResetToken.email],
+            set_={"token": hashed_token, "created_at": func.now()},
         )
     )
     db.commit()

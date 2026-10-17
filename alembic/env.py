@@ -1,10 +1,10 @@
-import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
 import app.db.base  # registers every model with Base.metadata before autogenerate runs
 from alembic import context
+from app.core.config import get_settings, require_setting
 from app.db.database import Base
 
 config = context.config
@@ -18,12 +18,13 @@ if config.config_file_name is not None:
     # caplog-based tests going silently empty after this call ran once).
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# DATABASE_URL is read at runtime, not from alembic.ini -- keeps a single
-# source of truth with app.core.config.Settings across every environment
-# (dev/test/CI/prod).
+# DATABASE_URL comes from app.core.config.Settings (validated, single source
+# of truth across dev/test/CI/prod), not from alembic.ini. "%" is doubled
+# because ConfigParser interpolates it, which would otherwise break
+# URL-encoded credentials.
 config.set_main_option(
     "sqlalchemy.url",
-    os.environ["DATABASE_URL"],
+    require_setting(get_settings().database_url, "DATABASE_URL").replace("%", "%%"),
 )
 
 target_metadata = Base.metadata

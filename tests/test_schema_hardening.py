@@ -31,6 +31,7 @@ from app.db.models.job_run import JobRun
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
+from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.performance import Performance
 from app.db.models.request_log import RequestLog
 from app.db.models.role import Role
@@ -612,6 +613,38 @@ class TestSentEmailsAttachmentsDropped:
         assert "attachments" not in columns
 
 
+class TestPasswordResetTokenKeys:
+    """password_reset_tokens has a UUID primary key and at most one row per
+    email, enforced by the database: two concurrent reset requests for one
+    address used to leave two rows behind, which made the single-row lookup
+    of the reset flow fail."""
+
+    def test_primary_key_is_a_uuid_id_column(self):
+        primary_key = inspect(engine).get_pk_constraint("password_reset_tokens")
+        columns = {
+            c["name"]: c for c in inspect(engine).get_columns("password_reset_tokens")
+        }
+
+        assert primary_key["constrained_columns"] == ["id"]
+        assert isinstance(columns["id"]["type"], postgresql.UUID)
+
+    def test_generated_id_is_a_uuid_v7(self, db_session: Session):
+        row = PasswordResetToken(email="uuid-probe@example.test", token="hash")
+        db_session.add(row)
+        db_session.flush()
+
+        assert row.id.version == 7
+
+    def test_second_row_for_one_email_is_rejected(self, db_session: Session):
+        db_session.add(PasswordResetToken(email="twice@example.test", token="first"))
+        db_session.flush()
+        db_session.add(PasswordResetToken(email="twice@example.test", token="second"))
+
+        with pytest.raises(IntegrityError, match="password_reset_tokens_email_key"):
+            db_session.flush()
+        db_session.rollback()
+
+
 class TestTimestampsAreTimestamptz:
     """Every genuinely-UTC DateTime column is TIMESTAMPTZ --
     introspection only. Covers one column per structural
@@ -626,7 +659,8 @@ class TestTimestampsAreTimestamptz:
             ("instruments", "updated_at"),
             ("fees", "created_at"),  # individually declared
             ("fees", "updated_at"),
-            ("password_reset_tokens", "created_at"),  # created_at-only
+            ("password_reset_tokens", "created_at"),  # token table
+            ("password_reset_tokens", "updated_at"),
             ("oauth2_bindings", "bound_at"),  # NOT NULL business-event column
             ("users", "deleted_at"),  # nullable business-event column
             ("user_roles", "created_at"),  # junction table, still gets it
@@ -656,14 +690,20 @@ class TestTimestampsAreTimestamptz:
 
 
 class TestUpdatedAtTrigger:
-    """set_updated_at() BEFORE UPDATE trigger, covering three tables from
+    """set_updated_at() BEFORE UPDATE trigger, covering four tables from
     different structural categories: instruments (mixin-based),
     ordinariumwork_positions (individually declared), user_roles
     (junction table that nevertheless carries created_at/updated_at, see
-    the model docstring)."""
+    the model docstring) and password_reset_tokens (a table that only
+    only gained its updated_at column later)."""
 
     def test_trigger_exists_on_representative_tables(self, db_session: Session):
-        for table_name in ("instruments", "ordinariumwork_positions", "user_roles"):
+        for table_name in (
+            "instruments",
+            "ordinariumwork_positions",
+            "user_roles",
+            "password_reset_tokens",
+        ):
             rows = db_session.execute(
                 text(
                     "SELECT trigger_name FROM information_schema.triggers "

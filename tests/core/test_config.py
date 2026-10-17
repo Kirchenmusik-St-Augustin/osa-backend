@@ -80,6 +80,50 @@ def test_too_short_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
         Settings()
 
 
+def test_placeholder_secret_key_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv(
+        "SECRET_KEY", "changeme-generate-a-real-32-plus-character-secret"
+    )
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+    assert "template placeholder" in capsys.readouterr().err
+
+
+def test_placeholder_marker_is_detected_in_any_case_and_position(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("SECRET_KEY", "0123456789abcdef-ChangeMe-0123456789abcdef")
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+    assert "template placeholder" in capsys.readouterr().err
+
+
+def test_empty_secret_key_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("SECRET_KEY", "")
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+    assert "SECRET_KEY is not set" in capsys.readouterr().err
+
+
 def test_app_timezone_defaults_to_europe_vienna():
     assert Settings().app_timezone == "Europe/Vienna"
 

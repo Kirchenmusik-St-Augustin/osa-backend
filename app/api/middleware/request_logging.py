@@ -5,11 +5,13 @@ exception as app/core/mailer.py/app/services/booking_jobs.py (see
 pyproject.toml's per-file-ignores for TID251)."""
 
 import json
+import logging
 import resource
 import uuid
 from collections.abc import Awaitable, Callable
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -21,6 +23,8 @@ from app.core.json_types import JsonObject, JsonValue
 from app.db.database import SessionLocal
 from app.db.models.user import User
 from app.services import request_log_service
+
+logger = logging.getLogger(__name__)
 
 _SKIP_LOG_HEADER = "x-skip-request-log"
 
@@ -158,17 +162,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         )
 
         client_ips = _forwarded_ips(request)
-        await run_in_threadpool(
-            _write_log_entry,
-            client_ip=client_ips[0] if client_ips else "",
-            client_ips=client_ips,
-            auth_header=request.headers.get("authorization"),
-            request_method=request.method,
-            request_path=request.url.path,
-            request_input=request_input,
-            response_status=response.status_code,
-            response_content=_try_parse_json(response_body),
-            memory_usage=_memory_usage_bytes(),
-            user_agent_string=request.headers.get("user-agent"),
-        )
+        try:
+            await run_in_threadpool(
+                _write_log_entry,
+                client_ip=client_ips[0] if client_ips else "",
+                client_ips=client_ips,
+                auth_header=request.headers.get("authorization"),
+                request_method=request.method,
+                request_path=request.url.path,
+                request_input=request_input,
+                response_status=response.status_code,
+                response_content=_try_parse_json(response_body),
+                memory_usage=_memory_usage_bytes(),
+                user_agent_string=request.headers.get("user-agent"),
+            )
+        except SQLAlchemyError:
+            # The log is best effort: by now the route has already committed
+            # its own work, and the client would see a 500 for an operation
+            # that succeeded.
+            logger.exception("Could not write the request log entry.")
         return rebuilt
