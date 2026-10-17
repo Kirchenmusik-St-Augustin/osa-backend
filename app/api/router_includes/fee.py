@@ -6,19 +6,17 @@ from sqlalchemy.orm import Session
 
 from app.api.auth_guards import require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.fee import FeeRequest, FeeResponse
 from app.services import fee_service
 
-fee_router = APIRouter()
-
-_MAINTAIN = Depends(require_permission("feeMaintain"))
+# Every fee route needs the same permission and none uses the user object, so
+# the guard is declared once for the whole router.
+fee_router = APIRouter(dependencies=[Depends(require_permission("feeMaintain"))])
 
 
 @fee_router.get("")
 def list_fees(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
 ) -> list[FeeResponse]:
     return fee_service.list_fees(db)
 
@@ -27,7 +25,6 @@ def list_fees(
 def create_fee(
     data: FeeRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
 ) -> FeeResponse:
     return fee_service.create_fee(db, data)
 
@@ -37,7 +34,6 @@ def update_fee(
     fee_id: uuid.UUID,
     data: FeeRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
 ) -> FeeResponse:
     return fee_service.update_fee(db, fee_id, data)
 
@@ -46,7 +42,6 @@ def update_fee(
 def delete_fee(
     fee_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
 ) -> dict[str, str]:
     fee_service.delete_fee(db, fee_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}

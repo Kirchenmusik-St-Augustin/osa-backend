@@ -4,9 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import get_verified_user, require_permission
+from app.api.auth_guards import AuthUser, get_verified_user, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.performance import (
     PerformanceAvailableData,
     PerformanceCalendarItem,
@@ -27,7 +26,7 @@ def list_performances(
     year: Annotated[int, Query()],
     month: Annotated[int, Query(ge=1, le=12)],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> list[PerformanceCalendarItem]:
     return list(
         performance_service.list_performances_for_month(
@@ -39,7 +38,7 @@ def list_performances(
 @performance_router.get("/available")
 def get_available_data(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceAvailableData:
     return performance_service.get_available_data(db)
 
@@ -48,7 +47,7 @@ def get_available_data(
 def get_performance(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, Depends(get_verified_user)],
+    _current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> PerformanceShowResponse:
     return performance_service.get_performance_detail(db, performance_id)
 
@@ -57,7 +56,7 @@ def get_performance(
 def get_performance_form_data(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceFormData:
     return performance_service.get_form_data(db, performance_id)
 
@@ -66,7 +65,7 @@ def get_performance_form_data(
 def create_performance(
     data: PerformanceRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceResponse:
     return performance_service.create_performance(db, data)
 
@@ -76,7 +75,7 @@ def update_performance(
     performance_id: uuid.UUID,
     data: PerformanceRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceResponse:
     return performance_service.update_performance(db, performance_id, data)
 
@@ -85,7 +84,7 @@ def update_performance(
 def delete_performance(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> dict[str, str]:
     performance_service.delete_performance(db, performance_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}

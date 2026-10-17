@@ -4,9 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.sent_email import SentEmailShortOutput, SentEmailShowOutput
 from app.services import sent_email_service
 from app.services.sent_email_service import SentEmailNotFoundError
@@ -22,7 +21,7 @@ def list_sent_emails(
     year: Annotated[int, Query()],
     month: Annotated[int, Query(ge=1, le=12)],
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
 ) -> list[SentEmailShortOutput]:
     return sent_email_service.list_for_month(db, year, month)
 
@@ -31,7 +30,7 @@ def list_sent_emails(
 def get_sent_email(
     sent_email_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
 ) -> SentEmailShowOutput:
     try:
         return sent_email_service.get(db, sent_email_id)

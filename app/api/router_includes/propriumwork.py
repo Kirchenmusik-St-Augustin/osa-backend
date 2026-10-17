@@ -4,9 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.propriumwork import (
     PropriumworkRequest,
     PropriumworkResponse,
@@ -23,7 +22,7 @@ _MAINTAIN = Depends(require_permission("propriumworkMaintain"))
 def search_propriumworks(
     q: str,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> list[PropriumworkSearchResult]:
     return list(propriumwork_service.search_propriumworks(db, q))
 
@@ -32,7 +31,7 @@ def search_propriumworks(
 def create_propriumwork(
     data: PropriumworkRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PropriumworkResponse:
     return propriumwork_service.create_propriumwork(db, data)
 
@@ -41,7 +40,7 @@ def create_propriumwork(
 def get_propriumwork(
     propriumwork_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PropriumworkResponse:
     return propriumwork_service.get_propriumwork(db, propriumwork_id)
 
@@ -51,7 +50,7 @@ def update_propriumwork(
     propriumwork_id: uuid.UUID,
     data: PropriumworkRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PropriumworkResponse:
     return propriumwork_service.update_propriumwork(db, propriumwork_id, data)
 
@@ -60,7 +59,7 @@ def update_propriumwork(
 def delete_propriumwork(
     propriumwork_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> dict[str, str]:
     propriumwork_service.delete_propriumwork(db, propriumwork_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}

@@ -1,5 +1,7 @@
 import uuid
 
+import pytest
+
 
 def _unique(base: str = "Fee") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
@@ -19,10 +21,32 @@ def _auth_headers(
     return {"Authorization": f"Bearer {token}"}
 
 
+_MISSING_ID = "00000000-0000-7000-8000-000000000000"
+_FEE_ROUTES = [
+    ("GET", "/fees"),
+    ("POST", "/fees"),
+    ("PUT", f"/fees/{_MISSING_ID}"),
+    ("DELETE", f"/fees/{_MISSING_ID}"),
+]
+
+
 class TestPermissionGuard:
     def test_list_requires_authentication(self, client):
         response = client.get("/fees")
         assert response.status_code == 401
+
+    @pytest.mark.parametrize(("method", "path"), _FEE_ROUTES)
+    def test_every_route_requires_authentication(self, client, method, path):
+        response = client.request(method, path, json={})
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize(("method", "path"), _FEE_ROUTES)
+    def test_every_route_rejects_a_user_without_the_permission(
+        self, client, make_user, method, path
+    ):
+        headers = _auth_headers(client, make_user, roles=[])
+        response = client.request(method, path, json={}, headers=headers)
+        assert response.status_code == 403
 
     def test_list_rejects_non_disponent(self, client, make_user):
         headers = _auth_headers(client, make_user, roles=[])

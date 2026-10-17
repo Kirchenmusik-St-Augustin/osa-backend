@@ -4,13 +4,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.user_administration import (
     UserAdministrationActionResponse,
     UserAdministrationDeletedEntryOutput,
-    UserAdministrationDetailOutput,
     UserAdministrationSearchResultOutput,
 )
 from app.services import user_administration_service
@@ -29,26 +27,11 @@ _SELF_TARGET_DETAIL = "Diese Aktion ist für das eigene Konto nicht verfügbar."
 # app/api/router_includes/user.py's identical comment.
 
 
-def _to_detail(db: Session, user: User) -> UserAdministrationDetailOutput:
-    return UserAdministrationDetailOutput(
-        id=user.id,
-        surname=user.surname,
-        givenname=user.givenname,
-        email=user.email,
-        phone=user.phone,
-        email_verified_at=user.email_verified_at,
-        auth_locked=user.auth_locked,
-        deleted_at=user.deleted_at,
-        auth_lastsignal=user.auth_lastsignal,
-        purgeable=user_administration_service.is_purgeable(db, user),
-    )
-
-
 @user_administration_router.get("/search")
 def search_users(
     q: str,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _ADMINISTRATE],
+    _current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> list[UserAdministrationSearchResultOutput]:
     users = user_administration_service.search_users_including_deleted(db, q)
     return [
@@ -62,7 +45,7 @@ def search_users(
 @user_administration_router.get("/deleted")
 def list_deleted_users(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _ADMINISTRATE],
+    _current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> list[UserAdministrationDeletedEntryOutput]:
     users = user_administration_service.list_deleted_users(db)
     return [
@@ -77,7 +60,7 @@ def list_deleted_users(
 def get_user(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _ADMINISTRATE],
+    _current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:
     try:
         user = user_administration_service.get_user(db, user_id)
@@ -85,14 +68,16 @@ def get_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
         ) from None
-    return UserAdministrationActionResponse(user=_to_detail(db, user))
+    return UserAdministrationActionResponse(
+        user=user_administration_service.to_detail(db, user)
+    )
 
 
 @user_administration_router.post("/{user_id}/restore")
 def restore_user(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _ADMINISTRATE],
+    _current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:
     try:
         user = user_administration_service.restore_user(db, user_id)
@@ -100,14 +85,16 @@ def restore_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
         ) from None
-    return UserAdministrationActionResponse(user=_to_detail(db, user))
+    return UserAdministrationActionResponse(
+        user=user_administration_service.to_detail(db, user)
+    )
 
 
 @user_administration_router.post("/{user_id}/unlock")
 def unlock_user(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _ADMINISTRATE],
+    _current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:
     try:
         user = user_administration_service.unlock_user(db, user_id)
@@ -115,14 +102,16 @@ def unlock_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_DETAIL
         ) from None
-    return UserAdministrationActionResponse(user=_to_detail(db, user))
+    return UserAdministrationActionResponse(
+        user=user_administration_service.to_detail(db, user)
+    )
 
 
 @user_administration_router.post("/{user_id}/set-password")
 def set_password(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _ADMINISTRATE],
+    current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> UserAdministrationActionResponse:
     try:
         user, plain_password = user_administration_service.set_random_password(
@@ -137,7 +126,7 @@ def set_password(
             status_code=status.HTTP_403_FORBIDDEN, detail=_SELF_TARGET_DETAIL
         ) from None
     return UserAdministrationActionResponse(
-        user=_to_detail(db, user), newpw=plain_password
+        user=user_administration_service.to_detail(db, user), newpw=plain_password
     )
 
 
@@ -145,7 +134,7 @@ def set_password(
 def purge_user(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _ADMINISTRATE],
+    _current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> dict[str, str]:
     try:
         user_administration_service.purge_user(db, user_id)

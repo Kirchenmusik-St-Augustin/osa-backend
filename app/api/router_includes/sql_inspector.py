@@ -3,9 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.sql_inspector import TableDataOutput
 from app.services import sql_inspector_service
 from app.services.sql_inspector_service import TableNotFoundError
@@ -19,7 +18,7 @@ _NOT_FOUND_DETAIL = "Tabelle nicht gefunden."
 @sql_inspector_router.get("/tables")
 def list_tables(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
 ) -> list[str]:
     return sql_inspector_service.get_valid_tables(db)
 
@@ -28,7 +27,7 @@ def list_tables(
 def get_table_data(
     table_name: str,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 25,
 ) -> TableDataOutput:

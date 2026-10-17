@@ -4,10 +4,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.core.config import get_settings
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.scheduler import (
     BackupTriggerOutput,
     DownsyncTriggerOutput,
@@ -44,7 +43,7 @@ _NO_PRODUCTION_BACKUP_DETAIL = "Kein Production-Backup auf Koofr vorhanden."
 
 @scheduler_router.get("/jobs")
 def list_scheduled_jobs(
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
     db: Annotated[Session, Depends(get_db)],
 ) -> list[ScheduledJobOutput]:
     """Trigger/next_run are pure in-memory computation from the shared cron
@@ -57,7 +56,7 @@ def list_scheduled_jobs(
 
 @scheduler_router.post("/backup/trigger", status_code=status.HTTP_201_CREATED)
 def trigger_backup(
-    _current_user: Annotated[User, _TRIGGER],
+    _current_user: Annotated[AuthUser, _TRIGGER],
 ) -> BackupTriggerOutput:
     """Manually trigger an immediate Koofr backup, independent of the daily
     scheduled job. Runs synchronously -- FastAPI runs sync `def` handlers in
@@ -83,7 +82,7 @@ def trigger_backup(
 
 @scheduler_router.post("/downsync/trigger", status_code=status.HTTP_201_CREATED)
 def trigger_downsync(
-    _current_user: Annotated[User, _TRIGGER],
+    _current_user: Annotated[AuthUser, _TRIGGER],
 ) -> DownsyncTriggerOutput:
     """Manually trigger an immediate downsync, independent of the nightly
     scheduled job. Runs synchronously -- same reasoning as trigger_backup

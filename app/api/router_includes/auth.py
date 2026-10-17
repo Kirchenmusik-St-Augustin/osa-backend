@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import get_verified_user
+from app.api.auth_guards import AuthUser, get_verified_user
 from app.api.deps import get_current_user, oauth2_scheme
 from app.api.job_queue import JobQueue, get_job_queue
 from app.core import mailer
@@ -20,7 +20,6 @@ from app.core.security import (
     parse_refresh_cookie,
 )
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.auth import (
     EmailKillSwitchStatusOutput,
     ForgotPasswordRequest,
@@ -213,7 +212,7 @@ def logout(
     _request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
 ) -> JSONResponse:
     """Invalidate the current session and clear the refresh-token cookie."""
     auth_service.logout_user(db, token)
@@ -227,7 +226,7 @@ def logout(
 
 @auth_router.get("/me")
 def get_current_user_profile(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> UserProfileResponse:
     """The frontend calls this once after login/on boot to populate its auth
@@ -290,7 +289,7 @@ def register(
 @rate_limited("6/minute")
 def resend_verification_email(
     request: Request,  # noqa: ARG001
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """Re-sends the verification mail. Deliberately uses get_current_user,
@@ -461,7 +460,7 @@ def google_link(
 def disconnect_oauth2_binding(
     binding_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> dict[str, str]:
     """Unlinks an OAuth binding, restricted to the caller's own bindings --
     see auth_service.unlink_oauth_binding for the IDOR protection.

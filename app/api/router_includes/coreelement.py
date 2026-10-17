@@ -4,9 +4,8 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import ensure_permission, get_verified_user
+from app.api.auth_guards import AuthUser, ensure_permission, get_verified_user
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.coreelement import (
     CoreelementRequest,
     CoreelementResponse,
@@ -48,7 +47,7 @@ def _to_response(item: CoreelementModel) -> CoreelementResponse:
 def list_items(
     element_type: CoreelementType,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> list[CoreelementResponse]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     items = coreelement_service.list_coreelements(db, element_type)
@@ -60,7 +59,7 @@ def create_item(
     element_type: CoreelementType,
     data: CoreelementRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     item = coreelement_service.create_coreelement(db, element_type, data)
@@ -73,7 +72,7 @@ def update_item(
     element_id: uuid.UUID,
     data: CoreelementRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     item = coreelement_service.update_coreelement(db, element_type, element_id, data)
@@ -85,7 +84,7 @@ def delete_item(
     element_type: CoreelementType,
     element_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> dict[str, str]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     coreelement_service.delete_coreelement(db, element_type, element_id)
@@ -98,7 +97,7 @@ def move_item(
     element_id: uuid.UUID,
     direction: Literal["up", "down"],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> list[CoreelementResponse]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     items = coreelement_service.move_coreelement(

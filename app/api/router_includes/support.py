@@ -3,10 +3,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import get_verified_user
+from app.api.auth_guards import AuthUser, get_verified_user
 from app.api.job_queue import JobQueue, get_job_queue
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.booking import PerformanceShortOutput
 from app.schemas.support import MessageToContactpersonRequest, RoleWithContactsOutput
 from app.services import support_service
@@ -18,7 +17,7 @@ support_router = APIRouter()
 @support_router.get("/requests-and-bookings")
 def get_my_requests_and_bookings(
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> list[PerformanceShortOutput]:
     """No permission gate beyond being logged in -- every user manages only
     their own requests/bookings."""
@@ -28,7 +27,7 @@ def get_my_requests_and_bookings(
 @support_router.get("/contactpersons")
 def get_contactpersons(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, Depends(get_verified_user)],
+    _current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> list[RoleWithContactsOutput]:
     """No permission gate beyond being logged in."""
     return support_service.list_roles_with_contacts(db)
@@ -38,7 +37,7 @@ def get_contactpersons(
 def send_message_to_contactperson(
     data: MessageToContactpersonRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """Always responds 200 -- a missing/unverified recipient is a silent

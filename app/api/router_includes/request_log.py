@@ -5,9 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.request_log import (
     RequestLogDayGroupOutput,
     RequestLogShowOutput,
@@ -56,7 +55,7 @@ def list_request_log_users(
     year: Annotated[int, Query()],
     month: Annotated[int, Query(ge=1, le=12)],
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
 ) -> list[RequestLogDayGroupOutput]:
     return request_log_service.list_days_with_users_for_month(db, year, month)
 
@@ -66,7 +65,7 @@ def get_request_logs_for_user(
     user_id: uuid.UUID,
     day: Annotated[date, _DAY],
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
 ) -> RequestLogUserDetailOutput:
     try:
         return request_log_service.list_entries_for_user_day(db, user_id, day)
@@ -80,7 +79,7 @@ def get_request_logs_for_user(
 def get_request_log(
     request_log_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _VIEW],
+    _current_user: Annotated[AuthUser, _VIEW],
 ) -> RequestLogShowOutput:
     try:
         return request_log_service.get(db, request_log_id)

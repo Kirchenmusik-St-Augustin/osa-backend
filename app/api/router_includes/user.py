@@ -4,9 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.booking import PerformanceShortOutput
 from app.schemas.user import (
     UserFormOptionsOutput,
@@ -30,7 +29,7 @@ _MAINTAIN = Depends(require_permission("userMaintain"))
 def search_users(
     q: str,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> list[UserSearchResultOutput]:
     users = user_service.search_users(db, q)
     return [
@@ -42,7 +41,7 @@ def search_users(
 @user_router.get("/form-options")
 def get_form_options(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> UserFormOptionsOutput:
     return user_service.get_form_options(db)
 
@@ -51,7 +50,7 @@ def get_form_options(
 def get_user(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> UserResponse:
     return user_service.get_user(db, user_id)
 
@@ -60,7 +59,7 @@ def get_user(
 def get_requests_and_bookings(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> list[PerformanceShortOutput]:
     """Admin-side counterpart to /support/requests-and-bookings (the Show
     page's link), backed by the same generic booking_service function,
@@ -78,7 +77,7 @@ def get_requests_and_bookings(
 def create_user(
     data: UserRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> UserResponse:
     return user_service.create_user(db, data, current_user)
 
@@ -88,7 +87,7 @@ def update_user(
     user_id: uuid.UUID,
     data: UserRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> UserResponse:
     return user_service.update_user(db, user_id, data, current_user)
 
@@ -97,7 +96,7 @@ def update_user(
 def delete_user(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> dict[str, str]:
     user_service.delete_user(db, user_id)
     return {"status": "ok", "message": "Benutzerkonto wurde gelöscht."}

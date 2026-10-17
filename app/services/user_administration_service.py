@@ -7,6 +7,7 @@ from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.booking_request import BookingRequest
 from app.db.models.user import User
+from app.schemas.user_administration import UserAdministrationDetailOutput
 from app.services.errors import GeneralValidationError
 
 if TYPE_CHECKING:
@@ -134,6 +135,21 @@ def is_purgeable(db: Session, user: User) -> bool:
     good; everything else on the account (roles, positions, tokens, OAuth2
     bindings) is cascaded away by the database."""
     return user.deleted_at is not None and not _has_history(db, user.id)
+
+
+def to_detail(db: Session, user: User) -> UserAdministrationDetailOutput:
+    return UserAdministrationDetailOutput(
+        id=user.id,
+        surname=user.surname,
+        givenname=user.givenname,
+        email=user.email,
+        phone=user.phone,
+        email_verified_at=user.email_verified_at,
+        auth_locked=user.auth_locked,
+        deleted_at=user.deleted_at,
+        auth_lastsignal=user.auth_lastsignal,
+        purgeable=is_purgeable(db, user),
+    )
 
 
 def purge_user(db: Session, user_id: uuid.UUID) -> None:

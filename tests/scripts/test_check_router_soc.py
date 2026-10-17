@@ -27,6 +27,36 @@ def test_pattern_does_not_match_unrelated_names() -> None:
     assert not pattern.search("auth_service.get_active_user(db)")
 
 
+def test_pattern_matches_persistence_model_imports() -> None:
+    pattern = check_router_soc.VIOLATION_PATTERN
+    assert pattern.search("from app.db.models.user import User")
+    assert pattern.search("import app.db.models.user")
+    assert pattern.search("    from app.db.models.artist import Artist")
+
+
+def test_pattern_does_not_match_other_imports() -> None:
+    pattern = check_router_soc.VIOLATION_PATTERN
+    assert not pattern.search("from app.db.database import get_db")
+    assert not pattern.search("from app.api.auth_guards import AuthUser")
+    assert not pattern.search("from app.services import artist_service")
+    assert not pattern.search("from app.db.models_extra import Thing")
+
+
+def test_find_violations_detects_a_model_import(tmp_path) -> None:
+    router_dir = tmp_path / "router_includes"
+    router_dir.mkdir()
+    (router_dir / "bad.py").write_text(
+        "from app.db.models.user import User\n\n\ndef f(user: User) -> None: ...\n"
+    )
+
+    with patch.object(check_router_soc, "ROUTER_DIR", router_dir):
+        violations = check_router_soc.find_violations()
+
+    assert violations == {
+        router_dir / "bad.py": [(1, "from app.db.models.user import User")]
+    }
+
+
 def test_find_violations_detects_bad_file(tmp_path) -> None:
     router_dir = tmp_path / "router_includes"
     router_dir.mkdir()

@@ -3,11 +3,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import get_verified_user
+from app.api.auth_guards import AuthUser, get_verified_user
 from app.api.job_queue import JobQueue, get_job_queue
 from app.core.redacted import Redacted
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.profile import ProfileUpdateRequest
 from app.schemas.user import UserResponse
 from app.services import auth_service, profile_service, user_service
@@ -19,7 +18,7 @@ profile_router = APIRouter()
 @profile_router.get("")
 def get_profile(
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> UserResponse:
     """Reuses user_service.get_user() -- the same resource as the admin-side
     user detail, just scoped to the caller's own id."""
@@ -30,7 +29,7 @@ def get_profile(
 def update_profile(
     data: ProfileUpdateRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> UserResponse:
     """get_verified_user is declared before job_queue on purpose, see

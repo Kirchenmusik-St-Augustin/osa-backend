@@ -6,6 +6,11 @@ from app.api.deps import get_current_user
 from app.db.models.user import User
 from app.services.permission_service import calculate_permissions
 
+# Routers import the authenticated-user type from here instead of reaching into
+# app.db.models: they call service functions only and never import persistence
+# models (scripts/check_router_soc.py enforces it).
+AuthUser = User
+
 
 def ensure_permission(user: User, required_permission: str) -> None:
     """Raises 403 if `user` lacks `required_permission`. Used directly

@@ -4,10 +4,9 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.api.job_queue import JobQueue, get_job_queue
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.booking import (
     BookingStatusOutput,
     CastFormData,
@@ -44,7 +43,7 @@ _EMPTY_RECIPIENTS_DETAIL = "Keiner der Empfänger hat eine bestätigte E-Mail-Ad
 def get_cast_page(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _CAST],
+    _current_user: Annotated[AuthUser, _CAST],
 ) -> PerformanceCastPageResponse:
     return booking_service.get_cast_page(db, performance_id)
 
@@ -54,7 +53,7 @@ def save_cast(
     performance_id: uuid.UUID,
     data: CastSaveRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _CAST],
+    _current_user: Annotated[AuthUser, _CAST],
 ) -> CastFormData:
     return booking_service.save_cast(db, performance_id, data)
 
@@ -63,7 +62,7 @@ def save_cast(
 def change_user_request_status(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _CHANGE_STATUS],
+    current_user: Annotated[AuthUser, _CHANGE_STATUS],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> BookingStatusOutput:
     """No request body -- the server recomputes the user's own current
@@ -101,7 +100,7 @@ def change_user_request_status(
 def get_my_booking_status(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _CHANGE_STATUS],
+    current_user: Annotated[AuthUser, _CHANGE_STATUS],
 ) -> BookingStatusOutput:
     return booking_service.get_my_booking_status(db, performance_id, current_user.id)
 
@@ -110,7 +109,7 @@ def get_my_booking_status(
 def get_billing(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _BILLING],
+    current_user: Annotated[AuthUser, _BILLING],
 ) -> PerformanceBillingResponse:
     return booking_service.get_billing(db, performance_id, current_user)
 
@@ -119,7 +118,7 @@ def get_billing(
 def get_requests_and_bookings(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceRequestsAndBookingsResponse:
     return booking_service.get_requests_and_bookings(db, performance_id, current_user)
 
@@ -128,7 +127,7 @@ def get_requests_and_bookings(
 def get_message_to_cast_page(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceMessageToCastResponse:
     return booking_service.get_message_to_cast_page(db, performance_id, current_user)
 
@@ -137,7 +136,7 @@ def get_message_to_cast_page(
 def get_message_recipients(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
     position_type: Annotated[
         Literal["all", "instruments", "voices", "choirjobs"] | None, Query(alias="type")
     ] = None,
@@ -154,7 +153,7 @@ def send_message_to_cast(
     performance_id: uuid.UUID,
     data: SendMessageRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """_MAINTAIN is declared before job_queue on purpose -- see

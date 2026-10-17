@@ -7,6 +7,7 @@ from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumwork import Propriumwork
+from app.schemas.artist import ArtistResponse, ArtistSearchResult
 from app.services.errors import (
     DomainValidationError,
     FieldError,
@@ -49,6 +50,23 @@ def label_for(artist: Artist) -> str:
     """Display label ("SURNAME, Givenname"), used in search results and
     embedded in Ordinariumwork/Propriumwork responses."""
     return label_for_name(artist.surname or "", artist.givenname)
+
+
+def to_response(artist: Artist) -> ArtistResponse:
+    return ArtistResponse(
+        id=artist.id,
+        surname=artist.surname or "",
+        givenname=artist.givenname or "",
+        description=artist.description,
+        birthyear=artist.birthyear,
+        deathyear=artist.deathyear,
+        composer=artist.composer,
+        conductor=artist.conductor,
+    )
+
+
+def to_search_result(artist: Artist) -> ArtistSearchResult:
+    return ArtistSearchResult(id=artist.id, label=label_for(artist))
 
 
 def _name_year_range_error(field: str, value: int | None) -> FieldError | None:

@@ -6,7 +6,10 @@ from app.db.models.user import User
 from app.db.models.user_position import UserPosition
 from app.schemas.coreelement import CoreelementType
 from app.schemas.performance import PositionRefOutput
-from app.schemas.userdirectory import UserDirectoryAbilitiesOutput
+from app.schemas.userdirectory import (
+    UserDirectoryAbilitiesOutput,
+    UserDirectoryEntryOutput,
+)
 from app.services import coreelement_service
 
 if TYPE_CHECKING:
@@ -16,6 +19,19 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import InstrumentedAttribute, Session
 
     from app.services.position_types import PositionType
+
+
+def to_entry(user: User) -> UserDirectoryEntryOutput:
+    has_email = user.email_verified_at is not None
+    return UserDirectoryEntryOutput(
+        id=user.id,
+        surname=user.surname,
+        givenname=user.givenname,
+        has_email=has_email,
+        email=user.email if has_email else None,
+        phone=user.phone,
+    )
+
 
 # UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
 # identical _BOOKING_POSITION_COLUMNS for the full rationale.

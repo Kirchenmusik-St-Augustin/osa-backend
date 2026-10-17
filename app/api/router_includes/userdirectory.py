@@ -4,9 +4,8 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.userdirectory import (
     UserDirectoryAbilitiesOutput,
     UserDirectoryEntryOutput,
@@ -20,22 +19,10 @@ _MAINTAIN = Depends(require_permission("userMaintain"))
 DirectoryType = Literal["all", "instruments", "voices", "choirjobs"]
 
 
-def _to_entry(user: User) -> UserDirectoryEntryOutput:
-    has_email = user.email_verified_at is not None
-    return UserDirectoryEntryOutput(
-        id=user.id,
-        surname=user.surname,
-        givenname=user.givenname,
-        has_email=has_email,
-        email=user.email if has_email else None,
-        phone=user.phone,
-    )
-
-
 @userdirectory_router.get("/abilities")
 def get_abilities(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> UserDirectoryAbilitiesOutput:
     return userdirectory_service.get_abilities(db)
 
@@ -43,7 +30,7 @@ def get_abilities(
 @userdirectory_router.get("")
 def list_users(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
     directory_type: Annotated[DirectoryType | None, Query(alias="type")] = None,
     position_id: Annotated[uuid.UUID | None, Query(alias="id")] = None,
 ) -> list[UserDirectoryEntryOutput]:
@@ -55,4 +42,4 @@ def list_users(
         )
     else:
         users = []
-    return [_to_entry(user) for user in users]
+    return [userdirectory_service.to_entry(user) for user in users]

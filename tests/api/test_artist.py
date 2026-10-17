@@ -1,5 +1,7 @@
 import uuid
 
+import pytest
+
 
 def _unique(base: str = "Name") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
@@ -19,6 +21,17 @@ def _auth_headers(
     return {"Authorization": f"Bearer {token}"}
 
 
+_MISSING_ID = "00000000-0000-7000-8000-000000000000"
+_ARTIST_ROUTES = [
+    ("GET", "/artists/search?q=x"),
+    ("POST", "/artists"),
+    ("GET", "/artists/composers"),
+    ("GET", f"/artists/{_MISSING_ID}"),
+    ("PUT", f"/artists/{_MISSING_ID}"),
+    ("DELETE", f"/artists/{_MISSING_ID}"),
+]
+
+
 class TestPermissionGuard:
     def test_search_requires_authentication(self, client):
         response = client.get("/artists/search", params={"q": "x"})
@@ -29,6 +42,19 @@ class TestPermissionGuard:
     ):
         headers = _auth_headers(client, make_user, roles=[])
         response = client.get("/artists/search", params={"q": "x"}, headers=headers)
+        assert response.status_code == 403
+
+    @pytest.mark.parametrize(("method", "path"), _ARTIST_ROUTES)
+    def test_every_route_requires_authentication(self, client, method, path):
+        response = client.request(method, path, json={})
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize(("method", "path"), _ARTIST_ROUTES)
+    def test_every_route_rejects_a_user_without_the_permission(
+        self, client, make_user, method, path
+    ):
+        headers = _auth_headers(client, make_user, roles=[])
+        response = client.request(method, path, json={}, headers=headers)
         assert response.status_code == 403
 
     def test_search_allows_disponent_role(self, client, make_user):
