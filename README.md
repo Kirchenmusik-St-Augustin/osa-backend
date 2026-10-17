@@ -49,7 +49,9 @@ podman exec osa-backend pytest --tb=short -q
 
 The test suite runs against a dedicated PostgreSQL database
 (`TEST_DATABASE_URL`, falling back to `DATABASE_URL`), schema built from
-the real Alembic migrations — never against the production database. See
+the real Alembic migrations — never against the production database. The
+suite refuses to start unless that database is local (`localhost`,
+`127.0.0.1` or `::1`) and named `osa_test` or `test`. See
 `tests/conftest.py`'s module docstring for the full isolation model
 (per-test transaction + savepoint).
 
@@ -281,7 +283,8 @@ podman exec osa-backend pytest --tb=short -q
 Die Testsuite läuft gegen eine dedizierte PostgreSQL-Datenbank
 (`TEST_DATABASE_URL`, fällt auf `DATABASE_URL` zurück), Schema kommt aus
 den echten Alembic-Migrationen — niemals gegen die Produktions-Datenbank.
-Volles Isolationsmodell (Transaktion+Savepoint pro Test) siehe
+Die Suite startet nur, wenn diese Datenbank lokal liegt (`localhost`,
+`127.0.0.1` oder `::1`) und `osa_test` oder `test` heißt. Volles Isolationsmodell (Transaktion+Savepoint pro Test) siehe
 `tests/conftest.py`s Modul-Docstring.
 
 Coverage-Erhebung kostet spürbar mehr Zeit (`coverage.py`- +

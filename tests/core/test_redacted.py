@@ -1,6 +1,11 @@
+import logging
 import pickle
+from typing import TYPE_CHECKING
 
 from app.core.redacted import Redacted
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_repr_never_shows_the_wrapped_value():
@@ -26,3 +31,16 @@ def test_survives_a_pickle_roundtrip():
 
     assert restored.value == wrapped.value
     assert repr(restored) == "<redacted>"
+
+
+def test_every_way_of_printing_the_value_hides_it(caplog: pytest.LogCaptureFixture):
+    wrapped = Redacted("https://example.com/reset-password?token=super-secret")
+
+    with caplog.at_level(logging.INFO):
+        logging.getLogger("redacted-test").info("job args: %s %r", wrapped, (wrapped,))
+
+    assert "super-secret" not in str(wrapped)
+    assert "super-secret" not in f"{wrapped}"
+    assert "super-secret" not in format(wrapped)
+    assert "super-secret" not in caplog.text
+    assert "<redacted>" in caplog.text

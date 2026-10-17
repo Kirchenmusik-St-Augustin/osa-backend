@@ -9,6 +9,7 @@ from app.db.models.auth_log import AuthLog
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.request_log import RequestLog
+from app.db.models.sent_email import SentEmail
 from app.services import housekeeping_jobs
 
 if TYPE_CHECKING:
@@ -187,6 +188,60 @@ class TestPurgeOldAuthLogs:
         ).scalar_one_or_none()
         assert kept is not None
         assert gone is None
+
+
+def _make_sent_email(db_session: Session, *, age_days: int) -> uuid.UUID:
+    mail = SentEmail(
+        to=f"{_unique('rcpt')}@example.com",
+        subject="subject",
+        body="body",
+        created_at=datetime.now(UTC) - timedelta(days=age_days),
+    )
+    db_session.add(mail)
+    db_session.commit()
+    return mail.id
+
+
+def _surviving_mails(db_session: Session, ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    return set(
+        db_session.execute(select(SentEmail.id).where(SentEmail.id.in_(ids))).scalars()
+    )
+
+
+class TestPurgeOldSentEmails:
+    def test_deletes_a_mail_older_than_a_year_and_keeps_a_recent_one(
+        self, db_session: Session
+    ):
+        old = _make_sent_email(db_session, age_days=400)
+        recent = _make_sent_email(db_session, age_days=30)
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert _surviving_mails(db_session, [old, recent]) == {recent}
+
+    def test_keeps_a_mail_just_inside_and_deletes_one_just_outside(
+        self, db_session: Session
+    ):
+        inside = _make_sent_email(db_session, age_days=364)
+        outside = _make_sent_email(db_session, age_days=366)
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert _surviving_mails(db_session, [inside, outside]) == {inside}
+
+    def test_the_auth_log_retention_is_unaffected(self, db_session: Session):
+        auth_entry = _make_auth_log(db_session, age_days=364)
+        auth_id = auth_entry.id
+        _make_sent_email(db_session, age_days=400)
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert (
+            db_session.execute(
+                select(AuthLog.id).where(AuthLog.id == auth_id)
+            ).scalar_one_or_none()
+            is not None
+        )
 
 
 def _make_session(

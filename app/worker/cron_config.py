@@ -85,8 +85,8 @@ def build_cron_catalog(settings: Settings) -> list[CronSchedule]:
             description=(
                 "Löscht täglich um 23:00 Uhr Logbuch-Einträge, die älter "
                 "als 40 Tage sind, Anmelde-Protokolle, die älter als ein "
-                "Jahr sind, sowie abgelaufene Sitzungen. Nur in Production "
-                "registriert."
+                "Jahr sind, E-Mail-Protokolle, die älter als ein Jahr sind, "
+                "sowie abgelaufene Sitzungen. Nur in Production registriert."
             ),
             active=is_production,
             hour=23,

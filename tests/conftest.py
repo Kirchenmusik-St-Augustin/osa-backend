@@ -21,6 +21,7 @@ reproduced in isolation.
 """
 
 import os
+from urllib.parse import urlsplit
 
 os.environ["APP_ENVIRONMENT"] = "test"
 os.environ["CORS_ORIGINS"] = "http://localhost:21001"
@@ -29,6 +30,7 @@ os.environ["SECRET_KEY"] = "test-secret-key-" + "x" * 32
 # Guards against ever pointing this at a real dev/prod database: the
 # session fixture below drops and rebuilds the entire 'public' schema.
 _ALLOWED_TEST_DBS = {"osa_test", "test"}
+_ALLOWED_TEST_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get(
     "DATABASE_URL"
 )
@@ -40,7 +42,16 @@ if not _TEST_DATABASE_URL:
     )
     raise RuntimeError(msg)
 
-_dbname = _TEST_DATABASE_URL.rsplit("/", 1)[-1].split("?")[0]
+_url = urlsplit(_TEST_DATABASE_URL)
+if _url.hostname not in _ALLOWED_TEST_HOSTS:
+    msg = (
+        f"Refusing to run tests against host {_url.hostname!r}. The test "
+        "session drops and rebuilds the 'public' schema, so the database "
+        f"must be local: {sorted(_ALLOWED_TEST_HOSTS)}."
+    )
+    raise RuntimeError(msg)
+
+_dbname = _url.path.lstrip("/")
 if _dbname not in _ALLOWED_TEST_DBS:
     msg = (
         f"Refusing to run tests against non-test database {_dbname!r}. "

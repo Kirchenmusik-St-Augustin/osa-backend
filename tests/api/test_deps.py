@@ -213,6 +213,71 @@ def test_token_without_expiry_is_rejected(client, make_user, db_session):
     assert response.status_code == 401
 
 
+def _claims_of_a_live_session(client, make_user, db_session) -> dict[str, object]:
+    """Claims that name an existing user and a live session, so that a forged
+    token is rejected because of its signature or algorithm alone and not
+    because the session happens to be unknown."""
+    user = make_user(password="correct-password")
+    client.post(
+        "/auth/login",
+        data={"username": user.email, "password": "correct-password"},
+    )
+    session_row = db_session.execute(
+        select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+    ).scalar_one()
+    return {
+        "sub": user.email,
+        "jti": session_row.token,
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
+    }
+
+
+def test_token_with_algorithm_none_is_rejected(client, make_user, db_session):
+    claims = _claims_of_a_live_session(client, make_user, db_session)
+    unsigned = jwt.encode(claims, key=None, algorithm="none")
+
+    response = client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {unsigned}"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_token_signed_with_another_key_is_rejected(client, make_user, db_session):
+    claims = _claims_of_a_live_session(client, make_user, db_session)
+    forged = jwt.encode(claims, "another-secret-" + "x" * 32, algorithm=ALGORITHM)
+
+    response = client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {forged}"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_token_with_a_different_hmac_algorithm_is_rejected(
+    client, make_user, db_session
+):
+    claims = _claims_of_a_live_session(client, make_user, db_session)
+    forged = jwt.encode(claims, SECRET_KEY, algorithm="HS384")
+
+    response = client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {forged}"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_the_unforged_claims_authenticate(client, make_user, db_session):
+    """Control for the three forgeries above: the very same claims, signed
+    correctly, are accepted."""
+    claims = _claims_of_a_live_session(client, make_user, db_session)
+    valid = jwt.encode(claims, SECRET_KEY, algorithm=ALGORITHM)
+
+    response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid}"})
+
+    assert response.status_code == 200
+
+
 def test_session_of_another_user_does_not_authenticate_the_subject(
     client, make_user, db_session
 ):
