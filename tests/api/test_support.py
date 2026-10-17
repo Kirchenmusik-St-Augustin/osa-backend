@@ -162,7 +162,9 @@ class TestSendMessageToContactperson:
         self, client, make_user, db_session, fake_arq_pool
     ):
         headers, _sender = _auth_headers(client, make_user)
-        recipient = make_user(email=f"{_unique('kontakt')}@example.test")
+        recipient = make_user(
+            email=f"{_unique('kontakt')}@example.test", roles=[_unique("kontakt")]
+        )
 
         response = client.post(
             "/support/message-to-contactperson",
@@ -175,6 +177,21 @@ class TestSendMessageToContactperson:
         args = fake_arq_pool.enqueue_job.call_args.args
         assert args[0] == "send_user_message_email_task"
         assert args[1] == [recipient.email]
+
+    def test_silent_noop_for_a_member_without_a_role_still_returns_200(
+        self, client, make_user, fake_arq_pool
+    ):
+        headers, _sender = _auth_headers(client, make_user)
+        member = make_user(email=f"{_unique('mitglied')}@example.test")
+
+        response = client.post(
+            "/support/message-to-contactperson",
+            json={"recipient_id": str(member.id), "message": "Bitte um Rückruf."},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        fake_arq_pool.enqueue_job.assert_not_called()
 
     def test_silent_noop_for_unverified_recipient_still_returns_200(
         self, client, make_user, fake_arq_pool

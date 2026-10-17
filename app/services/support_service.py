@@ -1,11 +1,12 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.human_names import label_for_name
 from app.db.models.role import Role
 from app.db.models.user import User
+from app.db.models.user_role import UserRole
 from app.schemas.support import (
     ContactUserOutput,
     MessageToContactpersonRequest,
@@ -64,14 +65,22 @@ def send_message_to_contactperson(
     db: Session, sender: User, data: MessageToContactpersonRequest
 ) -> tuple[list[str], str, str] | None:
     """Looks up the recipient and only returns mail data if the recipient
-    exists and has a verified email -- otherwise it silently no-ops (the
-    router responds 200 either way, which does not reveal whether a given
-    recipient id exists or is verified).
+    is a contact person (an active user who holds at least one role, exactly
+    the people list_roles_with_contacts() offers) with a verified email --
+    otherwise it silently no-ops (the router responds 200 either way, which
+    does not reveal whether a given recipient id exists, is a contact person
+    or is verified).
 
     Returns (to_emails, sender_name, message) for the ROUTER to enqueue via
     `JobQueue.enqueue(send_user_message_email_task, ...)` -- same
     framework-agnostic split as booking_service.send_message_to_cast."""
-    recipient = db.get(User, data.recipient_id)
+    recipient = db.execute(
+        select(User).where(
+            User.id == data.recipient_id,
+            User.deleted_at.is_(None),
+            exists().where(UserRole.user_id == User.id),
+        )
+    ).scalar_one_or_none()
     if (
         recipient is None
         or recipient.email is None

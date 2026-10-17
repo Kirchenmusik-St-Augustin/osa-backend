@@ -5,6 +5,11 @@ hits the public /go/* endpoints with no Authorization header at all."""
 
 import uuid
 
+from fastapi.testclient import TestClient
+
+from app.api.router_includes import go
+from main import app
+
 
 def _unique(base: str = "path") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
@@ -40,7 +45,7 @@ class TestGoResolve:
         response = client.get(f"/go/{path}", follow_redirects=False)
 
         assert response.status_code == 302
-        assert response.headers["location"] == "http://example.org/foo"
+        assert response.headers["location"] == "https://example.org/foo"
 
     def test_hit_is_counted(self, client, make_user):
         path = _unique()
@@ -80,4 +85,39 @@ class TestGoResolve:
         response = client.get(f"/go/{path}", follow_redirects=False)
 
         assert response.status_code == 302
-        assert response.headers["location"] == "http://example.org/nested"
+        assert response.headers["location"] == "https://example.org/nested"
+
+
+class TestGoRateLimit:
+    def test_all_paths_share_one_quota_per_address(self, client):
+        allowed = int(go.REDIRECT_LIMIT.split("/")[0])
+
+        statuses = [
+            client.get(f"/go/{_unique()}", follow_redirects=False).status_code
+            for _ in range(allowed + 1)
+        ]
+
+        assert 429 not in statuses[:allowed]
+        assert statuses[allowed] == 429
+
+    def test_the_limit_answer_is_the_german_detail(self, client):
+        allowed = int(go.REDIRECT_LIMIT.split("/")[0])
+        for _ in range(allowed):
+            client.get(f"/go/{_unique()}", follow_redirects=False)
+
+        response = client.get(f"/go/{_unique()}", follow_redirects=False)
+
+        assert response.status_code == 429
+        assert response.json() == {
+            "detail": "Zu viele Anfragen. Bitte später erneut versuchen."
+        }
+
+    def test_another_address_has_its_own_quota(self, client):
+        allowed = int(go.REDIRECT_LIMIT.split("/")[0])
+        for _ in range(allowed + 1):
+            client.get(f"/go/{_unique()}", follow_redirects=False)
+
+        other = TestClient(app, client=("198.51.100.77", 50000))
+        response = other.get(f"/go/{_unique()}", follow_redirects=False)
+
+        assert response.status_code == 404

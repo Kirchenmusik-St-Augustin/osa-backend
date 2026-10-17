@@ -109,16 +109,38 @@ class TestCrudRoundtrip:
 
 
 class TestValidation:
-    def test_duplicate_werk_within_same_scope_returns_422(self, client, make_user):
+    def test_the_same_work_can_be_created_twice(self, client, make_user):
         headers = _auth_headers(client, make_user)
         werk = _unique()
-        client.post(
-            "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
+
+        responses = [
+            client.post(
+                "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
+            )
+            for _ in range(2)
+        ]
+
+        assert [response.status_code for response in responses] == [201, 201]
+        assert responses[0].json()["id"] != responses[1].json()["id"]
+
+    def test_a_card_with_an_identical_sibling_can_be_saved(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        werk = _unique()
+        ids = [
+            client.post(
+                "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
+            ).json()["id"]
+            for _ in range(2)
+        ]
+
+        response = client.put(
+            f"/scores/{ids[0]}",
+            json=_payload(werk=werk, surname="Bach", boxnr="2.13"),
+            headers=headers,
         )
-        response = client.post(
-            "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
-        )
-        assert response.status_code == 422
+
+        assert response.status_code == 200
+        assert response.json()["fields"]["boxnr"] == "2.13"
 
     def test_invalid_select_value_returns_422(self, client, make_user):
         headers = _auth_headers(client, make_user)

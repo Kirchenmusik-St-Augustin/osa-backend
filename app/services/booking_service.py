@@ -1651,12 +1651,20 @@ def send_message_to_cast(
     Returns (to_emails, sender_name, message) for the ROUTER to schedule
     via `JobQueue.enqueue(send_user_message_email_task, ...)` -- the
     service layer stays framework-agnostic (no FastAPI import)."""
-    _get_performance_or_404(db, performance_id)
-    users_by_id = _users_by_id(db, set(data.recipient_ids))
+    performance = _get_performance_or_404(db, performance_id)
+    setup = performance_service.get_setup(db, performance_id)
+    # Only people who are actually booked on this performance may be written
+    # to: the client-supplied ids are an upper bound, never a mailing list.
+    booked_ids = set(
+        _ordered_recipient_ids(_booked_cast(db, performance, setup), None, None)
+    )
+    users_by_id = _users_by_id(db, booked_ids & set(data.recipient_ids))
     to_emails = [
         user.email
         for user in users_by_id.values()
-        if user.email is not None and user.email_verified_at is not None
+        if user.email is not None
+        and user.email_verified_at is not None
+        and user.deleted_at is None
     ]
     if not to_emails:
         raise MessageRecipientsEmptyError

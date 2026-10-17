@@ -40,3 +40,40 @@ registry to the request model, ENUM labels and columns;
   registry.
 - Jobs become user- or tenant-defined: use a scheduler store that is excluded
   from the nightly restore.
+
+## ADR-2: Synchronous database access
+
+**Status:** accepted, 2026-10-17
+
+All handlers that touch the database are plain `def` functions that Starlette
+runs in its thread pool. The driver is `psycopg2` with a synchronous `Session`
+(no `AsyncSession`, no asyncpg).
+
+**Decision:** database access stays synchronous. This is a deliberate
+exception to the rule that database access goes through an async driver.
+
+**Why**
+
+- The service layer, the Alembic setup and the worker's job bodies share one
+  synchronous code path. An async session would change `app/services` and the
+  test fixtures as a whole.
+- One web worker serves a low-concurrency internal tool (rarely more than 50
+  concurrent users), so throughput is not the constraint and async buys
+  nothing at this scale.
+- Async SQLAlchemy brings its own bug class: coverage.py silently loses the
+  trace across `greenlet_spawn`.
+
+**Limits**
+
+- The request thread pool is larger than the connection pool, so a burst waits
+  for a connection. The wait is bounded by the pool timeout configured in
+  `app/db/database.py`.
+- No handler may call blocking I/O inside an `async def`.
+
+**Revisit when**
+
+- the connection pool becomes the bottleneck (the log regularly shows requests
+  that waited for a connection or ran into the pool timeout),
+- more than 50 users are active at the same time on a regular basis, not only
+  in rare peaks, or
+- a second async-only dependency is added.

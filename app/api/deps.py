@@ -130,6 +130,14 @@ def _get_verified_user(
     return user
 
 
+def get_current_session_id(token: str = Depends(oauth2_scheme)) -> str:
+    """The server-side session (JWT `jti`) the request was made with, for
+    operations that must treat the caller's own session differently from all
+    others (for example a password change)."""
+    _email, token_id = _decode_token(token)
+    return token_id
+
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),

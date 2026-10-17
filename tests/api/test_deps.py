@@ -249,3 +249,16 @@ def test_each_rejected_token_raises_its_own_exception_object(db_session):
     assert first.value is not second.value
     assert first.value.status_code == 401
     assert second.value.status_code == 401
+
+
+def test_current_session_id_is_the_jti_of_the_token():
+    token, session_id = create_access_token(subject="someone@example.com")
+
+    assert deps.get_current_session_id(token) == session_id
+
+
+def test_current_session_id_rejects_an_invalid_token():
+    with pytest.raises(HTTPException) as exc_info:
+        deps.get_current_session_id("not-a-jwt")
+
+    assert exc_info.value.status_code == 401

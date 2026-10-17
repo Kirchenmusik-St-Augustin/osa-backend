@@ -356,6 +356,24 @@ class TestBillingNoPastLock:
         assert response.json()["billing"]["sum"] >= 0
 
 
+def _book(client, headers, performance_id, instrument_id, user) -> None:
+    response = client.post(
+        f"/performances/{performance_id}/cast",
+        json={
+            "cast": {
+                "instruments": [
+                    {"id": instrument_id, "cast": [{"id": str(user.id), "fee": 80}]}
+                ],
+                "voices": [],
+                "choirjobs": [],
+            },
+            "not_booked": [],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+
 class TestMessageToCast:
     def test_send_message_returns_ok_for_verified_recipient(
         self, client, make_user, db_session, fake_arq_pool
@@ -368,6 +386,8 @@ class TestMessageToCast:
         recipient = make_user()
         recipient.email_verified_at = datetime.now(UTC)
         db_session.commit()
+        _qualify(db_session, recipient.id, instrument_id)
+        _book(client, headers, performance_id, instrument_id, recipient)
 
         response = client.post(
             f"/performances/{performance_id}/message-to-cast/send",
@@ -381,6 +401,27 @@ class TestMessageToCast:
             fake_arq_pool.enqueue_job.call_args.args[0]
             == "send_user_message_email_task"
         )
+
+    def test_send_message_returns_422_for_a_user_who_is_not_booked(
+        self, client, make_user, db_session, fake_arq_pool
+    ):
+        headers, _ = _auth_headers(client, make_user, roles=["disponent"])
+        instrument_id = _make_instrument(client, make_user)
+        performance_id = _make_performance(
+            client, make_user, headers, instrument_id=instrument_id
+        )
+        outsider = make_user()
+        outsider.email_verified_at = datetime.now(UTC)
+        db_session.commit()
+
+        response = client.post(
+            f"/performances/{performance_id}/message-to-cast/send",
+            json={"recipient_ids": [str(outsider.id)], "message": "Hallo!"},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        fake_arq_pool.enqueue_job.assert_not_called()
 
     def test_send_message_returns_422_when_no_recipient_verified(
         self, client, make_user

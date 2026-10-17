@@ -2,7 +2,9 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
+from app.db.models.shorturl import Shorturl
 from app.schemas.shorturl import ShorturlRequest
 from app.services import shorturl_service
 
@@ -20,17 +22,38 @@ def _request(
     return ShorturlRequest(path=path or _unique(), target=target)
 
 
-class TestEnsureScheme:
-    def test_prepends_http_when_scheme_missing(self):
-        assert shorturl_service.ensure_scheme("example.org") == "http://example.org"
+class TestNormalizeTarget:
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            ("example.org", "https://example.org"),
+            ("example.org/foo?a=1#x", "https://example.org/foo?a=1#x"),
+            ("localhost:8080/x", "https://localhost:8080/x"),
+            ("  example.org  ", "https://example.org"),
+            ("http://example.org/foo", "http://example.org/foo"),
+            ("https://example.org/foo", "https://example.org/foo"),
+            ("HTTPS://Example.org", "HTTPS://Example.org"),
+        ],
+    )
+    def test_accepts_http_addresses_and_defaults_to_https(self, given, expected):
+        assert shorturl_service.normalize_target(given) == expected
 
-    def test_leaves_http_scheme_untouched(self):
-        url = "http://example.org/foo"
-        assert shorturl_service.ensure_scheme(url) == url
-
-    def test_leaves_https_scheme_untouched(self):
-        url = "https://example.org/foo"
-        assert shorturl_service.ensure_scheme(url) == url
+    @pytest.mark.parametrize(
+        "given",
+        [
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///etc/passwd",
+            "ftp://example.org/x",
+            "//example.org/x",
+            "https://",
+            "http:///nohost",
+            "   ",
+        ],
+    )
+    def test_refuses_other_schemes_and_addresses_without_a_host(self, given):
+        with pytest.raises(ValueError, match="http- und https"):
+            shorturl_service.normalize_target(given)
 
 
 class TestListShorturls:
@@ -56,17 +79,30 @@ class TestCreateShorturl:
             db_session, _request(path, target="example.org/foo")
         )
         assert shorturl.path == path
-        assert shorturl.target == "http://example.org/foo"
+        assert shorturl.target == "https://example.org/foo"
         assert shorturl.counter == 0
         assert shorturl.latestcall_at is None
 
-    def test_strips_only_leading_slashes(self, db_session: Session):
-        # Leading slashes only, not trailing/embedded ones.
-        shorturl = shorturl_service.create_shorturl(
-            db_session, _request(f"///{_unique('nested/sub')}/")
-        )
-        assert not shorturl.path.startswith("/")
-        assert shorturl.path.endswith("/")
+    def test_refuses_a_target_that_is_not_an_http_address(self, db_session: Session):
+        with pytest.raises(shorturl_service.ShorturlValidationError) as exc_info:
+            shorturl_service.create_shorturl(
+                db_session, _request(target="javascript:alert(1)")
+            )
+        assert exc_info.value.errors == [
+            ("target", "Nur http- und https-Adressen sind erlaubt.")
+        ]
+
+    def test_reports_a_taken_path_and_a_bad_target_together(self, db_session: Session):
+        path = _unique()
+        shorturl_service.create_shorturl(db_session, _request(path))
+        with pytest.raises(shorturl_service.ShorturlValidationError) as exc_info:
+            shorturl_service.create_shorturl(
+                db_session, _request(path, target="ftp://example.org")
+            )
+        assert sorted(exc_info.value.errors) == [
+            ("path", "Der Pfad ist bereits vergeben."),
+            ("target", "Nur http- und https-Adressen sind erlaubt."),
+        ]
 
     def test_duplicate_path_is_rejected(self, db_session: Session):
         path = _unique()
@@ -75,9 +111,18 @@ class TestCreateShorturl:
             shorturl_service.create_shorturl(db_session, _request(path))
         assert exc_info.value.errors == [("path", "Der Pfad ist bereits vergeben.")]
 
-    def test_path_pattern_rejects_invalid_characters(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(pattern=...)
+    def test_path_rejects_invalid_characters(self):
+        with pytest.raises(ValueError, match="Erlaubt sind Buchstaben"):
             ShorturlRequest(path="bad path!", target="example.org")
+
+    @pytest.mark.parametrize("path", ["/abc", "abc/", "//", "a//b", "/", "a/b/", "a b"])
+    def test_path_rejects_leading_trailing_and_doubled_slashes(self, path):
+        with pytest.raises(ValueError, match="Erlaubt sind Buchstaben"):
+            ShorturlRequest(path=path, target="example.org")
+
+    @pytest.mark.parametrize("path", ["abc", "a-b_c", "Ab1", "nested/sub", "a/b/c"])
+    def test_path_accepts_slash_separated_segments(self, path):
+        assert ShorturlRequest(path=path, target="example.org").path == path
 
 
 class TestUpdateShorturl:
@@ -88,7 +133,7 @@ class TestUpdateShorturl:
             db_session, shorturl.id, _request(new_path, target="example.org/new")
         )
         assert updated.path == new_path
-        assert updated.target == "http://example.org/new"
+        assert updated.target == "https://example.org/new"
 
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(shorturl_service.ShorturlNotFoundError):
@@ -101,7 +146,7 @@ class TestUpdateShorturl:
         updated = shorturl_service.update_shorturl(
             db_session, shorturl.id, _request(shorturl.path, target="example.org/x")
         )
-        assert updated.target == "http://example.org/x"
+        assert updated.target == "https://example.org/x"
 
     def test_duplicate_path_against_another_shorturl_is_rejected(
         self, db_session: Session
@@ -141,7 +186,7 @@ class TestResolveAndRecordHit:
             db_session, _request(target="example.org/known")
         )
         target = shorturl_service.resolve_and_record_hit(db_session, shorturl.path)
-        assert target == "http://example.org/known"
+        assert target == "https://example.org/known"
         reloaded = _reload(db_session, shorturl.path)
         assert reloaded.counter == 1
         assert reloaded.latestcall_at is not None
@@ -151,6 +196,31 @@ class TestResolveAndRecordHit:
         shorturl_service.resolve_and_record_hit(db_session, shorturl.path)
         shorturl_service.resolve_and_record_hit(db_session, shorturl.path)
         assert _reload(db_session, shorturl.path).counter == 2
+
+    def test_hit_costs_a_single_atomic_statement(
+        self, db_session: Session, count_queries
+    ):
+        shorturl = shorturl_service.create_shorturl(db_session, _request())
+        path = shorturl.path
+
+        with count_queries() as counter:
+            shorturl_service.resolve_and_record_hit(db_session, path)
+
+        assert counter.count == 1
+
+    def test_a_stored_target_that_is_not_http_resolves_to_a_miss(
+        self, db_session: Session
+    ):
+        shorturl = shorturl_service.create_shorturl(db_session, _request())
+        stored = db_session.execute(
+            select(Shorturl).where(Shorturl.path == shorturl.path)
+        ).scalar_one()
+        stored.target = "javascript:alert(1)"
+        db_session.commit()
+
+        assert (
+            shorturl_service.resolve_and_record_hit(db_session, shorturl.path) is None
+        )
 
     def test_unknown_path_returns_none(self, db_session: Session):
         assert shorturl_service.resolve_and_record_hit(db_session, _unique()) is None

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, get_verified_user
+from app.api.deps import get_current_session_id
 from app.api.job_queue import JobQueue, get_job_queue
 from app.api.rate_limiting import (
     MAIL_ACTION_LIMIT,
@@ -35,13 +36,18 @@ def get_profile(
 def update_profile(
     request: Request,  # noqa: ARG001
     data: ProfileUpdateRequest,
+    *,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthUser, Depends(get_verified_user)],
+    session_id: Annotated[str, Depends(get_current_session_id)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> UserResponse:
     """get_verified_user is declared before job_queue on purpose, see
-    get_job_queue."""
-    user, email_changed = profile_service.update_profile(db, current_user, data)
+    get_job_queue. The session id keeps the caller logged in when a password
+    change revokes all other sessions."""
+    user, email_changed = profile_service.update_profile(
+        db, current_user, data, current_session_id=session_id
+    )
 
     # Asymmetric with user_service.update_user() by design: a user changing
     # THEIR OWN email gets a new verification mail, unlike an admin editing

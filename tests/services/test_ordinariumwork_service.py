@@ -250,6 +250,88 @@ class TestCreateOrdinariumwork:
 
         assert exc_info.value.errors == [("setup", "instruments: doppelter Eintrag.")]
 
+    def test_reports_every_unknown_position_in_request_order(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        known = _make_instrument(db_session)
+        unknown_first, unknown_second = uuid.uuid4(), uuid.uuid4()
+        setup = OrdinariumworkSetupInput(
+            instruments=[
+                OrdinariumworkPositionInput(id=unknown_first, quantity=1),
+                OrdinariumworkPositionInput(id=known.id, quantity=1),
+                OrdinariumworkPositionInput(id=unknown_second, quantity=1),
+            ]
+        )
+
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id, setup=setup)
+            )
+
+        assert exc_info.value.errors == [
+            ("setup", "instruments: Element nicht gefunden."),
+            ("setup", "instruments: Element nicht gefunden."),
+        ]
+
+    def test_reports_duplicates_and_unknown_positions_together(
+        self, db_session: Session
+    ):
+        artist_id = _make_artist(db_session)
+        instrument = _make_instrument(db_session)
+        setup = OrdinariumworkSetupInput(
+            instruments=[
+                OrdinariumworkPositionInput(id=instrument.id, quantity=1),
+                OrdinariumworkPositionInput(id=instrument.id, quantity=2),
+                OrdinariumworkPositionInput(id=uuid.uuid4(), quantity=1),
+            ]
+        )
+
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id, setup=setup)
+            )
+
+        assert sorted(exc_info.value.errors) == [
+            ("setup", "instruments: Element nicht gefunden."),
+            ("setup", "instruments: doppelter Eintrag."),
+        ]
+
+    def test_validation_cost_does_not_scale_with_the_number_of_positions(
+        self, db_session: Session, count_queries
+    ):
+        artist_id = _make_artist(db_session)
+        # Plain ids, read before counting: the objects expire on every commit
+        # and reading an attribute afterwards would be counted as a query.
+        instrument_ids = [_make_instrument(db_session).id for _ in range(8)]
+        voice_ids = [_make_voice(db_session).id for _ in range(8)]
+
+        def _request_with(count: int) -> OrdinariumworkRequest:
+            return _request(
+                artist_id,
+                setup=OrdinariumworkSetupInput(
+                    instruments=[
+                        OrdinariumworkPositionInput(id=position_id, quantity=1)
+                        for position_id in instrument_ids[:count]
+                    ],
+                    voices=[
+                        OrdinariumworkPositionInput(id=position_id, quantity=1)
+                        for position_id in voice_ids[:count]
+                    ],
+                ),
+            )
+
+        few_request, many_request = _request_with(1), _request_with(8)
+
+        with count_queries() as few:
+            ordinariumwork_service._validate(db_session, few_request, None)
+        with count_queries() as many:
+            ordinariumwork_service._validate(db_session, many_request, None)
+
+        assert many.count == few.count
+
     def test_persists_setup_positions(self, db_session: Session):
         artist_id = _make_artist(db_session)
         instrument = _make_instrument(db_session)

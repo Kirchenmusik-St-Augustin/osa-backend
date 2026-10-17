@@ -10,6 +10,7 @@ see pyproject.toml's per-file-ignores).
 
 import logging
 import smtplib
+import ssl
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -17,7 +18,7 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, Template
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -37,6 +38,15 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "email"
 # registration would let attacker-controlled HTML slip straight into a
 # real mailbox (stored HTML-injection into the disponent's inbox).
 _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=True)
+
+# smtplib has no timeout by default, so a stalled relay would block a worker
+# thread until the job timeout.
+_SMTP_TIMEOUT_SECONDS = 30
+
+# Templates whose body carries a one-time link (a bearer credential until it
+# expires): the copy stored in `sent_emails` keeps everything but the link.
+_LINK_BEARING_TEMPLATES = frozenset({"verify-email", "password-reset"})
+_REMOVED_LINK_PLACEHOLDER = "[Link entfernt]"
 
 
 def _format_short_date(value: datetime) -> str:
@@ -137,14 +147,22 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
     smtp_host = require_setting(settings.smtp_host, "SMTP_HOST")
     smtp_port = require_setting(settings.smtp_port, "SMTP_PORT")
     from_email = settings.smtp_from_email
+    # Verify the server certificate and host name: smtplib's own default
+    # context does neither, which would let anyone on the network path read
+    # the credentials and the mail.
+    tls_context = ssl.create_default_context()
 
     if smtp_port == 465:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+        with smtplib.SMTP_SSL(
+            smtp_host, smtp_port, timeout=_SMTP_TIMEOUT_SECONDS, context=tls_context
+        ) as server:
             if settings.smtp_user.lower() != "null":
                 server.login(settings.smtp_user, settings.smtp_password)
             server.sendmail(from_email, recipients, msg.as_string())
     else:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
+        with smtplib.SMTP(
+            smtp_host, smtp_port, timeout=_SMTP_TIMEOUT_SECONDS
+        ) as server:
             server.ehlo()
             if not server.has_extn("STARTTLS"):
                 msg_text = (
@@ -153,11 +171,28 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
                     "plaintext."
                 )
                 raise RuntimeError(msg_text)
-            server.starttls()
+            server.starttls(context=tls_context)
             server.ehlo()
             if settings.smtp_user.lower() != "null":
                 server.login(settings.smtp_user, settings.smtp_password)
             server.sendmail(from_email, recipients, msg.as_string())
+
+
+def _storable_body(
+    template: Template,
+    html_content: str,
+    template_key: str,
+    context: dict[str, object],
+) -> str:
+    """The mail body as it is persisted in `sent_emails`. For link-bearing
+    templates the template is rendered again with a placeholder instead of
+    the one-time URL, so the log table, the admin viewer, the SQL browser and
+    the database backups never hold a usable verification or password-reset
+    link (a token at rest is a risk, which is why password_reset_tokens
+    keeps only a hash)."""
+    if template_key not in _LINK_BEARING_TEMPLATES:
+        return html_content
+    return template.render(**{**context, "url": _REMOVED_LINK_PLACEHOLDER})
 
 
 def _log_sent_email(
@@ -221,7 +256,8 @@ def _send_templated_email(
         )
         return
 
-    html_content = _jinja_env.get_template(template_name).render(**context)
+    template = _jinja_env.get_template(template_name)
+    html_content = template.render(**context)
     _from_email, from_header = _build_from_header()
 
     msg = MIMEMultipart("alternative")
@@ -238,7 +274,13 @@ def _send_templated_email(
     msg.attach(MIMEText(html_content, "html", "utf-8"))
 
     _send_message(msg, to_emails)
-    _log_sent_email(to_str, subject, html_content, template_key, use_bcc=use_bcc)
+    _log_sent_email(
+        to_str,
+        subject,
+        _storable_body(template, html_content, template_key, context),
+        template_key,
+        use_bcc=use_bcc,
+    )
 
 
 def send_verification_email(to_email: str, verify_url: str) -> None:

@@ -1691,6 +1691,9 @@ class TestMessageToCast:
         recipient = make_user()
         recipient.email_verified_at = datetime.now(UTC)
         db_session.commit()
+        _make_booking(
+            db_session, performance_id, recipient.id, "instruments", instrument.id
+        )
 
         to_emails, sender_name, message = booking_service.send_message_to_cast(
             db_session,
@@ -1710,6 +1713,9 @@ class TestMessageToCast:
         performance_id = _make_performance(db_session, instruments={instrument.id: 1})
         sender = make_user()
         recipient = make_user(verified=False)
+        _make_booking(
+            db_session, performance_id, recipient.id, "instruments", instrument.id
+        )
 
         with pytest.raises(booking_service.MessageRecipientsEmptyError):
             booking_service.send_message_to_cast(
@@ -1717,6 +1723,72 @@ class TestMessageToCast:
                 performance_id,
                 sender,
                 SendMessageRequest(recipient_ids=[recipient.id], message="Hallo!"),
+            )
+
+    def test_send_message_to_cast_ignores_users_who_are_not_booked(
+        self, db_session: Session, make_user
+    ):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        sender = make_user()
+        cast_member = make_user()
+        outsider = make_user()
+        for user in (cast_member, outsider):
+            user.email_verified_at = datetime.now(UTC)
+        db_session.commit()
+        _make_booking(
+            db_session, performance_id, cast_member.id, "instruments", instrument.id
+        )
+
+        to_emails, _sender_name, _message = booking_service.send_message_to_cast(
+            db_session,
+            performance_id,
+            sender,
+            SendMessageRequest(
+                recipient_ids=[cast_member.id, outsider.id], message="Hallo!"
+            ),
+        )
+
+        assert to_emails == [cast_member.email]
+
+    def test_send_message_to_cast_raises_when_every_recipient_is_an_outsider(
+        self, db_session: Session, make_user
+    ):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        sender = make_user()
+        outsider = make_user()
+        outsider.email_verified_at = datetime.now(UTC)
+        db_session.commit()
+
+        with pytest.raises(booking_service.MessageRecipientsEmptyError):
+            booking_service.send_message_to_cast(
+                db_session,
+                performance_id,
+                sender,
+                SendMessageRequest(recipient_ids=[outsider.id], message="Hallo!"),
+            )
+
+    def test_send_message_to_cast_skips_a_booked_user_who_was_deleted(
+        self, db_session: Session, make_user
+    ):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        sender = make_user()
+        deleted_member = make_user()
+        deleted_member.email_verified_at = datetime.now(UTC)
+        deleted_member.deleted_at = datetime.now(UTC)
+        db_session.commit()
+        _make_booking(
+            db_session, performance_id, deleted_member.id, "instruments", instrument.id
+        )
+
+        with pytest.raises(booking_service.MessageRecipientsEmptyError):
+            booking_service.send_message_to_cast(
+                db_session,
+                performance_id,
+                sender,
+                SendMessageRequest(recipient_ids=[deleted_member.id], message="Hallo!"),
             )
 
 

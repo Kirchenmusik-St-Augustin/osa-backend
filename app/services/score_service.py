@@ -10,7 +10,7 @@ from app.schemas.score import (
     ScoreResponse,
     ScoreSearchResult,
 )
-from app.services.errors import DomainValidationError, FieldError, NotFoundError
+from app.services.errors import NotFoundError
 from app.services.score_fields import SCORE_FIELDS
 
 if TYPE_CHECKING:
@@ -26,11 +26,6 @@ _SEARCH_RESULT_LIMIT = 50
 
 class ScoreNotFoundError(NotFoundError):
     """Raised when `score_id` doesn't exist."""
-
-
-class ScoreValidationError(DomainValidationError):
-    """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as fee_service.FeeValidationError."""
 
 
 def get_fields_config() -> dict[str, ScoreFieldConfig]:
@@ -121,51 +116,6 @@ def _get_or_404(db: Session, score_id: uuid.UUID) -> Score:
     return score
 
 
-def _werk_taken(
-    db: Session,
-    *,
-    werk: str,
-    surname: str | None,
-    givenname: str | None,
-    teil: str | None,
-    exclude_id: uuid.UUID | None,
-) -> bool:
-    """Compound-unique rule: `werk` must be unique WITHIN the (surname,
-    givenname, teil) scope, not globally. SQLAlchemy's `== None` below
-    compiles to `IS NULL`, so a duplicate `werk` is also detected when
-    surname/givenname/teil are all blank (a rare blank-composer case that a
-    literal `= NULL` comparison would never match)."""
-    stmt = select(Score.id).where(
-        Score.werk == werk,
-        Score.surname == surname,
-        Score.givenname == givenname,
-        Score.teil == teil,
-    )
-    if exclude_id is not None:
-        stmt = stmt.where(Score.id != exclude_id)
-    return db.execute(stmt).scalar_one_or_none() is not None
-
-
-def _validate(
-    db: Session, data: ScoreRequest, exclude_id: uuid.UUID | None
-) -> list[FieldError]:
-    errors: list[FieldError] = []
-    if _werk_taken(
-        db,
-        werk=data.werk,
-        surname=_normalized_name(data.surname, normalize_surname),
-        givenname=_normalized_name(data.givenname, normalize_givenname),
-        teil=data.teil,
-        exclude_id=exclude_id,
-    ):
-        errors.append(
-            FieldError(
-                "werk", "Name, Komponist und Werkteil müssen zusammen eindeutig sein"
-            )
-        )
-    return errors
-
-
 def search_scores(db: Session, query: str) -> list[ScoreSearchResult]:
     """Filtered in the database (not in memory). Every whitespace-separated
     word in `query` must appear somewhere in "surname givenname werk teil".
@@ -210,10 +160,9 @@ def get_score(db: Session, score_id: uuid.UUID) -> ScoreResponse:
 
 
 def create_score(db: Session, data: ScoreRequest) -> ScoreResponse:
-    errors = _validate(db, data, exclude_id=None)
-    if errors:
-        raise ScoreValidationError(errors)
-
+    """No uniqueness rule on work, composer and part: the archive holds
+    several versions of one work (each its own card, identified by its id),
+    mirroring the historically grown paper archive."""
     score = Score()
     _apply_fields(score, data)
     db.add(score)
@@ -223,10 +172,6 @@ def create_score(db: Session, data: ScoreRequest) -> ScoreResponse:
 
 def update_score(db: Session, score_id: uuid.UUID, data: ScoreRequest) -> ScoreResponse:
     score = _get_or_404(db, score_id)
-    errors = _validate(db, data, exclude_id=score_id)
-    if errors:
-        raise ScoreValidationError(errors)
-
     _apply_fields(score, data)
     db.commit()
     return _to_response(score)

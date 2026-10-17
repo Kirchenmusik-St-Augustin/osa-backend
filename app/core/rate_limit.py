@@ -33,3 +33,16 @@ def rate_limited[**P, R](limit: str) -> Callable[[Callable[P, R]], Callable[P, R
     literal "request: Request" parameter even if its body never reads it:
     slowapi looks the request up by that name."""
     return cast("Callable[[Callable[P, R]], Callable[P, R]]", limiter.limit(limit))
+
+
+def shared_rate_limited[**P, R](
+    limit: str, scope: str
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Like rate_limited(), but every endpoint decorated with the same `scope`
+    shares ONE counter per client address. slowapi counts per request path by
+    default, which would give every path of a catch-all route its own
+    counter."""
+    return cast(
+        "Callable[[Callable[P, R]], Callable[P, R]]",
+        limiter.shared_limit(limit, scope=scope),
+    )

@@ -161,22 +161,19 @@ class TestCreateScore:
         assert result.fields["surname"] == "MOZART"
         assert result.fields["givenname"] == "Wolfgang Amadé"
 
-    def test_duplicate_werk_within_same_composer_and_teil_is_rejected(
-        self, db_session: Session
-    ):
+    def test_the_same_work_can_be_stored_as_several_cards(self, db_session: Session):
         werk = _unique()
-        score_service.create_score(
+        first = score_service.create_score(
             db_session,
             _payload(werk=werk, surname="Haydn", givenname="Joseph", teil=""),
         )
-        with pytest.raises(score_service.ScoreValidationError) as exc_info:
-            score_service.create_score(
-                db_session,
-                _payload(werk=werk, surname="Haydn", givenname="Joseph", teil=""),
-            )
-        assert exc_info.value.errors == [
-            ("werk", "Name, Komponist und Werkteil müssen zusammen eindeutig sein")
-        ]
+        second = score_service.create_score(
+            db_session,
+            _payload(werk=werk, surname="Haydn", givenname="Joseph", teil=""),
+        )
+
+        assert first.id != second.id
+        assert first.fields["werk"] == second.fields["werk"] == werk
 
     def test_same_werk_with_different_teil_is_allowed(self, db_session: Session):
         werk = _unique()
@@ -302,17 +299,33 @@ class TestUpdateScore:
         with pytest.raises(score_service.ScoreNotFoundError):
             score_service.update_score(db_session, uuid.uuid4(), _payload())
 
-    def test_keeping_own_werk_does_not_trigger_uniqueness_error(
-        self, db_session: Session
-    ):
+    def test_a_card_with_identical_siblings_can_be_edited(self, db_session: Session):
         werk = _unique()
-        created = score_service.create_score(db_session, _payload(werk=werk))
-        updated = score_service.update_score(
-            db_session, created.id, _payload(werk=werk, bemerkung="unverändert")
-        )
-        assert updated.fields["werk"] == werk
+        sibling_ids = [
+            score_service.create_score(
+                db_session,
+                _payload(werk=werk, surname="Mozart", givenname="Wolfgang Amadeus"),
+            ).id
+            for _ in range(2)
+        ]
 
-    def test_duplicate_werk_against_another_score_is_rejected(
+        updated = score_service.update_score(
+            db_session,
+            sibling_ids[0],
+            _payload(
+                werk=werk,
+                surname="Mozart",
+                givenname="Wolfgang Amadeus",
+                bemerkung="Box gewechselt",
+            ),
+        )
+
+        assert updated.id == sibling_ids[0]
+        assert updated.fields["bemerkung"] == "Box gewechselt"
+        untouched = score_service.get_score(db_session, sibling_ids[1])
+        assert untouched.fields["bemerkung"] != "Box gewechselt"
+
+    def test_a_card_can_take_over_the_identity_of_another_card(
         self, db_session: Session
     ):
         werk = _unique()
@@ -320,16 +333,15 @@ class TestUpdateScore:
             db_session, _payload(werk=werk, surname="Haydn", givenname="Joseph")
         )
         score = score_service.create_score(db_session, _payload())
-        with pytest.raises(score_service.ScoreValidationError) as exc_info:
-            score_service.update_score(
-                db_session,
-                score.id,
-                _payload(werk=werk, surname="Haydn", givenname="Joseph"),
-            )
-        assert exc_info.value.errors == [
-            ("werk", "Name, Komponist und Werkteil müssen zusammen eindeutig sein")
-        ]
-        assert other.fields["werk"] == werk
+
+        updated = score_service.update_score(
+            db_session,
+            score.id,
+            _payload(werk=werk, surname="Haydn", givenname="Joseph"),
+        )
+
+        assert updated.id == score.id != other.id
+        assert updated.fields["werk"] == other.fields["werk"] == werk
 
 
 class TestGetScore:

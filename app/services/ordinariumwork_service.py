@@ -118,19 +118,25 @@ def _validate_positions(
 ) -> list[FieldError]:
     model = _POSITION_MODELS[position_type]
     errors: list[FieldError] = []
+    requested_ids: list[uuid.UUID] = []
     seen_ids: set[uuid.UUID] = set()
     for item in items:
         if item.id in seen_ids:
             errors.append(FieldError("setup", f"{position_type}: doppelter Eintrag."))
             continue
         seen_ids.add(item.id)
-        exists = db.execute(
-            select(model.id).where(model.id == item.id)
-        ).scalar_one_or_none()
-        if exists is None:
-            errors.append(
-                FieldError("setup", f"{position_type}: Element nicht gefunden.")
-            )
+        requested_ids.append(item.id)
+    if not requested_ids:
+        return errors
+    # One query for the whole list instead of one per position.
+    known_ids = set(
+        db.execute(select(model.id).where(model.id.in_(requested_ids))).scalars()
+    )
+    errors.extend(
+        FieldError("setup", f"{position_type}: Element nicht gefunden.")
+        for position_id in requested_ids
+        if position_id not in known_ids
+    )
     return errors
 
 

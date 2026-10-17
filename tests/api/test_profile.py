@@ -263,3 +263,46 @@ class TestUpdateProfile:
         assert response.status_code == 422
         fields = {error["loc"][1] for error in response.json()["detail"]}
         assert fields == {"surname", "givenname"}
+
+
+class TestPasswordChangeEndsOtherSessions:
+    def _login(self, client, email: str, password: str) -> dict[str, str]:
+        response = client.post(
+            "/auth/login", data={"username": email, "password": password}
+        )
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def test_other_login_is_logged_out_and_the_caller_stays_logged_in(
+        self, client, make_user
+    ):
+        headers, email = _auth_headers(client, make_user)
+        other_headers = self._login(client, email, "Passwort123")
+        assert client.get("/profile", headers=other_headers).status_code == 200
+
+        response = client.put(
+            "/profile",
+            json=_payload(
+                email=email,
+                change_password=True,
+                password="EinNeuesPassw0rt",
+                password_confirmation="EinNeuesPassw0rt",
+            ),
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert client.get("/profile", headers=headers).status_code == 200
+        assert client.get("/profile", headers=other_headers).status_code == 401
+
+    def test_other_login_stays_when_only_the_phone_changes(self, client, make_user):
+        headers, email = _auth_headers(client, make_user)
+        other_headers = self._login(client, email, "Passwort123")
+
+        response = client.put(
+            "/profile",
+            json=_payload(email=email, phone="+43 664 1112233"),
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert client.get("/profile", headers=other_headers).status_code == 200

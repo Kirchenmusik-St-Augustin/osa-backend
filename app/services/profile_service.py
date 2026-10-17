@@ -1,9 +1,10 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.human_names import normalize_givenname, normalize_surname
 from app.core.security import get_password_hash, verify_password
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
 from app.schemas.validators import PASSWORD_UNCHANGED_MESSAGE
 from app.services.errors import (
@@ -48,8 +49,24 @@ def _email_taken(db: Session, email: str, exclude_id: uuid.UUID) -> bool:
     return db.execute(stmt).scalar_one_or_none() is not None
 
 
+def _revoke_other_sessions(
+    db: Session, user: User, current_session_id: str | None
+) -> None:
+    """After a password change every session except the caller's own stops
+    working, so a stolen refresh token does not survive the change. Without
+    a known current session every session is revoked."""
+    stmt = delete(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+    if current_session_id is not None:
+        stmt = stmt.where(PersonalAccessToken.token != current_session_id)
+    db.execute(stmt)
+
+
 def update_profile(
-    db: Session, user: User, data: ProfileUpdateRequest
+    db: Session,
+    user: User,
+    data: ProfileUpdateRequest,
+    *,
+    current_session_id: str | None = None,
 ) -> tuple[User, bool]:
     """Returns (user, email_changed) -- the router decides whether to enqueue
     a new verification mail (job queueing needs a request context this
@@ -87,6 +104,7 @@ def update_profile(
 
     if data.change_password and data.password:
         user.auth_password = get_password_hash(data.password)
+        _revoke_other_sessions(db, user, current_session_id)
     user.givenname = givenname
     user.surname = surname
     user.phone = data.phone

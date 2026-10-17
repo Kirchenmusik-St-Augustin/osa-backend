@@ -11,11 +11,13 @@ from app.core.config import get_settings
 SQLALCHEMY_DATABASE_URL = cast("str", get_settings().database_url)
 
 # Synchronous SQLAlchemy (Session, no AsyncSession/asyncpg/greenlet):
-# osa-backend is a low-concurrency internal scheduling tool (never more
-# than ~10 concurrent users observed in practice), so async's real benefit
+# osa-backend is a low-concurrency internal scheduling tool (rarely more
+# than 50 concurrent users), so async's real benefit
 # (serving many concurrent in-flight I/O waits without consuming a thread
 # each) buys nothing at this scale, while it comes with a concrete bug
 # class (coverage.py silently losing the trace across greenlet_spawn).
+# ARCHITECTURE_DECISIONS.md (ADR-2) records this exception and when to
+# revisit it.
 #
 # pool_pre_ping: pings a pooled connection before handing it out,
 # transparently reconnecting if the server dropped it (e.g. after a

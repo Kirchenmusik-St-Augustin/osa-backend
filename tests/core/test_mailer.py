@@ -1,7 +1,9 @@
+import ssl
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from jinja2 import Template
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core import mailer
@@ -224,7 +226,11 @@ def test_send_message_uses_ssl_for_port_465(monkeypatch: pytest.MonkeyPatch):
         mock_server = mock_ssl.return_value.__enter__.return_value
         mailer._send_message(MagicMock(), ["a@example.test"])
 
-    mock_ssl.assert_called_once_with("smtp.test.invalid", 465)
+    mock_ssl.assert_called_once()
+    assert mock_ssl.call_args.args == ("smtp.test.invalid", 465)
+    assert mock_ssl.call_args.kwargs["timeout"] == 30
+    assert mock_ssl.call_args.kwargs["context"].verify_mode == ssl.CERT_REQUIRED
+    assert mock_ssl.call_args.kwargs["context"].check_hostname is True
     mock_server.login.assert_called_once_with("user", "secret")
 
 
@@ -239,6 +245,23 @@ def test_send_message_uses_starttls_when_available(monkeypatch: pytest.MonkeyPat
 
     mock_server.starttls.assert_called_once()
     assert mock_server.ehlo.call_count == 2
+
+
+def test_starttls_connection_verifies_the_server_certificate_and_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "587")
+
+    with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
+        mock_server = mock_smtp.return_value.__enter__.return_value
+        mock_server.has_extn.return_value = True
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    context = mock_server.starttls.call_args.kwargs["context"]
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert mock_smtp.call_args.kwargs["timeout"] == 30
 
 
 def test_send_message_refuses_to_send_when_starttls_unavailable(
@@ -439,3 +462,67 @@ class TestSendUserMessageEmail:
         )
         assert "<script>" not in row.body
         assert "&lt;script&gt;" in row.body
+
+
+class TestStoredBodiesOmitOneTimeLinks:
+    """A verification or password-reset URL is a credential until it expires:
+    the mail carries it, the stored copy must not."""
+
+    def _sent_html(self, mock_send: MagicMock) -> str:
+        message = mock_send.call_args.args[0]
+        return message.get_payload()[0].get_payload(decode=True).decode()
+
+    def test_stored_password_reset_mail_has_no_link(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        link = (
+            "https://app.example/reset-password?token=SECRET-TOKEN&email=a@example.test"
+        )
+
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_password_reset_email("a@example.test", link)
+
+        stored = db_session.query(SentEmail).one()
+        assert "SECRET-TOKEN" not in stored.body
+        assert "[Link entfernt]" in stored.body
+        assert stored.headers == "password-reset"
+        assert "SECRET-TOKEN" in self._sent_html(mock_send)
+
+    def test_stored_verification_mail_has_no_link(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        link = "https://app.example/verify-email?token=ANOTHER-SECRET"
+
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_verification_email("a@example.test", link)
+
+        stored = db_session.query(SentEmail).one()
+        assert "ANOTHER-SECRET" not in stored.body
+        assert "Bestätigungslink" in stored.body
+        assert "ANOTHER-SECRET" in self._sent_html(mock_send)
+
+    def test_other_mails_are_stored_unchanged(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+
+        with patch("app.core.mailer._send_message"):
+            mailer.send_user_message_email(["a@example.test"], "Sender", "Hallo Welt")
+
+        stored = db_session.query(SentEmail).one()
+        assert "Hallo Welt" in stored.body
+        assert "[Link entfernt]" not in stored.body
+
+    def test_only_link_bearing_templates_get_the_placeholder(self):
+        template = Template('<a href="{{ url }}">Link</a>')
+        context: dict[str, object] = {"url": "https://x.test/?t=SECRET"}
+        html = template.render(**context)
+
+        link_bearing = mailer._storable_body(template, html, "password-reset", context)
+        other = mailer._storable_body(template, html, "some-other-mail", context)
+
+        assert "SECRET" not in link_bearing
+        assert "[Link entfernt]" in link_bearing
+        assert other == html
