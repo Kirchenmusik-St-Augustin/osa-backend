@@ -199,7 +199,9 @@ podman exec -it osa-backend python scripts/restore_db.py --force
 ```
 
 `restore_db.py` refuses to run under `APP_ENVIRONMENT=production` without
-`--force` — a restore overwrites the live database. See
+`--force`, because a restore overwrites the live database. Before it starts, the
+script names the target database and the backup and asks for the database
+name to be typed; `--yes` skips that question for unattended use. See
 [`osa-deploy`'s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy) for the full disaster
 recovery runbook.
 
@@ -437,8 +439,10 @@ podman exec -it osa-backend python scripts/restore_db.py --force
 ```
 
 `restore_db.py` verweigert sich unter `APP_ENVIRONMENT=production` ohne
-`--force` — ein Restore überschreibt die Live-Datenbank. Das vollständige
-Disaster-Recovery-Runbook steht in
+`--force`, denn ein Restore überschreibt die Live-Datenbank. Vor dem Start nennt
+das Skript die Ziel-Datenbank und das Backup und verlangt, dass der Name der
+Datenbank eingetippt wird; `--yes` überspringt diese Rückfrage für den
+unbeaufsichtigten Betrieb. Das vollständige Disaster-Recovery-Runbook steht in
 [`osa-deploy`s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy).
 
 ## Branching
