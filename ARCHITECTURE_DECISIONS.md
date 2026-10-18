@@ -77,3 +77,25 @@ exception to the rule that database access goes through an async driver.
 - more than 50 users are active at the same time on a regular basis, not only
   in rare peaks, or
 - a second async-only dependency is added.
+
+## ADR-2: Synchronous database access
+
+**Status:** accepted
+
+All handlers that touch the database are plain `def` functions that Starlette runs in its thread pool; the driver is `psycopg2` with a synchronous `Session`.
+
+**Why:** the whole service layer, the Alembic setup and the worker's job bodies share one synchronous code path; one gunicorn worker serves roughly a hundred members, so throughput is not the constraint.
+
+**Limits:** the thread pool (40) is larger than the connection pool (5 + 5 overflow), so a burst waits for connections, bounded by `pool_timeout`; no handler may call blocking I/O inside an `async def`.
+
+**Revisit when:** the request rate makes the connection pool the bottleneck, or a second async-only dependency is added.
+
+## ADR-3: arq job serialization
+
+**Status:** accepted
+
+Jobs travel between the web container and the worker container with arq's default serializer (pickle). Both run the same image in the same trust zone, and Valkey is bound to the pod's loopback and password protected.
+
+**Limits:** whoever can write to Valkey can make the worker execute code, so Valkey must never be shared with another service.
+
+**Revisit when:** Valkey is shared with another service; switch to a JSON serializer then.

@@ -99,3 +99,56 @@ class TestMainBackup:
 
         assert exc_info.value.code == 1
         assert "upload failed" in capsys.readouterr().err
+
+
+class TestMainRefusals:
+    def test_dry_run_without_cleanup_is_refused_before_anything_is_uploaded(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ):
+        backups_made: list[str] = []
+        monkeypatch.setattr(
+            backup_db, "run_backup", lambda: backups_made.append("x") or "x.dump"
+        )
+        monkeypatch.setattr(sys, "argv", ["backup_db.py", "--dry-run"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            backup_db.main()
+
+        assert exc_info.value.code == 2
+        assert "--cleanup" in capsys.readouterr().err
+        assert backups_made == []
+
+    def test_a_failing_listing_is_reported_without_a_traceback(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ):
+        def failing_listing() -> list[str]:
+            msg = "Koofr unreachable"
+            raise BackupError(msg)
+
+        monkeypatch.setattr(backup_db, "list_backups", failing_listing)
+        monkeypatch.setattr(sys, "argv", ["backup_db.py", "--list"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            backup_db.main()
+
+        assert exc_info.value.code == 1
+        assert "ERROR: Koofr unreachable" in capsys.readouterr().err
+
+    def test_a_failing_cleanup_after_a_successful_backup_exits_with_1(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ):
+        def failing_cleanup(**_kwargs: object) -> list[str]:
+            msg = "delete refused"
+            raise BackupError(msg)
+
+        monkeypatch.setattr(backup_db, "run_backup", lambda: "new.dump")
+        monkeypatch.setattr(backup_db, "cleanup_old_backups", failing_cleanup)
+        monkeypatch.setattr(sys, "argv", ["backup_db.py", "--cleanup"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            backup_db.main()
+
+        captured = capsys.readouterr()
+        assert exc_info.value.code == 1
+        assert "Backup complete: new.dump" in captured.out
+        assert "ERROR: delete refused" in captured.err

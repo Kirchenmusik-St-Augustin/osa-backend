@@ -1,4 +1,5 @@
 import uuid
+from typing import ClassVar
 
 import pytest
 
@@ -257,3 +258,70 @@ class TestDeleteInUse:
 
         assert delete_response.status_code == 422
         assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
+
+
+class TestWritePermissionsAndErrors:
+    _BODY: ClassVar[dict[str, object]] = {
+        "surname": "Haydn",
+        "givenname": "Joseph",
+        "description": None,
+        "birthyear": None,
+        "deathyear": None,
+        "composer": True,
+        "conductor": False,
+    }
+
+    def test_create_update_and_delete_require_planner_or_disponent(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user, roles=[])
+        some_id = uuid.uuid4()
+
+        responses = [
+            client.post("/artists", json=self._BODY, headers=headers),
+            client.put(f"/artists/{some_id}", json=self._BODY, headers=headers),
+            client.delete(f"/artists/{some_id}", headers=headers),
+        ]
+
+        assert [response.status_code for response in responses] == [403, 403, 403]
+
+    def test_write_routes_require_authentication(self, client):
+        some_id = uuid.uuid4()
+
+        responses = [
+            client.post("/artists", json=self._BODY),
+            client.put(f"/artists/{some_id}", json=self._BODY),
+            client.delete(f"/artists/{some_id}"),
+        ]
+
+        assert [response.status_code for response in responses] == [401, 401, 401]
+
+    def test_unknown_artist_is_404_for_get_update_and_delete(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        unknown = uuid.uuid4()
+
+        responses = [
+            client.get(f"/artists/{unknown}", headers=headers),
+            client.put(f"/artists/{unknown}", json=self._BODY, headers=headers),
+            client.delete(f"/artists/{unknown}", headers=headers),
+        ]
+
+        assert [response.status_code for response in responses] == [404, 404, 404]
+
+    def test_the_same_name_in_another_letter_case_is_rejected_at_both_fields(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        surname, givenname = _unique("Dupe"), _unique("Case")
+        body = {**self._BODY, "surname": surname, "givenname": givenname}
+        assert client.post("/artists", json=body, headers=headers).status_code == 201
+
+        response = client.post(
+            "/artists",
+            json={**body, "surname": surname.upper(), "givenname": givenname.lower()},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        fields = {error["loc"][-1] for error in response.json()["detail"]}
+        assert fields == {"surname", "givenname"}

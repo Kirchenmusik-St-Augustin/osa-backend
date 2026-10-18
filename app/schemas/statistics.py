@@ -20,4 +20,5 @@ class StatisticsOutput(BaseModel):
     ordinariumworks: int
     propriumworks: int
     scores: int
-    email: StatisticsEmailOutput
+    # Only for holders of the sentEmailView permission.
+    email: StatisticsEmailOutput | None

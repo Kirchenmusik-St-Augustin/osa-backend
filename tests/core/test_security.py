@@ -153,3 +153,25 @@ def test_generate_and_hash_reset_token_roundtrip():
 
     assert security.verify_reset_token(token, hashed)
     assert not security.verify_reset_token("wrong-token", hashed)
+
+
+def test_production_never_hashes_below_the_minimum_work_factor(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    production = security._settings.model_copy(
+        update={"app_environment": "production", "bcrypt_rounds": 4}
+    )
+    monkeypatch.setattr(security, "_settings", production)
+
+    assert security.get_password_hash("correct horse").startswith("$2b$12$")
+
+
+def test_outside_production_the_configured_work_factor_is_used(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    configured = security._settings.model_copy(
+        update={"app_environment": "development", "bcrypt_rounds": 5}
+    )
+    monkeypatch.setattr(security, "_settings", configured)
+
+    assert security.get_password_hash("correct horse").startswith("$2b$05$")

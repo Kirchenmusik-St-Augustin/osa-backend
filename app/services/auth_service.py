@@ -331,7 +331,8 @@ def check_registration_conflicts(
 
     name_taken = db.execute(
         select(User.id).where(
-            func.lower(User.surname) == surname.lower(),
+            # Compared in the stored (normalized) form: "ß" becomes "SS".
+            func.lower(User.surname) == normalize_surname(surname).lower(),
             func.lower(User.givenname) == givenname.lower(),
         )
     ).first()

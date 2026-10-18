@@ -1011,3 +1011,39 @@ def test_google_callback_and_link_are_rate_limited(
             assert response.status_code != 429
         blocked_link = client.post("/auth/google/link", json=link_payload)
         assert blocked_link.status_code == 429
+
+
+def test_refresh_cookie_carries_the_security_flags(client, make_user):
+    # The cookie is SameSite=None on purpose: the frontend and the API may live
+    # on different domains (the CSRF origin check covers that). HttpOnly and
+    # Secure must never be dropped by a refactor.
+    user = make_user(password="correct-password")
+
+    response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+
+    cookie = response.headers.get_list("set-cookie")[0]
+    assert "HttpOnly" in cookie
+    assert "Secure" in cookie
+    assert "SameSite=none" in cookie
+    assert "Path=/api/auth" in cookie
+
+
+def test_after_logout_neither_the_access_token_nor_the_refresh_cookie_works(
+    client, make_user
+):
+    user = make_user(password="correct-password")
+    login_response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+    client.cookies.set("refresh_token", login_response.cookies["refresh_token"])
+
+    logout = client.post("/auth/logout", headers=headers)
+    me_after_logout = client.get("/auth/me", headers=headers)
+    refresh_after_logout = client.post("/auth/refresh")
+
+    assert logout.status_code == 200
+    assert me_after_logout.status_code == 401
+    assert refresh_after_logout.status_code == 401

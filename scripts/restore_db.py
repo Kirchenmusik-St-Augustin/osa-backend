@@ -23,6 +23,15 @@ from app.services.backup_service import (
 )
 
 
+def _print_backups() -> None:
+    backups = list_backups()
+    if not backups:
+        print("No backups found.", file=sys.stderr)
+        return
+    for name in backups:
+        print(name)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Restore the DB from a Koofr WebDAV backup.",
@@ -44,16 +53,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.list:
-        backups = list_backups()
-        if not backups:
-            print("No backups found.", file=sys.stderr)
-            sys.exit(0)
-        for name in backups:
-            print(name)
-        sys.exit(0)
-
     try:
+        if args.list:
+            _print_backups()
+            sys.exit(0)
         restored = run_restore(backup_name=args.backup_name, force=args.force)
         print(f"Restore complete. Backup: {restored}")
     except BackupError as exc:

@@ -68,21 +68,20 @@ def main() -> None:
         help="With --cleanup: report what would be deleted, without deleting it.",
     )
     args = parser.parse_args()
-
-    if args.list:
-        _print_backup_list()
-        sys.exit(0)
+    if args.dry_run and not args.cleanup:
+        parser.error("--dry-run only makes sense together with --cleanup.")
 
     try:
+        if args.list:
+            _print_backup_list()
+            sys.exit(0)
         backup_name = run_backup()
+        print(f"Backup complete: {backup_name}")
+        if args.cleanup:
+            _run_cleanup(dry_run=args.dry_run)
     except BackupError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    print(f"Backup complete: {backup_name}")
-
-    if args.cleanup:
-        _run_cleanup(dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

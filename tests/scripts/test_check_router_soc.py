@@ -11,35 +11,20 @@ def test_find_violations_empty_when_clean() -> None:
     assert check_router_soc.find_violations() == {}
 
 
-def test_pattern_matches_direct_db_calls() -> None:
-    pattern = check_router_soc.VIOLATION_PATTERN
-    assert pattern.search("x = db.query(Foo)")
-    assert pattern.search("db.add(item)")
-    assert pattern.search("db.commit()")
-    assert pattern.search('db.execute(text("x"))')
-    assert pattern.search("db.delete(item)")
-
-
-def test_pattern_does_not_match_unrelated_names() -> None:
-    pattern = check_router_soc.VIOLATION_PATTERN
-    assert not pattern.search("foo_db.query(Bar)")
-    assert not pattern.search("sub_db.commit()")
-    assert not pattern.search("auth_service.get_active_user(db)")
-
-
 def test_pattern_matches_persistence_model_imports() -> None:
-    pattern = check_router_soc.VIOLATION_PATTERN
+    pattern = check_router_soc.MODEL_IMPORT_PATTERN
     assert pattern.search("from app.db.models.user import User")
     assert pattern.search("import app.db.models.user")
     assert pattern.search("    from app.db.models.artist import Artist")
 
 
 def test_pattern_does_not_match_other_imports() -> None:
-    pattern = check_router_soc.VIOLATION_PATTERN
+    pattern = check_router_soc.MODEL_IMPORT_PATTERN
     assert not pattern.search("from app.db.database import get_db")
     assert not pattern.search("from app.api.auth_guards import AuthUser")
     assert not pattern.search("from app.services import artist_service")
     assert not pattern.search("from app.db.models_extra import Thing")
+    assert not pattern.search("db.commit()")
 
 
 def test_find_violations_detects_a_model_import(tmp_path) -> None:
@@ -57,6 +42,14 @@ def test_find_violations_detects_a_model_import(tmp_path) -> None:
     }
 
 
+def _violations_of(tmp_path, source: str) -> dict:
+    router_dir = tmp_path / "router_includes"
+    router_dir.mkdir()
+    (router_dir / "router.py").write_text(source)
+    with patch.object(check_router_soc, "ROUTER_DIR", router_dir):
+        return check_router_soc.find_violations()
+
+
 def test_find_violations_detects_bad_file(tmp_path) -> None:
     router_dir = tmp_path / "router_includes"
     router_dir.mkdir()
@@ -68,6 +61,42 @@ def test_find_violations_detects_bad_file(tmp_path) -> None:
 
     assert list(violations.keys()) == [router_dir / "bad.py"]
     assert violations[router_dir / "bad.py"] == [(2, "return db.query(Foo).all()")]
+
+
+@pytest.mark.parametrize("method", sorted(check_router_soc.SESSION_METHODS))
+def test_every_session_method_is_detected_on_the_conventional_name(
+    tmp_path, method: str
+) -> None:
+    violations = _violations_of(tmp_path, f"def f(db):\n    db.{method}(x)\n")
+
+    assert [lineno for _, hits in violations.items() for lineno, _ in hits] == [2]
+
+
+def test_a_session_under_another_name_is_detected_through_its_annotation(
+    tmp_path,
+) -> None:
+    source = (
+        "from typing import Annotated\n"
+        "from sqlalchemy.orm import Session\n\n\n"
+        "def f(session: Annotated[Session, Depends(get_db)]):\n"
+        "    session.commit()\n"
+        "    return session.scalars(select(X))\n"
+    )
+
+    violations = _violations_of(tmp_path, source)
+
+    assert [lineno for _, hits in violations.items() for lineno, _ in hits] == [6, 7]
+
+
+def test_methods_of_other_objects_are_not_flagged(tmp_path) -> None:
+    source = (
+        "def f(items, foo_db, session):\n"
+        "    items.add(1)\n"
+        "    foo_db.commit()\n"
+        "    session.add(2)\n"
+    )
+
+    assert _violations_of(tmp_path, source) == {}
 
 
 def test_main_exits_zero_when_clean(capsys) -> None:

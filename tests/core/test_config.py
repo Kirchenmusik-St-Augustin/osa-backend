@@ -231,3 +231,18 @@ def test_max_request_body_bytes_can_be_overridden(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "2048")
 
     assert Settings().max_request_body_bytes == 2048
+
+
+def test_blank_environment_values_count_as_unset(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("SMTP_PORT", "")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+    monkeypatch.setenv("KOOFR_USER", "")
+
+    settings = Settings()
+
+    assert settings.smtp_port is None
+    assert settings.google_client_id is None
+    assert settings.koofr_user is None

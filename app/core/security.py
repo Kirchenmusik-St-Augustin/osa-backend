@@ -45,9 +45,20 @@ def verify_password(plain_password: str, hashed_password: str | None) -> bool:
         return False
 
 
+_MIN_PRODUCTION_BCRYPT_ROUNDS = 12
+
+
+def _bcrypt_rounds() -> int:
+    """Production never hashes below the minimum, so a wrong value in an
+    environment file cannot weaken real hashes."""
+    if _settings.app_environment == "production":
+        return max(_settings.bcrypt_rounds, _MIN_PRODUCTION_BCRYPT_ROUNDS)
+    return _settings.bcrypt_rounds
+
+
 def get_password_hash(password: str) -> str:
     password_bytes = password.encode("utf-8")
-    salt = bcrypt.gensalt(rounds=12)
+    salt = bcrypt.gensalt(rounds=_bcrypt_rounds())
     return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 

@@ -3,6 +3,7 @@ from app.services.permission_service import (
     PERMISSION_RULES,
     calculate_permissions,
     get_permission_rules_display,
+    has_permission,
 )
 
 
@@ -98,3 +99,37 @@ def test_permission_rules_display_has_description_per_rule():
     for entry in display:
         assert entry["permission"]
         assert entry["description"]
+
+
+def test_a_role_the_matrix_does_not_know_grants_nothing(make_user):
+    # Role names are matched by value: look-alikes must not be treated as the
+    # real role.
+    baseline = calculate_permissions(make_user(roles=[]))
+
+    look_alikes = make_user(roles=["Planner", "admin", "planner "])
+
+    assert calculate_permissions(look_alikes) == baseline
+
+
+def test_the_administrator_flag_alone_never_grants_the_role_gated_permissions(
+    make_user,
+):
+    permissions = calculate_permissions(make_user(administrator=True))
+
+    for role_gated in (
+        "performanceCast",
+        "performanceBilling",
+        "feeMaintain",
+        "scoreMaintain",
+        "shorturlMaintain",
+    ):
+        assert role_gated not in permissions
+
+
+def test_has_permission_agrees_with_calculate_permissions(make_user):
+    user = make_user(administrator=True)
+
+    for permission in ALL_PERMISSIONS:
+        assert has_permission(user, permission) == (
+            permission in calculate_permissions(user)
+        )

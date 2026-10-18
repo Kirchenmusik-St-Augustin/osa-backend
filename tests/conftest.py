@@ -24,6 +24,9 @@ import os
 from urllib.parse import urlsplit
 
 os.environ["APP_ENVIRONMENT"] = "test"
+# The suite hashes a password for almost every test; the minimum work factor
+# keeps that fast. Production clamps to at least 12 (see app.core.security).
+os.environ["BCRYPT_ROUNDS"] = "4"
 os.environ["CORS_ORIGINS"] = "http://localhost:21001"
 os.environ["SECRET_KEY"] = "test-secret-key-" + "x" * 32
 

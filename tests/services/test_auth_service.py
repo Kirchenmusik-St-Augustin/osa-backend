@@ -494,18 +494,42 @@ def test_logout_user_deletes_session_and_sets_lastlogout(db_session, make_user):
     assert created.auth_lastlogout is not None
 
 
-def test_logout_user_ignores_garbage_token(db_session):
-    # Must not raise -- logout is a best-effort cleanup.
+def _session_count_of(db_session, user) -> int:
+    return len(
+        db_session.execute(
+            select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def test_logout_user_ignores_garbage_token(db_session, make_user):
+    # Must not raise -- logout is a best-effort cleanup -- and must not touch
+    # anybody's session.
+    created = make_user()
+    auth_service.create_user_session(db_session, created)
+
     auth_service.logout_user(db_session, "not-a-real-jwt")
 
+    assert _session_count_of(db_session, created) == 1
+    db_session.refresh(created)
+    assert created.auth_lastlogout is None
 
-def test_logout_user_ignores_token_without_jti(db_session):
+
+def test_logout_user_ignores_token_without_jti(db_session, make_user):
+    created = make_user()
+    auth_service.create_user_session(db_session, created)
     token_without_jti = jwt.encode(
-        {"sub": "someone@example.test"}, SECRET_KEY, algorithm=ALGORITHM
+        {"sub": created.email}, SECRET_KEY, algorithm=ALGORITHM
     )
 
     # Must not raise -- same best-effort semantics as a garbage token.
     auth_service.logout_user(db_session, token_without_jti)
+
+    assert _session_count_of(db_session, created) == 1
+    db_session.refresh(created)
+    assert created.auth_lastlogout is None
 
 
 def test_logout_user_ignores_unknown_session(db_session, make_user):
@@ -521,6 +545,10 @@ def test_logout_user_ignores_unknown_session(db_session, make_user):
     db_session.commit()
 
     auth_service.logout_user(db_session, access_token)
+
+    assert _session_count_of(db_session, created) == 0
+    db_session.refresh(created)
+    assert created.auth_lastlogout is None
 
 
 def test_log_auth_event_persists_row(db_session):
@@ -599,6 +627,21 @@ def test_register_user_rejects_duplicate_name_combo_case_insensitive(db_session)
 
     fields = {field for field, _msg in exc_info.value.errors}
     assert fields == {"givenname", "surname"}
+
+
+def test_register_rejects_a_name_with_a_sharp_s_that_is_already_taken(db_session):
+    unique = uuid.uuid4().hex[:8]
+    auth_service.register_user(
+        db_session, _register_request(surname="Strauß", givenname=f"Johann{unique}")
+    )
+
+    with pytest.raises(RegistrationConflictError) as exc_info:
+        auth_service.register_user(
+            db_session,
+            _register_request(surname="Strauß", givenname=f"Johann{unique}"),
+        )
+
+    assert {field for field, _msg in exc_info.value.errors} == {"givenname", "surname"}
 
 
 def test_register_user_rejects_duplicate_email_case_insensitive(db_session):

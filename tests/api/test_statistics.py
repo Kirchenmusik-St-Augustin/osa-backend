@@ -1,5 +1,5 @@
-def _auth_headers(client, make_user) -> dict[str, str]:
-    user = make_user(password="correct-password")
+def _auth_headers(client, make_user, **user_options) -> dict[str, str]:
+    user = make_user(password="correct-password", **user_options)
     response = client.post(
         "/auth/login", data={"username": user.email, "password": "correct-password"}
     )
@@ -34,6 +34,15 @@ class TestGetStatistics:
             "scores",
             "email",
         }
+        assert body["email"] is None
+
+    def test_the_mail_block_is_shown_to_holders_of_sent_email_view(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user, administrator=True)
+        response = client.get("/statistics", headers=headers)
+
+        body = response.json()
         assert set(body["email"].keys()) == {
             "active",
             "period_days",
@@ -55,3 +64,15 @@ class TestGetStatistics:
         ):
             assert isinstance(body[key], int)
             assert body[key] >= 0
+
+
+class TestMailBudgetVisibility:
+    def test_a_member_does_not_see_the_mail_budget_but_still_the_counts(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        response = client.get("/statistics", headers=headers)
+
+        body = response.json()
+        assert body["email"] is None
+        assert isinstance(body["users"], int)

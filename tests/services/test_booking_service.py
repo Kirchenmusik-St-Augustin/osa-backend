@@ -689,9 +689,14 @@ class TestCancelAuthUserBooking:
         performance_id = _make_performance(db_session, instruments={instrument.id: 1})
         user = make_user()
 
-        booking_service.cancel_auth_user_booking(
-            db_session, performance_id, user.id
-        )  # no crash
+        booking_service.cancel_auth_user_booking(db_session, performance_id, user.id)
+
+        assert (
+            db_session.execute(
+                select(BookingLog.id).where(BookingLog.user_id == user.id)
+            ).first()
+            is None
+        )
 
 
 class TestReconcileSetupChange:

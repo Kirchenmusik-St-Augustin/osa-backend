@@ -45,7 +45,10 @@ def _fail(message: str) -> NoReturn:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(extra="ignore")
+    # env_ignore_empty: a blank value in an environment file behaves like an
+    # unset one everywhere (a blank SMTP_PORT would otherwise fail integer
+    # parsing, and a blank GOOGLE_CLIENT_ID or KOOFR_USER would count as set).
+    model_config = SettingsConfigDict(extra="ignore", env_ignore_empty=True)
 
     app_environment: str | None = Field(
         default=None, validation_alias="APP_ENVIRONMENT"
@@ -58,6 +61,12 @@ class Settings(BaseSettings):
     # No endpoint accepts uploads, so 1 MiB is far above any legitimate request.
     max_request_body_bytes: int = Field(
         default=1_048_576, ge=1, validation_alias="MAX_REQUEST_BODY_BYTES"
+    )
+    # bcrypt work factor for new password hashes (stored hashes keep their
+    # own). Production never hashes below 12, whatever is configured (see
+    # app.core.security); the test suite runs at the minimum of 4.
+    bcrypt_rounds: int = Field(
+        default=12, ge=4, le=16, validation_alias="BCRYPT_ROUNDS"
     )
     session_lifetime_minutes: int = Field(
         default=15, validation_alias="SESSION_LIFETIME_MINUTES"

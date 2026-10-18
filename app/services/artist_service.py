@@ -97,7 +97,9 @@ def _validate(
     )
 
     stmt = select(Artist.id).where(
-        func.lower(Artist.surname) == data.surname.lower(),
+        # The stored surname is the normalized form ("ß" becomes "SS"), so
+        # the typed name has to be compared in that form.
+        func.lower(Artist.surname) == normalize_surname(data.surname).lower(),
         func.lower(Artist.givenname) == data.givenname.lower(),
     )
     if exclude_id is not None:

@@ -122,6 +122,24 @@ class TestCreateArtist:
             ("givenname", "Die Kombination von Vor- und Nachname ist vergeben."),
         ]
 
+    def test_a_name_with_a_sharp_s_is_recognised_as_taken(self, db_session: Session):
+        # The stored surname is "STRAUSS": comparing the typed "Strauß" against
+        # it would find nothing and end in the generic constraint error.
+        givenname = _unique("Johann")
+        artist_service.create_artist(
+            db_session, _request(surname="Strauß", givenname=givenname)
+        )
+
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
+            artist_service.create_artist(
+                db_session, _request(surname="Strauß", givenname=givenname)
+            )
+
+        assert exc_info.value.errors == [
+            ("surname", "Die Kombination von Vor- und Nachname ist vergeben."),
+            ("givenname", "Die Kombination von Vor- und Nachname ist vergeben."),
+        ]
+
     def test_rejects_invalid_birthyear(self, db_session: Session):
         with pytest.raises(artist_service.ArtistValidationError) as exc_info:
             artist_service.create_artist(db_session, _request(birthyear=99))

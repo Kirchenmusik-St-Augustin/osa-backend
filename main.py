@@ -2,16 +2,10 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, status
-from fastapi.encoders import jsonable_encoder
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import ValidationError
-from sqlalchemy.exc import IntegrityError
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
-import app.db.base
+# Imported for its side effect: registers every model with Base.metadata.
 from app.api.exception_handlers import register_exception_handlers
 from app.api.middleware.body_limit import MaxBodySizeMiddleware
 from app.api.middleware.request_logging import RequestLoggingMiddleware
@@ -68,97 +62,6 @@ app = FastAPI(
 )
 
 
-async def _validation_error_handler(
-    _request: Request, exc: ValidationError
-) -> JSONResponse:
-    """Give a bare pydantic ValidationError (raised in service code, not
-    FastAPI's request-parsing RequestValidationError) the same
-    {"detail": [...]} shape FastAPI's built-in handler already uses."""
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content=jsonable_encoder({"detail": exc.errors()}),
-    )
-
-
-# Pydantic's own error catalog is English-only -- the project requires
-# fully German validation text for its forms. Only translates the
-# error `type`s Pydantic's built-in validation can actually produce; custom
-# field_validators (added in later Auth-domain schemas) already raise their
-# own German ValueError messages, which Pydantic wraps as "Value error, {msg}"
-# -- those pass through untouched below rather than being overwritten.
-_GERMAN_VALIDATION_MESSAGES: dict[str, str] = {
-    "missing": "Dieses Feld ist erforderlich.",
-    "string_type": "Dieser Wert muss eine Zeichenkette sein.",
-    "int_type": "Dieser Wert muss eine Ganzzahl sein.",
-    "float_type": "Dieser Wert muss eine Zahl sein.",
-    "bool_type": "Dieser Wert muss ein Wahrheitswert sein.",
-    "string_too_short": "Dieser Wert ist zu kurz.",
-    "string_too_long": "Dieser Wert ist zu lang.",
-    "extra_forbidden": "Unbekanntes Feld.",
-}
-
-
-def _translate_validation_error(error: dict[str, object]) -> str:
-    error_type = str(error.get("type", ""))
-    raw_msg = str(error.get("msg", ""))
-    if error_type == "value_error" and raw_msg.startswith("Value error, "):
-        return raw_msg.removeprefix("Value error, ")
-    return _GERMAN_VALIDATION_MESSAGES.get(error_type, raw_msg)
-
-
-async def _request_validation_error_handler(
-    _request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    errors = [
-        {
-            "loc": error.get("loc", []),
-            "msg": _translate_validation_error(error),
-            "type": error.get("type", ""),
-        }
-        for error in exc.errors()
-    ]
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content=jsonable_encoder({"detail": errors}),
-    )
-
-
-async def _integrity_error_handler(
-    _request: Request, exc: IntegrityError
-) -> JSONResponse:
-    """Safety net for FK/UNIQUE/CHECK constraint violations that reach the
-    database without already having been rejected by a service-layer check
-    (e.g. a race between a dependency check and the delete/insert
-    statement) -- logs the actual constraint detail server-side, never
-    leaks it verbatim to the client."""
-    logger.warning("IntegrityError: %s", exc)
-    return JSONResponse(
-        status_code=status.HTTP_409_CONFLICT,
-        content={
-            "detail": (
-                "Die Änderung verletzt eine Datenbank-Constraint, z. B. "
-                "eine Referenz auf einen nicht existierenden oder noch "
-                "verwendeten Datensatz."
-            )
-        },
-    )
-
-
-async def _unhandled_exception_handler(
-    _request: Request, exc: Exception
-) -> JSONResponse:
-    """Safety net: logs the full traceback server-side, never leaks it."""
-    logger.exception("Unhandled exception: %s", exc)
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Ein unerwarteter Fehler ist aufgetreten."},
-    )
-
-
-app.add_exception_handler(ValidationError, _validation_error_handler)
-app.add_exception_handler(RequestValidationError, _request_validation_error_handler)
-app.add_exception_handler(IntegrityError, _integrity_error_handler)
-app.add_exception_handler(Exception, _unhandled_exception_handler)
 register_exception_handlers(app)
 
 app.state.limiter = limiter

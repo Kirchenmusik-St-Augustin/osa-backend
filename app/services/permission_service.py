@@ -165,6 +165,10 @@ def calculate_permissions(user: User) -> list[str]:
     ]
 
 
+def has_permission(user: User, permission: str) -> bool:
+    return permission in calculate_permissions(user)
+
+
 def get_permission_rules_display() -> list[dict[str, str]]:
     return [
         {"permission": rule.permission, "description": rule.description}

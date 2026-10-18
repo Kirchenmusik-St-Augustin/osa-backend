@@ -73,3 +73,21 @@ class TestMainRestore:
 
         assert exc_info.value.code == 1
         assert "requires --force" in capsys.readouterr().err
+
+
+class TestMainListFailure:
+    def test_a_listing_failure_is_reported_without_a_traceback(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ):
+        def failing_listing() -> list[str]:
+            msg = "Koofr unreachable"
+            raise BackupError(msg)
+
+        monkeypatch.setattr(restore_db, "list_backups", failing_listing)
+        monkeypatch.setattr(sys, "argv", ["restore_db.py", "--list"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            restore_db.main()
+
+        assert exc_info.value.code == 1
+        assert "ERROR: Koofr unreachable" in capsys.readouterr().err
