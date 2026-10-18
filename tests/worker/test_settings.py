@@ -65,3 +65,11 @@ def test_job_completion_wait_gives_in_flight_jobs_a_real_shutdown_grace_period()
 
 def test_finished_jobs_keep_no_result_so_one_time_links_do_not_stay_in_valkey():
     assert WorkerSettings.keep_result == 0
+
+
+def test_heartbeat_is_refreshed_often_enough_for_the_container_health_check():
+    # `arq --check` fails while the heartbeat key is older than this interval;
+    # arq's default (3600 seconds) would leave a 30-second probe failing for
+    # most of every hour. The probe interval in osa-deploy's worker Quadlet
+    # is 30 seconds, so the heartbeat must not be slower than that.
+    assert WorkerSettings.health_check_interval <= 30

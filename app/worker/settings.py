@@ -118,3 +118,7 @@ class WorkerSettings:
     # hour by default. The arguments of the mail tasks are one-time links and
     # message texts, and nothing reads a result, so none is kept.
     keep_result: ClassVar[int] = 0
+    # How often the worker refreshes the heartbeat that `arq --check` (the
+    # container health check) reads. arq's default is 3600 seconds, far too
+    # long for a probe that runs every 30 seconds.
+    health_check_interval: ClassVar[int] = 30
