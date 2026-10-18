@@ -38,6 +38,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     logger.info("osa-backend shutdown complete.")
 
 
+def _docs_urls(environment: str | None) -> tuple[str | None, str | None, str | None]:
+    """Paths of the interactive documentation (Swagger UI, ReDoc) and of the
+    OpenAPI document. They list every route and schema to anyone who asks, so
+    they exist outside production only."""
+    if environment == "production":
+        return None, None, None
+    return "/docs", "/redoc", "/openapi.json"
+
+
+_DOCS_URL, _REDOC_URL, _OPENAPI_URL = _docs_urls(settings.app_environment)
+
 app = FastAPI(
     title="OSA API",
     description="Backend for the Orchester-Einteilung scheduling system.",
@@ -51,6 +62,9 @@ app = FastAPI(
     # Do NOT also add prefix="/api" to api_router below -- that would
     # double-prefix and 404 everything through Caddy.
     root_path="/api",
+    docs_url=_DOCS_URL,
+    redoc_url=_REDOC_URL,
+    openapi_url=_OPENAPI_URL,
 )
 
 
