@@ -217,7 +217,7 @@ class TestListComposers:
         response = client.get("/artists/composers", headers=headers)
 
         assert response.status_code == 200
-        surnames = [item["label"].split(",")[0] for item in response.json()]
+        surnames = [item["label"].split(",")[0] for item in response.json()["items"]]
         assert composer_name.upper() in surnames
         assert conductor_only_name.upper() not in surnames
 

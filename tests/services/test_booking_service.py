@@ -34,6 +34,7 @@ from app.schemas.ordinariumwork import (
     OrdinariumworkRequest,
     OrdinariumworkSetupInput,
 )
+from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.schemas.performance import (
     PerformancePositionInput,
     PerformanceRequest,
@@ -50,6 +51,21 @@ from app.services.user_position_service import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from app.schemas.booking import PerformanceShortOutput
+
+_ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
+
+
+def _upcoming_requests_and_bookings(
+    db: Session, user_id: uuid.UUID, *, upcoming_only: bool = True
+) -> list[PerformanceShortOutput]:
+    return list(
+        booking_service.get_upcoming_requests_and_bookings_for_user(
+            db, user_id, _ALL_ROWS, upcoming_only=upcoming_only
+        ).rows
+    )
+
 
 _schedule_counter = itertools.count(2)
 _id_counter = itertools.count(700_000)
@@ -1201,9 +1217,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
         user = make_user()
         _make_booking(db_session, performance_id, user.id, "instruments", instrument.id)
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, user.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert [item.id for item in result] == [performance_id]
 
@@ -1214,9 +1228,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
         user = make_user()
         _make_booking_request(db_session, performance_id, user.id)
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, user.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert [item.id for item in result] == [performance_id]
 
@@ -1230,9 +1242,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
             db_session, performance_id, user.id, notbooked_at=datetime.now(UTC)
         )
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, user.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert [item.id for item in result] == [performance_id]
 
@@ -1245,9 +1255,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
         _make_booking(db_session, performance_id, user.id, "instruments", instrument.id)
         _make_booking_request(db_session, performance_id, user.id)
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, user.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert [item.id for item in result] == [performance_id]
 
@@ -1258,9 +1266,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
         user = make_user()
         _make_booking(db_session, performance_id, user.id, "instruments", instrument.id)
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, user.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert result == []
 
@@ -1275,7 +1281,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
         user = make_user()
         _make_booking(db_session, performance_id, user.id, "instruments", instrument.id)
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
+        result = _upcoming_requests_and_bookings(
             db_session, user.id, upcoming_only=False
         )
 
@@ -1290,9 +1296,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
             db_session, performance_id, owner.id, "instruments", instrument.id
         )
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, other.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, other.id)
 
         assert result == []
 
@@ -1312,11 +1316,47 @@ class TestGetUpcomingRequestsAndBookingsForUser:
         _make_booking(db_session, later_id, user.id, "instruments", instrument.id)
         _make_booking(db_session, earlier_id, user.id, "instruments", instrument.id)
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, user.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert [item.id for item in result] == [earlier_id, later_id]
+
+    def test_pages_the_sorted_result_and_counts_every_row(
+        self, db_session: Session, make_user
+    ):
+        instrument = _make_instrument(db_session)
+        user = make_user()
+        performance_ids = [
+            _make_performance(
+                db_session,
+                instruments={instrument.id: 1},
+                schedule=local_now() + timedelta(days=day),
+            )
+            for day in (3, 6, 9)
+        ]
+        for performance_id in reversed(performance_ids):
+            _make_booking(
+                db_session, performance_id, user.id, "instruments", instrument.id
+            )
+
+        first = booking_service.get_upcoming_requests_and_bookings_for_user(
+            db_session, user.id, PageParams(limit=2, offset=0)
+        )
+        second = booking_service.get_upcoming_requests_and_bookings_for_user(
+            db_session, user.id, PageParams(limit=2, offset=2)
+        )
+
+        assert [item.id for item in first.rows] == performance_ids[:2]
+        assert [item.id for item in second.rows] == performance_ids[2:]
+        assert first.total == second.total == 3
+
+    def test_a_user_without_any_row_has_an_empty_page_and_a_zero_total(
+        self, db_session: Session, make_user
+    ):
+        result = booking_service.get_upcoming_requests_and_bookings_for_user(
+            db_session, make_user().id, _ALL_ROWS
+        )
+
+        assert (list(result.rows), result.total) == ([], 0)
 
     def test_reflects_the_real_bookable_badge_status_when_qualified(
         self, db_session: Session, make_user
@@ -1327,9 +1367,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
         _qualify(db_session, user.id, "instruments", instrument.id)
         _make_booking(db_session, performance_id, user.id, "instruments", instrument.id)
 
-        result = booking_service.get_upcoming_requests_and_bookings_for_user(
-            db_session, user.id
-        )
+        result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert result[0].user_booking.status in (3, 4)
 
@@ -1346,9 +1384,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
             instrument.id,
         )
         with count_queries() as small:
-            small_result = booking_service.get_upcoming_requests_and_bookings_for_user(
-                db_session, user.id
-            )
+            small_result = _upcoming_requests_and_bookings(db_session, user.id)
 
         for _ in range(4):
             _make_booking(
@@ -1359,9 +1395,7 @@ class TestGetUpcomingRequestsAndBookingsForUser:
                 instrument.id,
             )
         with count_queries() as large:
-            large_result = booking_service.get_upcoming_requests_and_bookings_for_user(
-                db_session, user.id
-            )
+            large_result = _upcoming_requests_and_bookings(db_session, user.id)
 
         assert len(large_result) > len(small_result)
         assert large.count == small.count

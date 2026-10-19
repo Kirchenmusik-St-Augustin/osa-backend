@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
+from app.api.query_params import PageDep
 from app.db.database import get_db
+from app.schemas.pagination import Page, PagedRows
 from app.schemas.userdirectory import (
     UserDirectoryAbilitiesOutput,
     UserDirectoryEntryOutput,
@@ -33,13 +35,15 @@ def list_users(
     _current_user: Annotated[AuthUser, _MAINTAIN],
     directory_type: Annotated[DirectoryType | None, Query(alias="type")] = None,
     position_id: Annotated[uuid.UUID | None, Query(alias="id")] = None,
-) -> list[UserDirectoryEntryOutput]:
+    *,
+    page: PageDep,
+) -> Page[UserDirectoryEntryOutput]:
     if directory_type is None or directory_type == "all":
-        users = userdirectory_service.list_all_users(db)
+        users = userdirectory_service.list_all_users(db, page)
     elif position_id is not None:
         users = userdirectory_service.list_users_for_position(
-            db, directory_type, position_id
+            db, directory_type, position_id, page
         )
     else:
-        users = []
-    return [userdirectory_service.to_entry(user) for user in users]
+        users = PagedRows(rows=[], total=0)
+    return Page.of(users.map(userdirectory_service.to_entry), page)

@@ -2,7 +2,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+
 from app.db.models.job_run import JobRun
+from app.services import permission_service
 from app.services.backup_service import BackupError
 
 if TYPE_CHECKING:
@@ -54,6 +57,52 @@ class TestPermissionGuard:
             "/administrator/scheduler/downsync/trigger", headers=headers
         )
         assert response.status_code == 403
+
+
+class TestTriggerNeedsItsOwnPermission:
+    """A role that may only view the scheduler must not start the manual
+    backup or the downsync."""
+
+    @pytest.fixture
+    def view_only_headers(self, client, make_user, monkeypatch) -> dict[str, str]:
+        headers = _auth_headers(client, make_user, administrator=True)
+        monkeypatch.setattr(
+            permission_service,
+            "PERMISSION_RULES",
+            [
+                rule
+                for rule in permission_service.PERMISSION_RULES
+                if rule.permission != "schedulerTrigger"
+            ],
+        )
+        return headers
+
+    def test_the_job_list_stays_available(self, client, view_only_headers):
+        response = client.get(
+            "/administrator/scheduler/jobs", headers=view_only_headers
+        )
+
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/administrator/scheduler/backup/trigger",
+            "/administrator/scheduler/downsync/trigger",
+        ],
+    )
+    def test_the_trigger_is_refused_without_running_the_action(
+        self, client, view_only_headers, path
+    ):
+        with (
+            patch("app.api.router_includes.scheduler.run_backup") as run_backup,
+            patch("app.api.router_includes.scheduler.run_restore") as run_restore,
+        ):
+            response = client.post(path, headers=view_only_headers)
+
+        assert response.status_code == 403
+        run_backup.assert_not_called()
+        run_restore.assert_not_called()
 
 
 def test_returns_registered_jobs_with_expected_shape(client, make_user):

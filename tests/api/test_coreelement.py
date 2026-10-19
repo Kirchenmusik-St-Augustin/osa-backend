@@ -55,7 +55,7 @@ class TestCrudRoundtrip:
         assert created["name"] == name
 
         list_response = client.get("/coreelements/instrument", headers=headers)
-        assert name in [item["name"] for item in list_response.json()]
+        assert name in [item["name"] for item in list_response.json()["items"]]
 
         new_name = _unique("Kontrafagott")
         update_response = client.put(
@@ -72,7 +72,7 @@ class TestCrudRoundtrip:
         assert delete_response.status_code == 200
 
         final_list = client.get("/coreelements/instrument", headers=headers)
-        assert new_name not in [item["name"] for item in final_list.json()]
+        assert new_name not in [item["name"] for item in final_list.json()["items"]]
 
     def test_create_and_archive_instrument(self, client, make_user):
         headers = _auth_headers(client, make_user)
@@ -561,5 +561,5 @@ class TestQueryCount:
 
         assert small_response.status_code == 200
         assert large_response.status_code == 200
-        assert len(large_response.json()) > len(small_response.json())
+        assert len(large_response.json()["items"]) > len(small_response.json()["items"])
         assert large.count == small.count

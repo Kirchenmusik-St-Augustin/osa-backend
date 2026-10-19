@@ -119,6 +119,11 @@ PERMISSION_RULES: list[PermissionRule] = [
         condition=lambda _roles, is_admin: is_admin,
     ),
     PermissionRule(
+        permission="schedulerTrigger",
+        description="administrator-Flag",
+        condition=lambda _roles, is_admin: is_admin,
+    ),
+    PermissionRule(
         permission="performanceMaintain",
         description=(
             "Rolle 'planner' oder 'disponent' "

@@ -3,10 +3,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.db.models.choirjob import Choirjob
+from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.services import user_position_service, userdirectory_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
 
 
 def _unique(base: str) -> str:
@@ -43,7 +47,7 @@ class TestListAllUsers:
         user.deleted_at = datetime.now(UTC)
         db_session.commit()
 
-        result = userdirectory_service.list_all_users(db_session)
+        result = userdirectory_service.list_all_users(db_session, _ALL_ROWS).rows
         assert user.id not in [u.id for u in result]
 
     def test_includes_active_users_sorted_by_surname(
@@ -56,7 +60,7 @@ class TestListAllUsers:
         user_a.surname = marker_a
         db_session.commit()
 
-        result = userdirectory_service.list_all_users(db_session)
+        result = userdirectory_service.list_all_users(db_session, _ALL_ROWS).rows
         ids = [u.id for u in result]
         assert ids.index(user_a.id) < ids.index(user_z.id)
 
@@ -73,8 +77,8 @@ class TestListUsersForPosition:
         )
 
         result = userdirectory_service.list_users_for_position(
-            db_session, "choirjobs", choirjob.id
-        )
+            db_session, "choirjobs", choirjob.id, _ALL_ROWS
+        ).rows
         assert [u.id for u in result] == [user.id]
 
     def test_excludes_soft_deleted_users(self, db_session: Session, make_user):
@@ -90,14 +94,14 @@ class TestListUsersForPosition:
         db_session.commit()
 
         result = userdirectory_service.list_users_for_position(
-            db_session, "choirjobs", choirjob.id
-        )
+            db_session, "choirjobs", choirjob.id, _ALL_ROWS
+        ).rows
         assert result == []
 
     def test_unknown_position_id_returns_empty(self, db_session: Session):
         assert (
             userdirectory_service.list_users_for_position(
-                db_session, "choirjobs", uuid.uuid4()
-            )
+                db_session, "choirjobs", uuid.uuid4(), _ALL_ROWS
+            ).rows
             == []
         )

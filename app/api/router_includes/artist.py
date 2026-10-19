@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import require_permission
+from app.api.query_params import PageDep, SearchTerm
 from app.db.database import get_db
 from app.schemas.artist import ArtistRequest, ArtistResponse, ArtistSearchResult
+from app.schemas.pagination import Page
 from app.services import artist_service
 
 # Every artist route needs the same permission and none uses the user object,
@@ -16,7 +18,7 @@ artist_router = APIRouter(dependencies=[Depends(require_permission("artistMainta
 
 @artist_router.get("/search")
 def search_artists(
-    q: str,
+    q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
 ) -> list[ArtistSearchResult]:
     return [
@@ -36,11 +38,10 @@ def create_artist(
 @artist_router.get("/composers")
 def list_composer_artists(
     db: Annotated[Session, Depends(get_db)],
-) -> list[ArtistSearchResult]:
-    return [
-        artist_service.to_search_result(artist)
-        for artist in artist_service.list_composer_artists(db)
-    ]
+    page: PageDep,
+) -> Page[ArtistSearchResult]:
+    paged = artist_service.list_composer_artists(db, page)
+    return Page.of(paged.map(artist_service.to_search_result), page)
 
 
 @artist_router.get("/{artist_id}")

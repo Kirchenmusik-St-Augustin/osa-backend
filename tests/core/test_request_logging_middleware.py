@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from app.api.middleware import request_logging
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.db.models.request_log import RequestLog
 from app.services import request_log_service
@@ -186,3 +188,92 @@ def test_does_not_buffer_the_response_body_when_the_skip_header_is_set():
         assert body_iterator_consumed is False
 
     asyncio.run(_run())
+
+
+# --- Payload ceiling, multipart handling and repeated response headers ---
+
+
+def test_a_payload_at_the_ceiling_is_kept_and_one_byte_more_is_replaced():
+    overhead = len(json.dumps({"value": ""}))
+    limit = request_logging._MAX_LOGGED_JSON_BYTES
+    at_limit = {"value": "x" * (limit - overhead)}
+    over_limit = {"value": "x" * (limit - overhead + 1)}
+
+    assert request_logging._bounded_object(at_limit) == at_limit
+    assert request_logging._bounded_object(over_limit) == {"truncated": True}
+    assert request_logging._bounded(["x" * limit]) == {"truncated": True}
+    assert request_logging._bounded(["x"]) == ["x"]
+    assert request_logging._bounded(None) is None
+
+
+def test_the_ceiling_counts_escaped_non_ascii_characters_as_stored():
+    limit = request_logging._MAX_LOGGED_JSON_BYTES
+    # Each of these characters is stored as a six character escape sequence.
+    escaped = {"value": "ä" * (limit // 6)}
+
+    assert request_logging._bounded_object(escaped) == {"truncated": True}
+
+
+def test_an_oversized_request_body_is_stored_as_a_marker(client, db_session: Session):
+    oversized = "x" * (request_logging._MAX_LOGGED_JSON_BYTES + 1)
+
+    client.post("/auth/login", json={"filler": oversized})
+
+    row = (
+        db_session.query(RequestLog)
+        .filter(RequestLog.request_path == "/auth/login")
+        .one()
+    )
+    assert row.request_input == {"truncated": True}
+
+
+def test_an_oversized_response_body_is_stored_as_a_marker(db_session: Session):
+    oversized = "x" * (request_logging._MAX_LOGGED_JSON_BYTES + 1)
+
+    async def _large_endpoint(_request: Request) -> Response:
+        return JSONResponse({"filler": oversized})
+
+    app = Starlette(routes=[Route("/large", _large_endpoint)])
+    app.add_middleware(RequestLoggingMiddleware)
+
+    with TestClient(app) as isolated_client:
+        response = isolated_client.get("/large")
+
+    assert response.json() == {"filler": oversized}
+    row = db_session.query(RequestLog).filter(RequestLog.request_path == "/large").one()
+    assert row.response_content == {"truncated": True}
+
+
+def test_multipart_bodies_are_not_parsed_for_the_log(client, db_session: Session):
+    client.post(
+        "/auth/login",
+        data={"note": "visible in a urlencoded body only"},
+        files={"upload": ("notes.txt", b"file content")},
+    )
+
+    row = (
+        db_session.query(RequestLog)
+        .filter(RequestLog.request_path == "/auth/login")
+        .one()
+    )
+    assert row.request_input == {}
+
+
+def test_repeated_response_headers_survive_the_rebuilt_response():
+    async def _two_cookies(_request: Request) -> Response:
+        response = JSONResponse({"ok": True})
+        response.set_cookie("first", "1")
+        response.set_cookie("second", "2")
+        return response
+
+    app = Starlette(routes=[Route("/cookies", _two_cookies)])
+    app.add_middleware(RequestLoggingMiddleware)
+
+    with (
+        patch("app.api.middleware.request_logging._write_log_entry"),
+        TestClient(app) as isolated_client,
+    ):
+        response = isolated_client.get("/cookies")
+
+    assert len(response.headers.get_list("set-cookie")) == 2
+    assert response.json() == {"ok": True}

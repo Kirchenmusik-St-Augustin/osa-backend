@@ -27,12 +27,18 @@ from app.services import request_log_service
 logger = logging.getLogger(__name__)
 
 _SKIP_LOG_HEADER = "x-skip-request-log"
+# A stored request or response payload whose serialized JSON is larger than
+# this is replaced by a marker, so one oversized request cannot bloat
+# request_logs.
+_MAX_LOGGED_JSON_BYTES = 16 * 1024
 
 
 async def _extract_request_input(request: Request) -> JsonObject:
     """Best-effort read of the request body as a dict, handling both JSON
     bodies and form-encoded bodies (our own login endpoint uses
-    OAuth2PasswordRequestForm, i.e. x-www-form-urlencoded, not JSON)."""
+    OAuth2PasswordRequestForm, i.e. x-www-form-urlencoded, not JSON).
+    Multipart bodies are not parsed: no endpoint accepts them, and the parser
+    spools file parts to temporary files on disk."""
     content_type = request.headers.get("content-type", "")
     body = await request.body()
     if not body:
@@ -43,15 +49,26 @@ async def _extract_request_input(request: Request) -> JsonObject:
         except json.JSONDecodeError:
             return {}
         return parsed if isinstance(parsed, dict) else {"value": parsed}
-    if (
-        "application/x-www-form-urlencoded" in content_type
-        or "multipart/form-data" in content_type
-    ):
+    if "application/x-www-form-urlencoded" in content_type:
         form = await request.form()
         return {
             key: value for key, value in form.multi_items() if isinstance(value, str)
         }
     return {}
+
+
+def _exceeds_log_limit(value: JsonValue) -> bool:
+    # json.dumps escapes non-ASCII characters, so the length in characters is
+    # the length in bytes.
+    return len(json.dumps(value)) > _MAX_LOGGED_JSON_BYTES
+
+
+def _bounded(value: JsonValue) -> JsonValue:
+    return {"truncated": True} if _exceeds_log_limit(value) else value
+
+
+def _bounded_object(value: JsonObject) -> JsonObject:
+    return {"truncated": True} if _exceeds_log_limit(value) else value
 
 
 def _try_parse_json(body: bytes) -> JsonValue:
@@ -156,10 +173,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         rebuilt = Response(
             content=response_body,
             status_code=response.status_code,
-            headers=dict(response.headers),
             media_type=response.media_type,
             background=response.background,
         )
+        # Not dict(response.headers): that collapses repeated headers, so a
+        # response with two Set-Cookie headers would lose one of them.
+        rebuilt.raw_headers = list(response.raw_headers)
 
         client_ips = _forwarded_ips(request)
         try:
@@ -170,9 +189,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 auth_header=request.headers.get("authorization"),
                 request_method=request.method,
                 request_path=request.url.path,
-                request_input=request_input,
+                request_input=_bounded_object(request_input),
                 response_status=response.status_code,
-                response_content=_try_parse_json(response_body),
+                response_content=_bounded(_try_parse_json(response_body)),
                 memory_usage=_memory_usage_bytes(),
                 user_agent_string=request.headers.get("user-agent"),
             )

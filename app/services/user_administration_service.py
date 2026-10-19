@@ -10,12 +10,15 @@ from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
 from app.schemas.user_administration import UserAdministrationDetailOutput
 from app.services.errors import GeneralValidationError
+from app.services.pagination import select_page
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
 
     from sqlalchemy.orm import Session
+
+    from app.schemas.pagination import PagedRows, PageParams
 
 _SEARCH_RESULT_LIMIT = 20
 
@@ -72,15 +75,15 @@ def search_users_including_deleted(db: Session, query: str) -> Sequence[User]:
     return db.execute(stmt).scalars().all()
 
 
-def list_deleted_users(db: Session) -> Sequence[User]:
-    """All soft-deleted users, shown directly on the initial (queryless)
+def list_deleted_users(db: Session, page: PageParams) -> PagedRows[User]:
+    """The soft-deleted users, shown directly on the initial (queryless)
     Search page load."""
     stmt = (
         select(User)
         .where(User.deleted_at.is_not(None))
-        .order_by(User.surname, User.givenname)
+        .order_by(User.surname, User.givenname, User.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)
 
 
 def _get_or_404(db: Session, user_id: uuid.UUID) -> User:

@@ -8,6 +8,7 @@ from app.core.datetime_utils import local_now
 from app.db.models.location import Location
 from app.schemas.artist import ArtistRequest
 from app.schemas.ordinariumwork import OrdinariumworkRequest, OrdinariumworkSetupInput
+from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.schemas.performance import PerformanceRequest, PerformanceSetupInput
 from app.schemas.propriumwork import PropriumworkRequest
 from app.services import (
@@ -19,6 +20,9 @@ from app.services import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
 
 
 def _unique(base: str = "Name") -> str:
@@ -53,7 +57,7 @@ class TestListComposerArtists:
             _request(surname=_unique("Conductor"), composer=False, conductor=True),
         )
 
-        results = artist_service.list_composer_artists(db_session)
+        results = artist_service.list_composer_artists(db_session, _ALL_ROWS).rows
 
         ids = [artist.id for artist in results]
         assert composer.id in ids

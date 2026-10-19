@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, get_verified_user, require_permission
+from app.api.query_params import CalendarYear
 from app.db.database import get_db
 from app.schemas.performance import (
     PerformanceAvailableData,
@@ -23,7 +24,7 @@ _MAINTAIN = Depends(require_permission("performanceMaintain"))
 
 @performance_router.get("")
 def list_performances(
-    year: Annotated[int, Query()],
+    year: CalendarYear,
     month: Annotated[int, Query(ge=1, le=12)],
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthUser, Depends(get_verified_user)],

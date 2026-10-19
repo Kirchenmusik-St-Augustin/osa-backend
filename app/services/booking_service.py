@@ -50,6 +50,7 @@ from app.schemas.booking import (
     StaffItemOutput,
     StaffSectionOutput,
 )
+from app.schemas.pagination import PagedRows
 from app.schemas.performance import (
     BookingStatus,
     BookingStatusOutput,
@@ -59,6 +60,7 @@ from app.schemas.performance import (
     PositionRefOutput,
 )
 from app.services import fee_service, ordinariumwork_service, performance_service
+from app.services.pagination import select_page
 from app.services.performance_service import (
     PerformanceInPastError,
     PerformanceNotFoundError,
@@ -77,6 +79,8 @@ from app.services.user_position_service import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import InstrumentedAttribute, Session
+
+    from app.schemas.pagination import PageParams
 
 # Booking's own WHERE-clause dispatch table: which FK column on Booking
 # corresponds to a given position_type -- the counterpart to
@@ -1501,8 +1505,8 @@ def get_requests_and_bookings(
 
 
 def get_upcoming_requests_and_bookings_for_user(
-    db: Session, user_id: uuid.UUID, *, upcoming_only: bool = True
-) -> list[PerformanceShortOutput]:
+    db: Session, user_id: uuid.UUID, page: PageParams, *, upcoming_only: bool = True
+) -> PagedRows[PerformanceShortOutput]:
     """Every Performance the user has either a confirmed Booking for, or
     (failing that) an open BookingRequest for -- Bookings take precedence
     on the rare case both exist for the same performance ("booked ids
@@ -1539,24 +1543,23 @@ def get_upcoming_requests_and_bookings_for_user(
             seen.add(performance_id)
             ordered_ids.append(performance_id)
     if not ordered_ids:
-        return []
+        return PagedRows(rows=[], total=0)
 
-    performances = (
-        db.execute(
-            select(Performance)
-            .where(Performance.id.in_(ordered_ids))
-            .order_by(Performance.schedule)
-        )
-        .scalars()
-        .all()
+    performances_page = select_page(
+        db,
+        select(Performance)
+        .where(Performance.id.in_(ordered_ids))
+        .order_by(Performance.schedule, Performance.id),
+        page,
     )
+    performances = performances_page.rows
     batch = performance_service.load_performance_batch_data(db, performances)
     user_booking_by_performance = user_booking_status_for_performances(
         db, list(performances), user_id, keep_past_status=not upcoming_only
     )
 
-    return [
-        PerformanceShortOutput(
+    return performances_page.map(
+        lambda performance: PerformanceShortOutput(
             id=performance.id,
             ordinariumwork_name=batch[performance.id].ordinariumwork_name,
             ordinariumwork_artist_name=batch[performance.id].ordinariumwork_artist_name,
@@ -1568,8 +1571,7 @@ def get_upcoming_requests_and_bookings_for_user(
             demanding_proprium=batch[performance.id].demanding_proprium,
             rehearsals=batch[performance.id].rehearsals,
         )
-        for performance in performances
-    ]
+    )
 
 
 # --- MessageToCast ------------------------------------------------------------

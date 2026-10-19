@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
+from app.api.query_params import CalendarYear
 from app.db.database import get_db
 from app.schemas.request_log import (
     RequestLogDayGroupOutput,
@@ -52,7 +53,7 @@ _DAY = Depends(_require_calendar_day)
 
 @request_log_router.get("")
 def list_request_log_users(
-    year: Annotated[int, Query()],
+    year: CalendarYear,
     month: Annotated[int, Query(ge=1, le=12)],
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _VIEW],

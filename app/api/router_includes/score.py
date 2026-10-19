@@ -1,10 +1,11 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
+from app.api.query_params import SearchTerm
 from app.db.database import get_db
 from app.schemas.score import (
     ScoreFieldConfig,
@@ -38,7 +39,7 @@ def get_defaults(
 
 @score_router.get("/search")
 def search_scores(
-    q: Annotated[str, Query()],
+    q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> list[ScoreSearchResult]:

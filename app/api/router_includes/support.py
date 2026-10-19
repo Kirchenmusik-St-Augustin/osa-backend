@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, get_verified_user
 from app.api.job_queue import JobQueue, get_job_queue
+from app.api.query_params import PageDep
 from app.api.rate_limiting import (
     MAIL_ACTION_LIMIT,
     MAIL_ACTION_SCOPE,
@@ -12,6 +13,7 @@ from app.api.rate_limiting import (
 )
 from app.db.database import get_db
 from app.schemas.booking import PerformanceShortOutput
+from app.schemas.pagination import Page
 from app.schemas.support import MessageToContactpersonRequest, RoleWithContactsOutput
 from app.services import support_service
 from app.worker.tasks import send_user_message_email_task
@@ -23,10 +25,13 @@ support_router = APIRouter()
 def get_my_requests_and_bookings(
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthUser, Depends(get_verified_user)],
-) -> list[PerformanceShortOutput]:
+    page: PageDep,
+) -> Page[PerformanceShortOutput]:
     """No permission gate beyond being logged in -- every user manages only
     their own requests/bookings."""
-    return support_service.get_my_requests_and_bookings(db, current_user)
+    return Page.of(
+        support_service.get_my_requests_and_bookings(db, current_user, page), page
+    )
 
 
 @support_router.get("/contactpersons")

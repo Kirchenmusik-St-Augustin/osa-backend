@@ -62,7 +62,7 @@ class TestListUsers:
         headers = _auth_headers(client, make_user)
         response = client.get("/userdirectory", headers=headers)
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        assert isinstance(response.json()["items"], list)
 
     def test_email_hidden_until_verified(self, client, make_user, db_session):
         headers = _auth_headers(client, make_user)
@@ -72,7 +72,9 @@ class TestListUsers:
         db_session.commit()
 
         response = client.get("/userdirectory", params={"type": "all"}, headers=headers)
-        entry = next(item for item in response.json() if item["id"] == str(user.id))
+        entry = next(
+            item for item in response.json()["items"] if item["id"] == str(user.id)
+        )
         assert entry["has_email"] is False
         assert entry["email"] is None
 
@@ -85,7 +87,9 @@ class TestListUsers:
         db_session.commit()
 
         response = client.get("/userdirectory", params={"type": "all"}, headers=headers)
-        entry = next(item for item in response.json() if item["id"] == str(user.id))
+        entry = next(
+            item for item in response.json()["items"] if item["id"] == str(user.id)
+        )
         assert entry["has_email"] is True
         assert entry["email"] == user.email
 
@@ -110,7 +114,7 @@ class TestListUsers:
             headers=headers,
         )
         assert response.status_code == 200
-        ids = [item["id"] for item in response.json()]
+        ids = [item["id"] for item in response.json()["items"]]
         assert ids == [str(matching.id)]
 
     def test_type_without_id_returns_empty(self, client, make_user):
@@ -119,7 +123,7 @@ class TestListUsers:
             "/userdirectory", params={"type": "instruments"}, headers=headers
         )
         assert response.status_code == 200
-        assert response.json() == []
+        assert response.json()["items"] == []
 
 
 class TestAbilities:

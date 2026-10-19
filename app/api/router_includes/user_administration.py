@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
+from app.api.query_params import PageDep, SearchTerm
 from app.db.database import get_db
+from app.schemas.pagination import Page
 from app.schemas.user_administration import (
     UserAdministrationActionResponse,
     UserAdministrationDeletedEntryOutput,
@@ -29,7 +31,7 @@ _SELF_TARGET_DETAIL = "Diese Aktion ist für das eigene Konto nicht verfügbar."
 
 @user_administration_router.get("/search")
 def search_users(
-    q: str,
+    q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _ADMINISTRATE],
 ) -> list[UserAdministrationSearchResultOutput]:
@@ -46,14 +48,20 @@ def search_users(
 def list_deleted_users(
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _ADMINISTRATE],
-) -> list[UserAdministrationDeletedEntryOutput]:
-    users = user_administration_service.list_deleted_users(db)
-    return [
-        UserAdministrationDeletedEntryOutput(
-            id=user.id, surname=user.surname, givenname=user.givenname, email=user.email
-        )
-        for user in users
-    ]
+    page: PageDep,
+) -> Page[UserAdministrationDeletedEntryOutput]:
+    paged = user_administration_service.list_deleted_users(db, page)
+    return Page.of(
+        paged.map(
+            lambda user: UserAdministrationDeletedEntryOutput(
+                id=user.id,
+                surname=user.surname,
+                givenname=user.givenname,
+                email=user.email,
+            )
+        ),
+        page,
+    )
 
 
 @user_administration_router.get("/{user_id}")

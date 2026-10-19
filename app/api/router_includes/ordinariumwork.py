@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
+from app.api.query_params import SearchTerm
 from app.db.database import get_db
 from app.schemas.ordinariumwork import (
     OrdinariumworkAvailablePositionsOutput,
@@ -22,7 +23,7 @@ _MAINTAIN = Depends(require_permission("ordinariumworkMaintain"))
 
 @ordinariumwork_router.get("/search")
 def search_ordinariumworks(
-    q: str,
+    q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> list[OrdinariumworkSearchResult]:

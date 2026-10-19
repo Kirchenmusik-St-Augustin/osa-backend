@@ -11,13 +11,14 @@ from app.schemas.userdirectory import (
     UserDirectoryEntryOutput,
 )
 from app.services import coreelement_service
+from app.services.pagination import select_page
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
 
     from sqlalchemy.orm import InstrumentedAttribute, Session
 
+    from app.schemas.pagination import PagedRows, PageParams
     from app.services.position_types import PositionType
 
 
@@ -60,20 +61,23 @@ def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
     )
 
 
-def list_all_users(db: Session) -> Sequence[User]:
+def list_all_users(db: Session, page: PageParams) -> PagedRows[User]:
     """All users (type=all) -- excludes soft-deleted users, ordered by
     surname/givenname."""
     stmt = (
         select(User)
         .where(User.deleted_at.is_(None))
-        .order_by(User.surname, User.givenname)
+        .order_by(User.surname, User.givenname, User.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)
 
 
 def list_users_for_position(
-    db: Session, position_type: PositionType, position_id: uuid.UUID
-) -> Sequence[User]:
+    db: Session,
+    position_type: PositionType,
+    position_id: uuid.UUID,
+    page: PageParams,
+) -> PagedRows[User]:
     """Users holding a position (type=instruments|voices|choirjobs) -- via
     the user_positions pivot, same ordering/soft-delete exclusion as
     list_all_users(). A position_id that doesn't correspond to a real
@@ -88,6 +92,6 @@ def list_users_for_position(
             _USER_POSITION_COLUMNS[position_type] == position_id,
             User.deleted_at.is_(None),
         )
-        .order_by(User.surname, User.givenname)
+        .order_by(User.surname, User.givenname, User.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)

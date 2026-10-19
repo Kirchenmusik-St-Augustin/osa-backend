@@ -5,11 +5,15 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.db.models.sent_email import SentEmail
+from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.services import sent_email_service
 from app.services.sent_email_service import SentEmailNotFoundError
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
 
 
 def _unique(base: str) -> str:
@@ -58,7 +62,7 @@ class TestListForMonth:
             subject=_unique("CreatedAtQuirk-neu"),
         )
 
-        result = sent_email_service.list_for_month(db_session, 2026, 3)
+        result = sent_email_service.list_for_month(db_session, 2026, 3, _ALL_ROWS).rows
         ids = [item.id for item in result]
 
         assert older.id in ids
@@ -74,7 +78,7 @@ class TestListForMonth:
             subject=marker,
         )
 
-        result = sent_email_service.list_for_month(db_session, 2026, 5)
+        result = sent_email_service.list_for_month(db_session, 2026, 5, _ALL_ROWS).rows
         assert marker not in [item.subject for item in result]
 
     def test_short_output_uses_created_at_as_its_datetime_field(
@@ -89,7 +93,7 @@ class TestListForMonth:
             subject=marker,
         )
 
-        result = sent_email_service.list_for_month(db_session, 2026, 6)
+        result = sent_email_service.list_for_month(db_session, 2026, 6, _ALL_ROWS).rows
         entry = next(item for item in result if item.id == email.id)
         assert entry.datetime.replace(tzinfo=UTC) == created_at
 

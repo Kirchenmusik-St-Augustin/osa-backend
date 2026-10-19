@@ -21,13 +21,16 @@ from app.services.errors import (
     GeneralValidationError,
     NotFoundError,
 )
+from app.services.pagination import select_page
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable, Sequence
 
+    from sqlalchemy import Select
     from sqlalchemy.orm import InstrumentedAttribute, Session
 
+    from app.schemas.pagination import PagedRows, PageParams
     from app.services.position_types import PositionType
 
 CoreelementModel = Instrument | Voice | Choirjob | Location | Propriumelement | Role
@@ -293,6 +296,17 @@ def _get_or_404(
     return obj
 
 
+def _coreelement_select(
+    type_: CoreelementType, *, active_only: bool = False
+) -> Select[tuple[CoreelementModel]]:
+    config = COREELEMENT_CONFIG[type_]
+    stmt = select(config.model).order_by(config.model.order, config.model.id)
+    if active_only and config.has_active_field:
+        active_model = cast("type[_ActiveCoreelementModel]", config.model)
+        stmt = stmt.where(active_model.active == True)  # noqa: E712
+    return stmt
+
+
 def list_coreelements(
     db: Session, type_: CoreelementType, *, active_only: bool = False
 ) -> Sequence[CoreelementModel]:
@@ -304,13 +318,16 @@ def list_coreelements(
     so every row is effectively "active". The admin Coreelement listing
     itself (GET /coreelements/{type}) deliberately never sets this --
     archived elements must stay visible/editable/reactivatable there."""
-    config = COREELEMENT_CONFIG[type_]
-    stmt = select(config.model).order_by(config.model.order, config.model.id)
-    if active_only and config.has_active_field:
-        active_model = cast("type[_ActiveCoreelementModel]", config.model)
-        stmt = stmt.where(active_model.active == True)  # noqa: E712
-    result = db.execute(stmt)
-    return result.scalars().all()
+    stmt = _coreelement_select(type_, active_only=active_only)
+    return db.execute(stmt).scalars().all()
+
+
+def list_coreelements_page(
+    db: Session, type_: CoreelementType, page: PageParams
+) -> PagedRows[CoreelementModel]:
+    """One page of the admin Coreelement listing (every row, archived ones
+    included)."""
+    return select_page(db, _coreelement_select(type_), page)
 
 
 def create_coreelement(

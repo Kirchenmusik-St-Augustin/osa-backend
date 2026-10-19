@@ -392,4 +392,41 @@ class TestRequestsAndBookings:
         )
 
         assert response.status_code == 200
-        assert [item["id"] for item in response.json()] == [str(performance.id)]
+        assert [item["id"] for item in response.json()["items"]] == [
+            str(performance.id)
+        ]
+
+    def test_returns_the_requested_page_and_the_total(
+        self, client, make_user, make_instrument, db_session
+    ):
+        headers = _auth_headers(client, make_user)
+        target = make_user()
+        instrument = make_instrument()
+        now = datetime.now(UTC)
+        performance_ids = sorted(
+            str(_make_past_performance(db_session).id) for _ in range(2)
+        )
+        for performance_id in performance_ids:
+            db_session.add(
+                Booking(
+                    performance_id=uuid.UUID(performance_id),
+                    user_id=target.id,
+                    instrument_id=instrument.id,
+                    fee=80,
+                    order=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        db_session.commit()
+
+        response = client.get(
+            f"/users/{target.id}/requests-and-bookings",
+            params={"limit": 1, "offset": 0},
+            headers=headers,
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert len(body["items"]) == 1
+        assert (body["total"], body["limit"], body["offset"]) == (2, 1, 0)

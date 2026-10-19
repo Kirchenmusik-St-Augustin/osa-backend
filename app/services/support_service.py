@@ -16,13 +16,16 @@ from app.services import booking_service
 
 if TYPE_CHECKING:
     from app.schemas.booking import PerformanceShortOutput
+    from app.schemas.pagination import PagedRows, PageParams
 
 
 def get_my_requests_and_bookings(
-    db: Session, user: User
-) -> list[PerformanceShortOutput]:
+    db: Session, user: User, page: PageParams
+) -> PagedRows[PerformanceShortOutput]:
     """Thin wrapper: the caller's own upcoming requests and bookings."""
-    return booking_service.get_upcoming_requests_and_bookings_for_user(db, user.id)
+    return booking_service.get_upcoming_requests_and_bookings_for_user(
+        db, user.id, page
+    )
 
 
 def list_roles_with_contacts(db: Session) -> list[RoleWithContactsOutput]:

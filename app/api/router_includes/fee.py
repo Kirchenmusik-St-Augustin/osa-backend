@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import require_permission
+from app.api.query_params import PageDep
 from app.db.database import get_db
 from app.schemas.fee import FeeRequest, FeeResponse
+from app.schemas.pagination import Page
 from app.services import fee_service
 
 # Every fee route needs the same permission and none uses the user object, so
@@ -17,8 +19,9 @@ fee_router = APIRouter(dependencies=[Depends(require_permission("feeMaintain"))]
 @fee_router.get("")
 def list_fees(
     db: Annotated[Session, Depends(get_db)],
-) -> list[FeeResponse]:
-    return fee_service.list_fees(db)
+    page: PageDep,
+) -> Page[FeeResponse]:
+    return Page.of(fee_service.list_fees_page(db, page), page)
 
 
 @fee_router.post("", status_code=status.HTTP_201_CREATED)

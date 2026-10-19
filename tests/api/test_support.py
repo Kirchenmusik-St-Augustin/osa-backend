@@ -94,7 +94,7 @@ class TestGetMyRequestsAndBookings:
         headers, _user = _auth_headers(client, make_user)
         response = client.get("/support/requests-and-bookings", headers=headers)
         assert response.status_code == 200
-        assert response.json() == []
+        assert response.json()["items"] == []
 
     def test_includes_own_booking(self, client, make_user, db_session):
         headers, user = _auth_headers(client, make_user)
@@ -116,7 +116,43 @@ class TestGetMyRequestsAndBookings:
 
         response = client.get("/support/requests-and-bookings", headers=headers)
         assert response.status_code == 200
-        assert [item["id"] for item in response.json()] == [str(performance.id)]
+        assert [item["id"] for item in response.json()["items"]] == [
+            str(performance.id)
+        ]
+
+    def test_returns_the_requested_page_and_the_total(
+        self, client, make_user, db_session
+    ):
+        headers, user = _auth_headers(client, make_user)
+        instrument = _make_instrument(db_session)
+        now = datetime.now(UTC)
+        performance_ids = sorted(
+            str(_make_performance(db_session).id) for _ in range(2)
+        )
+        for performance_id in performance_ids:
+            db_session.add(
+                Booking(
+                    performance_id=uuid.UUID(performance_id),
+                    user_id=user.id,
+                    instrument_id=instrument.id,
+                    fee=80,
+                    order=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        db_session.commit()
+
+        response = client.get(
+            "/support/requests-and-bookings",
+            params={"limit": 1, "offset": 1},
+            headers=headers,
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert [item["id"] for item in body["items"]] == [performance_ids[1]]
+        assert (body["total"], body["limit"], body["offset"]) == (2, 1, 1)
 
 
 class TestGetContactpersons:

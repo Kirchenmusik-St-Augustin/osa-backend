@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, ensure_permission, get_verified_user
+from app.api.query_params import PageDep
 from app.db.database import get_db
 from app.schemas.coreelement import (
     CoreelementRequest,
     CoreelementResponse,
     CoreelementType,
 )
+from app.schemas.pagination import Page
 from app.services import coreelement_service
 from app.services.coreelement_service import CoreelementModel
 
@@ -48,10 +50,11 @@ def list_items(
     element_type: CoreelementType,
     db: Annotated[Session, Depends(get_db)],
     current_user: Annotated[AuthUser, Depends(get_verified_user)],
-) -> list[CoreelementResponse]:
+    page: PageDep,
+) -> Page[CoreelementResponse]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
-    items = coreelement_service.list_coreelements(db, element_type)
-    return [_to_response(item) for item in items]
+    paged = coreelement_service.list_coreelements_page(db, element_type, page)
+    return Page.of(paged.map(_to_response), page)
 
 
 @coreelement_router.post("/{element_type}", status_code=status.HTTP_201_CREATED)

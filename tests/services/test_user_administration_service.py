@@ -9,10 +9,14 @@ from app.core.security import verify_password
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
+from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.services import auth_service, user_administration_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
 
 
 def _unique(base: str) -> str:
@@ -46,7 +50,9 @@ class TestListDeletedUsers:
         deleted.deleted_at = datetime.now(UTC)
         db_session.commit()
 
-        result = user_administration_service.list_deleted_users(db_session)
+        result = user_administration_service.list_deleted_users(
+            db_session, _ALL_ROWS
+        ).rows
         ids = [u.id for u in result]
         assert deleted.id in ids
         assert active.id not in ids

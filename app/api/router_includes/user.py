@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
+from app.api.query_params import PageDep, SearchTerm
 from app.db.database import get_db
 from app.schemas.booking import PerformanceShortOutput
+from app.schemas.pagination import Page
 from app.schemas.user import (
     UserFormOptionsOutput,
     UserRequest,
@@ -27,7 +29,7 @@ _MAINTAIN = Depends(require_permission("userMaintain"))
 
 @user_router.get("/search")
 def search_users(
-    q: str,
+    q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> list[UserSearchResultOutput]:
@@ -60,7 +62,8 @@ def get_requests_and_bookings(
     user_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
-) -> list[PerformanceShortOutput]:
+    page: PageDep,
+) -> Page[PerformanceShortOutput]:
     """Admin-side counterpart to /support/requests-and-bookings (the Show
     page's link), backed by the same generic booking_service function,
     scoped to an arbitrary `user_id` instead of the caller. `upcoming_only=
@@ -68,8 +71,11 @@ def get_requests_and_bookings(
     ALL-history (see get_upcoming_requests_and_bookings_for_user's
     docstring)."""
     user_service.get_user(db, user_id)
-    return booking_service.get_upcoming_requests_and_bookings_for_user(
-        db, user_id, upcoming_only=False
+    return Page.of(
+        booking_service.get_upcoming_requests_and_bookings_for_user(
+            db, user_id, page, upcoming_only=False
+        ),
+        page,
     )
 
 

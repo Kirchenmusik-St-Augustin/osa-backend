@@ -71,7 +71,7 @@ class TestSearchAndDeletedList:
         db_session.commit()
 
         response = client.get("/administrator/users/deleted", headers=headers)
-        ids = [item["id"] for item in response.json()]
+        ids = [item["id"] for item in response.json()["items"]]
         assert str(deleted_user.id) in ids
         assert active.id not in ids
 

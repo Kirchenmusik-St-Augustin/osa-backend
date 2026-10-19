@@ -23,11 +23,10 @@ from app.services.backup_service import (
 scheduler_router = APIRouter()
 
 _VIEW = Depends(require_permission("schedulerView"))
-# Same permission as _VIEW, reused deliberately -- this admin router file
-# gates every route (read and action alike) on one permission, matching
-# the existing convention elsewhere (e.g. user_administration.py's
-# userAdministrate gates both its view and its restore/unlock actions).
-_TRIGGER = Depends(require_permission("schedulerView"))
+# The manual backup and the downsync (which replaces the whole database of a
+# stage) have their own permission, so a role that may only look at the
+# scheduler can never start them.
+_TRIGGER = Depends(require_permission("schedulerTrigger"))
 
 _DOWNSYNC_BLOCKED_IN_PRODUCTION_DETAIL = (
     "Downsync ist in Production nicht verfügbar - Production ist die "

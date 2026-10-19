@@ -82,7 +82,7 @@ class TestListAndShow:
         )
 
         assert response.status_code == 200
-        ids = [item["id"] for item in response.json()]
+        ids = [item["id"] for item in response.json()["items"]]
         assert str(in_month.id) in ids
 
     def test_show_returns_404_for_unknown_id(self, client, make_user):
@@ -133,5 +133,5 @@ class TestNPlusOne:
 
         assert small_response.status_code == 200
         assert large_response.status_code == 200
-        assert len(large_response.json()) > len(small_response.json())
+        assert len(large_response.json()["items"]) > len(small_response.json()["items"])
         assert large.count == small.count

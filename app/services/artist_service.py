@@ -14,6 +14,7 @@ from app.services.errors import (
     GeneralValidationError,
     NotFoundError,
 )
+from app.services.pagination import select_page
 
 if TYPE_CHECKING:
     import uuid
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.schemas.artist import ArtistRequest
+    from app.schemas.pagination import PagedRows, PageParams
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 32
@@ -120,7 +122,7 @@ def _get_or_404(db: Session, artist_id: uuid.UUID) -> Artist:
     return artist
 
 
-def list_composer_artists(db: Session) -> Sequence[Artist]:
+def list_composer_artists(db: Session, page: PageParams) -> PagedRows[Artist]:
     """Dropdown source for Ordinariumwork/Propriumwork's "Komponist" select
     -- embedded directly in those entities' form payloads rather than
     gated by the artist maintain permission itself (see artistMaintain/
@@ -129,9 +131,9 @@ def list_composer_artists(db: Session) -> Sequence[Artist]:
     stmt = (
         select(Artist)
         .where(Artist.composer.is_(True))
-        .order_by(Artist.surname, Artist.givenname)
+        .order_by(Artist.surname, Artist.givenname, Artist.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)
 
 
 def search_artists(db: Session, query: str) -> Sequence[Artist]:

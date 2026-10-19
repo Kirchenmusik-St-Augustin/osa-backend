@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.auth_guards import AuthUser, require_permission
+from app.api.query_params import SearchTerm
 from app.db.database import get_db
 from app.schemas.propriumwork import (
     PropriumworkRequest,
@@ -20,7 +21,7 @@ _MAINTAIN = Depends(require_permission("propriumworkMaintain"))
 
 @propriumwork_router.get("/search")
 def search_propriumworks(
-    q: str,
+    q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> list[PropriumworkSearchResult]:

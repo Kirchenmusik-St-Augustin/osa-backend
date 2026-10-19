@@ -75,7 +75,7 @@ class TestCrudRoundtrip:
         assert created["amount"] == 80
 
         list_response = client.get("/fees", headers=headers)
-        assert name in [item["name"] for item in list_response.json()]
+        assert name in [item["name"] for item in list_response.json()["items"]]
 
         new_name = _unique("Konzertmeister")
         update_response = client.put(
@@ -90,7 +90,7 @@ class TestCrudRoundtrip:
         assert delete_response.status_code == 200
 
         final_list = client.get("/fees", headers=headers)
-        assert new_name not in [item["name"] for item in final_list.json()]
+        assert new_name not in [item["name"] for item in final_list.json()["items"]]
 
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)
