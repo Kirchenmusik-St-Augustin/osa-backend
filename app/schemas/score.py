@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import BlankToNone, OptionalText, StrictInputModel
@@ -76,7 +76,13 @@ class ScoreRequest(StrictInputModel):
     numbers default to 0 in the form and stay required, except
     geboren/gestorben/jahr, which stay NULL when left blank -- there is no
     meaningful year 0, so unlike every other number field they carry no
-    "empty means 0" convention (see score_service.py's get_defaults())."""
+    "empty means 0" convention (see score_service.py's get_defaults()).
+
+    Text is stripped before its length is checked, so a required field made
+    of blanks counts as empty and no field stores surrounding whitespace.
+    The setting only touches string values."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
 
     # -- Fundort (physical location) --
     kasten: str = Field(min_length=1, max_length=SCORE_FIELDS["kasten"].length)

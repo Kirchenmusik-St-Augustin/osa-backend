@@ -3,7 +3,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import LenientUuid, StrictInputModel
+from app.schemas.base import (
+    MAX_CATALOGUE_ENTRIES,
+    MAX_RECIPIENTS,
+    LenientUuid,
+    MessageText,
+    StrictInputModel,
+)
 from app.schemas.fee import FeeResponse
 from app.schemas.performance import (
     BookingStatusOutput,
@@ -25,13 +31,21 @@ class CastMemberInput(StrictInputModel):
 
 class CastSetupItemInput(StrictInputModel):
     id: LenientUuid
-    cast: list[CastMemberInput] = Field(default_factory=list)
+    cast: list[CastMemberInput] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
 
 
 class CastSectionInput(StrictInputModel):
-    instruments: list[CastSetupItemInput] = Field(default_factory=list)
-    voices: list[CastSetupItemInput] = Field(default_factory=list)
-    choirjobs: list[CastSetupItemInput] = Field(default_factory=list)
+    instruments: list[CastSetupItemInput] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
+    voices: list[CastSetupItemInput] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
+    choirjobs: list[CastSetupItemInput] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
 
 
 class NotBookedEntryInput(StrictInputModel):
@@ -40,7 +54,9 @@ class NotBookedEntryInput(StrictInputModel):
 
 class CastSaveRequest(StrictInputModel):
     cast: CastSectionInput = Field(default_factory=CastSectionInput)
-    not_booked: list[NotBookedEntryInput] = Field(default_factory=list)
+    not_booked: list[NotBookedEntryInput] = Field(
+        default_factory=list, max_length=MAX_RECIPIENTS
+    )
 
 
 class CastMemberOutput(BaseModel):
@@ -222,5 +238,5 @@ class MessageRecipientOutput(BaseModel):
 
 
 class SendMessageRequest(StrictInputModel):
-    recipient_ids: list[LenientUuid] = Field(min_length=1)
-    message: str = Field(min_length=1, max_length=2000)
+    recipient_ids: list[LenientUuid] = Field(min_length=1, max_length=MAX_RECIPIENTS)
+    message: MessageText

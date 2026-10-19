@@ -81,6 +81,23 @@ class TestListForMonth:
         result = sent_email_service.list_for_month(db_session, 2026, 5, _ALL_ROWS).rows
         assert marker not in [item.subject for item in result]
 
+    def test_excludes_the_same_month_of_a_different_year(self, db_session: Session):
+        marker = _unique("AndresJahr")
+        other_year = datetime(2027, 3, 15, tzinfo=UTC)
+        _make_sent_email(
+            db_session, created_at=other_year, updated_at=other_year, subject=marker
+        )
+
+        result = sent_email_service.list_for_month(db_session, 2026, 3, _ALL_ROWS)
+
+        assert marker not in [item.subject for item in result.rows]
+        assert marker in [
+            item.subject
+            for item in sent_email_service.list_for_month(
+                db_session, 2027, 3, _ALL_ROWS
+            ).rows
+        ]
+
     def test_short_output_uses_created_at_as_its_datetime_field(
         self, db_session: Session
     ):

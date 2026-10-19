@@ -103,12 +103,29 @@ class TestCreateArtist:
 
         assert (artist.surname, artist.givenname) == ("MUSTER", "Mary Jane")
 
-    def test_rejects_short_surname(self):
-        # Now caught by ArtistRequest's own Field(min_length=3) before the
-        # service's _validate() ever runs -- the schema boundary was
-        # tightened to match the service's pre-existing 3-32 constant.
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
-            _request(surname="ab")
+    def test_rejects_a_blank_surname(self):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own validation error
+            _request(surname="   ")
+
+    def test_accepts_a_surname_of_two_characters(self, db_session: Session):
+        artist = artist_service.create_artist(
+            db_session, _request(surname="li", givenname=_unique("Given"))
+        )
+
+        assert artist.surname == "LI"
+
+    def test_rejects_a_duplicate_that_differs_only_by_padding(
+        self, db_session: Session
+    ):
+        surname, givenname = _unique("Pad"), _unique("Ded")
+        artist_service.create_artist(
+            db_session, _request(surname=surname, givenname=givenname)
+        )
+
+        with pytest.raises(artist_service.ArtistValidationError):
+            artist_service.create_artist(
+                db_session, _request(surname=f" {surname} ", givenname=f"{givenname} ")
+            )
 
     def test_rejects_duplicate_surname_givenname_combination(self, db_session: Session):
         surname, givenname = _unique("Dup"), _unique("Licate")

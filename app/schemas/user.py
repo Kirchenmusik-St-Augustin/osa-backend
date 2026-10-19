@@ -3,7 +3,13 @@ import uuid
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
+from app.schemas.base import (
+    MAX_CATALOGUE_ENTRIES,
+    LenientUuid,
+    OptionalText,
+    PersonName,
+    StrictInputModel,
+)
 from app.schemas.performance import PositionRefOutput
 from app.schemas.validators import PHONE_PATTERN, lowercase_email
 
@@ -44,15 +50,23 @@ class UserRequest(StrictInputModel):
     only an acting administrator can grant it, and only ever grant (see
     user_service._apply_administrator_grant())."""
 
-    givenname: str = Field(min_length=3, max_length=32)
-    surname: str = Field(min_length=3, max_length=32)
+    givenname: PersonName
+    surname: PersonName
     email: EmailStr | None = Field(default=None, max_length=190)
     phone: OptionalText = None
     auth_locked: bool = False
-    instruments: list[LenientUuid] = Field(default_factory=list)
-    voices: list[LenientUuid] = Field(default_factory=list)
-    choirjobs: list[LenientUuid] = Field(default_factory=list)
-    roles: list[LenientUuid] = Field(default_factory=list)
+    instruments: list[LenientUuid] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
+    voices: list[LenientUuid] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
+    choirjobs: list[LenientUuid] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
+    roles: list[LenientUuid] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
     administrator: bool = False
 
     @field_validator("email")
@@ -63,7 +77,7 @@ class UserRequest(StrictInputModel):
     @field_validator("phone")
     @classmethod
     def _validate_phone(cls, value: str | None) -> str | None:
-        if value is not None and not PHONE_PATTERN.match(value):
+        if value is not None and not PHONE_PATTERN.fullmatch(value):
             msg = "Das Rufnummern-Format ist ungültig."
             raise ValueError(msg)
         return value

@@ -5,7 +5,7 @@ from pydantic import (
     field_validator,
 )
 
-from app.schemas.base import StrictInputModel
+from app.schemas.base import PersonName, StrictInputModel
 from app.schemas.validators import (
     PHONE_PATTERN,
     lowercase_email,
@@ -23,8 +23,8 @@ class ProfileUpdateRequest(StrictInputModel):
     actually requested; an untouched change_password=false submission
     ignores whatever those two fields happen to hold."""
 
-    givenname: str = Field(min_length=3, max_length=32)
-    surname: str = Field(min_length=3, max_length=32)
+    givenname: PersonName
+    surname: PersonName
     email: EmailStr = Field(max_length=190)
     phone: str
     change_password: bool
@@ -40,7 +40,7 @@ class ProfileUpdateRequest(StrictInputModel):
     @field_validator("phone")
     @classmethod
     def _validate_phone(cls, value: str) -> str:
-        if not PHONE_PATTERN.match(value):
+        if not PHONE_PATTERN.fullmatch(value):
             msg = "Das Rufnummern-Format ist ungültig."
             raise ValueError(msg)
         return value

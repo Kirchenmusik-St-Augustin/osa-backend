@@ -7,8 +7,9 @@ import re
 
 # Optional leading "+", then 4-60 digits, spaces, slashes, parentheses or
 # hyphens. Single fixed error message regardless of which sub-condition
-# fails.
-PHONE_PATTERN = re.compile(r"^\+?[0-9 /()-]{4,60}$")
+# fails. Match it with fullmatch(): a "$" anchor would also accept a trailing
+# newline.
+PHONE_PATTERN = re.compile(r"\+?[0-9 /()-]{4,60}")
 
 
 def lowercase_email(value: str | None) -> str | None:

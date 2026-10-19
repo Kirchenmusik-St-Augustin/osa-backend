@@ -1,7 +1,13 @@
 import uuid
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+)
 
 
 class StrictInputModel(BaseModel):
@@ -37,4 +43,45 @@ def _blank_to_none(value: object) -> object:
 # `Annotated[Literal["a", "b"] | None, BlankToNone]`.
 BlankToNone = BeforeValidator(_blank_to_none)
 
-OptionalText = Annotated[str | None, BlankToNone]
+# The default bound keeps a free-text field from taking a request body's worth
+# of text. The bound sits on the string branch of the union: on the union itself
+# it would be applied to None as well. A field with its own
+# `Field(max_length=...)` keeps both limits, so only a smaller limit takes
+# effect there.
+OPTIONAL_TEXT_MAX_LENGTH = 2000
+OptionalText = Annotated[
+    Annotated[str, Field(max_length=OPTIONAL_TEXT_MAX_LENGTH)] | None, BlankToNone
+]
+
+# A surname or given name: surrounding whitespace is removed before the length
+# is checked, so " Bach " and "Bach" are one name and a blank name is refused.
+# The minimum of one character keeps short real names (Li, Wu, Ng, "J.") valid.
+# A field type instead of a model-wide setting, because passwords must never be
+# altered by the schema.
+PersonName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)
+]
+
+# The title of an ordinarium or proprium work: stripped like a person name, so
+# "Ave Maria" and "Ave Maria " are one title for the same composer.
+WorkName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=3, max_length=60)
+]
+
+# Largest number of entries a request list may carry: the catalogue of
+# instruments, voices, choir jobs and roles and the cast of one performance are
+# far smaller, so a bigger list only costs the service time per entry.
+MAX_CATALOGUE_ENTRIES = 200
+MAX_RECIPIENTS = 500
+MAX_PROPRIUM_ENTRIES = 50
+MAX_REHEARSALS = 20
+
+# The text of a message to the cast: a message of blanks is no message.
+MessageText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+]
+
+# A message typed into a free-text box: a message of blanks is no message.
+SupportMessageText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=3, max_length=2000)
+]

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from app.schemas.artist import ArtistRequest
     from app.schemas.pagination import PagedRows, PageParams
 
-_NAME_MIN_LENGTH = 3
+_NAME_MIN_LENGTH = 1
 _NAME_MAX_LENGTH = 32
 _SEARCH_RESULT_LIMIT = 20
 _IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."

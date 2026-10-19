@@ -6,7 +6,14 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
+from app.schemas.base import (
+    MAX_CATALOGUE_ENTRIES,
+    MAX_PROPRIUM_ENTRIES,
+    MAX_REHEARSALS,
+    LenientUuid,
+    OptionalText,
+    StrictInputModel,
+)
 
 # Pydantic's model-level strict=True (StrictInputModel) rejects ISO-8601
 # datetime STRINGS for a plain `datetime` field -- JSON has no native
@@ -25,9 +32,15 @@ class PerformancePositionInput(StrictInputModel):
 
 
 class PerformanceSetupInput(StrictInputModel):
-    instruments: list[PerformancePositionInput] = Field(default_factory=list)
-    voices: list[PerformancePositionInput] = Field(default_factory=list)
-    choirjobs: list[PerformancePositionInput] = Field(default_factory=list)
+    instruments: list[PerformancePositionInput] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
+    voices: list[PerformancePositionInput] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
+    choirjobs: list[PerformancePositionInput] = Field(
+        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+    )
 
 
 class PerformanceRehearsalInput(StrictInputModel):
@@ -52,8 +65,12 @@ class PerformanceRequest(StrictInputModel):
     extracost_amount: int | None = Field(default=None, ge=0, le=999)
     extracost_description: OptionalText = None
     setup: PerformanceSetupInput
-    proprium: list[PerformancePropriumEntryInput] = Field(default_factory=list)
-    rehearsals: list[PerformanceRehearsalInput] = Field(default_factory=list)
+    proprium: list[PerformancePropriumEntryInput] = Field(
+        default_factory=list, max_length=MAX_PROPRIUM_ENTRIES
+    )
+    rehearsals: list[PerformanceRehearsalInput] = Field(
+        default_factory=list, max_length=MAX_REHEARSALS
+    )
 
 
 class PerformanceResponse(BaseModel):

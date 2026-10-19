@@ -262,6 +262,23 @@ class TestSendMessageToContactperson:
         assert response.status_code == 200
         fake_arq_pool.enqueue_job.assert_not_called()
 
+    def test_a_message_of_blanks_is_refused_and_no_mail_is_queued(
+        self, client, make_user, fake_arq_pool
+    ):
+        headers, _sender = _auth_headers(client, make_user)
+        recipient = make_user(
+            email=f"{_unique('kontakt')}@example.test", roles=[_unique("kontakt")]
+        )
+
+        response = client.post(
+            "/support/message-to-contactperson",
+            json={"recipient_id": str(recipient.id), "message": "     "},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        fake_arq_pool.enqueue_job.assert_not_called()
+
     def test_rejects_message_shorter_than_three_chars(self, client, make_user):
         headers, _sender = _auth_headers(client, make_user)
         response = client.post(

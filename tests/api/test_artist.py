@@ -141,12 +141,12 @@ class TestCrudRoundtrip:
 
 
 class TestValidation:
-    def test_short_surname_returns_422_with_field_error(self, client, make_user):
+    def test_blank_surname_returns_422_with_field_error(self, client, make_user):
         headers = _auth_headers(client, make_user)
         response = client.post(
             "/artists",
             json={
-                "surname": "ab",
+                "surname": "   ",
                 "givenname": _unique(),
                 "description": None,
                 "birthyear": None,
@@ -158,6 +158,27 @@ class TestValidation:
         )
         assert response.status_code == 422
         assert response.json()["detail"][0]["loc"] == ["body", "surname"]
+
+    def test_a_short_surname_is_accepted_and_stored_without_padding(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        response = client.post(
+            "/artists",
+            json={
+                "surname": "  li ",
+                "givenname": f" {_unique()} ",
+                "description": None,
+                "birthyear": None,
+                "deathyear": None,
+                "composer": False,
+                "conductor": False,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 201
+        assert response.json()["surname"] == "LI"
+        assert response.json()["givenname"] == response.json()["givenname"].strip()
 
     def test_extra_body_field_is_rejected(self, client, make_user):
         headers = _auth_headers(client, make_user)

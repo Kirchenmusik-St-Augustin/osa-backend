@@ -3,7 +3,7 @@ import uuid
 from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import StrictInputModel
+from app.schemas.base import PersonName, StrictInputModel
 from app.schemas.validators import (
     PHONE_PATTERN,
     validate_confirmation,
@@ -12,8 +12,8 @@ from app.schemas.validators import (
 
 
 class RegisterRequest(StrictInputModel):
-    surname: str = Field(min_length=3, max_length=32)
-    givenname: str = Field(min_length=3, max_length=32)
+    surname: PersonName
+    givenname: PersonName
     email: EmailStr
     phone: str
     password: str
@@ -22,7 +22,7 @@ class RegisterRequest(StrictInputModel):
     @field_validator("phone")
     @classmethod
     def _validate_phone(cls, value: str) -> str:
-        if not PHONE_PATTERN.match(value):
+        if not PHONE_PATTERN.fullmatch(value):
             msg = "Ungültige Telefonnummer"
             raise ValueError(msg)
         return value

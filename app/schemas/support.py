@@ -1,8 +1,8 @@
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from app.schemas.base import LenientUuid, StrictInputModel
+from app.schemas.base import LenientUuid, StrictInputModel, SupportMessageText
 
 
 class ContactUserOutput(BaseModel):
@@ -33,4 +33,4 @@ class MessageToContactpersonRequest(StrictInputModel):
     support_service.send_message_to_contactperson."""
 
     recipient_id: LenientUuid
-    message: str = Field(min_length=3, max_length=2000)
+    message: SupportMessageText
