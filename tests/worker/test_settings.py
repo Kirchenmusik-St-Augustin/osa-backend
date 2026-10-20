@@ -1,5 +1,6 @@
 from app.core.config import get_settings
 from app.core.datetime_utils import get_app_timezone
+from app.core.job_serialization import dumps_job, loads_job
 from app.worker.cron_config import CronSchedule, build_cron_catalog
 from app.worker.scheduled_jobs import purge_stale_booking_requests_task
 from app.worker.settings import _JOB_COROUTINES, WorkerSettings, _build_cron_job
@@ -73,3 +74,9 @@ def test_heartbeat_is_refreshed_often_enough_for_the_container_health_check():
     # most of every hour. The probe interval in osa-deploy's worker Quadlet
     # is 30 seconds, so the heartbeat must not be slower than that.
     assert WorkerSettings.health_check_interval <= 30
+
+
+def test_worker_reads_jobs_with_the_serializer_the_web_side_enqueues_with():
+    # The queue must never fall back to arq's pickle default on either side.
+    assert WorkerSettings.job_serializer is dumps_job
+    assert WorkerSettings.job_deserializer is loads_job

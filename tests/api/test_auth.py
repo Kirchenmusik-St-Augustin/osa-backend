@@ -318,8 +318,8 @@ def _registration_payload(**overrides: object) -> dict[str, object]:
         "givenname": f"max{unique}",
         "email": f"max.muster.{unique}@example.com",
         "phone": "+43 660 1234567",
-        "password": "Passw0rd1",
-        "password_confirmation": "Passw0rd1",
+        "password": "Passw0rd12",
+        "password_confirmation": "Passw0rd12",
     }
     payload.update(overrides)
     return payload
@@ -377,8 +377,7 @@ def test_register_rejects_weak_password(client):
     detail = response.json()["detail"]
     password_errors = [err for err in detail if err["loc"] == ["body", "password"]]
     assert len(password_errors) == 1
-    assert "zwischen 8 und 16 Zeichen" in password_errors[0]["msg"]
-    assert "mindestens eine Ziffer" in password_errors[0]["msg"]
+    assert "zwischen 10 und 64 Zeichen" in password_errors[0]["msg"]
     assert "Richtlinien" not in password_errors[0]["msg"]
 
 
@@ -391,8 +390,8 @@ def test_register_rejects_weak_password(client):
             {
                 "email": "nobody@example.com",
                 "token": "",
-                "password": "Passw0rd1",
-                "password_confirmation": "Passw0rd1",
+                "password": "Passw0rd12",
+                "password_confirmation": "Passw0rd12",
             },
         ),
         ("/auth/google/callback", {"credential": ""}),
@@ -630,15 +629,15 @@ def test_reset_password_success(client, make_user, db_session):
         json={
             "email": user.email,
             "token": token,
-            "password": "Passw0rd1",
-            "password_confirmation": "Passw0rd1",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
         },
     )
 
     assert response.status_code == 200
 
     login_response = client.post(
-        "/auth/login", data={"username": user.email, "password": "Passw0rd1"}
+        "/auth/login", data={"username": user.email, "password": "Passw0rd12"}
     )
     assert login_response.status_code == 200
 
@@ -652,8 +651,8 @@ def test_reset_password_logs_a_password_reset_auth_event(client, make_user, db_s
         json={
             "email": user.email,
             "token": token,
-            "password": "Passw0rd1",
-            "password_confirmation": "Passw0rd1",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
         },
     )
 
@@ -674,8 +673,8 @@ def test_reset_password_rejects_invalid_token(client, make_user):
         json={
             "email": user.email,
             "token": "bogus-token",
-            "password": "Passw0rd1",
-            "password_confirmation": "Passw0rd1",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
         },
     )
 
@@ -957,8 +956,8 @@ def test_forgot_password_verify_email_and_reset_password_are_rate_limited(client
             {
                 "email": "nobody@example.com",
                 "token": "bogus-token",
-                "password": "Passw0rd1",
-                "password_confirmation": "Passw0rd1",
+                "password": "Passw0rd12",
+                "password_confirmation": "Passw0rd12",
             },
         ),
     ]

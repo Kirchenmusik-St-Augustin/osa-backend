@@ -3,9 +3,9 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
-from app.core.datetime_utils import UtcDatetime
+from app.core.datetime_utils import UtcDatetime, get_app_timezone
 from app.schemas.base import (
     MAX_CATALOGUE_ENTRIES,
     MAX_PROPRIUM_ENTRIES,
@@ -23,7 +23,21 @@ from app.schemas.base import (
 # would. A per-field `strict=False` override is the narrow, documented
 # escape hatch for exactly this case -- it does NOT loosen anything else
 # (extra="forbid" and every other field's strictness are untouched).
-_LenientDatetime = Annotated[datetime, Field(strict=False)]
+#
+# Schedules are stored as naive wall-clock values in the application time
+# zone: an input with an explicit offset ("...Z", "...+02:00") is converted to
+# that clock first, so every later comparison is naive to naive.
+
+
+def _to_local_wall_clock(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(get_app_timezone()).replace(tzinfo=None)
+
+
+_LenientDatetime = Annotated[
+    datetime, Field(strict=False), AfterValidator(_to_local_wall_clock)
+]
 
 
 class PerformancePositionInput(StrictInputModel):

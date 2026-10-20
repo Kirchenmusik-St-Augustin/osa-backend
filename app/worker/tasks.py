@@ -4,11 +4,9 @@ from router code via app.api.job_queue.JobQueue.enqueue(). Arq addresses
 each wrapper by its own __name__ -- e.g. app/api/router_includes/auth.py's
 forgot_password() enqueues send_password_reset_email_task.
 
-Every argument passed through JobQueue.enqueue() must be picklable (arq's
-default job serializer, pickle.dumps -- see arq.jobs.serialize_job) --
-true for every argument below (plain str/list values,
-mailer.BookingCanceledMailEntry, a module-level frozen dataclass, and
-Redacted, itself a plain frozen dataclass).
+Every argument passed through JobQueue.enqueue() must be accepted by the
+queue's JSON serializer (app.core.job_serialization): plain str/int/list
+values, mailer.BookingCanceledMailEntry and Redacted.
 """
 
 from typing import TYPE_CHECKING

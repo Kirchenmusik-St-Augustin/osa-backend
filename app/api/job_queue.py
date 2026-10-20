@@ -69,7 +69,8 @@ class JobQueue:
         app.worker.settings.WorkerSettings.functions; arq addresses it by
         its `__name__` and supplies its leading `ctx` argument itself, so
         `args`/`kwargs` are checked against the job's remaining parameters.
-        They must be picklable (arq's job serializer)."""
+        They must be accepted by the queue's JSON serializer
+        (app.core.job_serialization)."""
         self._background_tasks.add_task(
             _enqueue, self._arq_pool, job.__name__, args, kwargs
         )

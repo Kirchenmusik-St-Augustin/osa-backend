@@ -1,6 +1,7 @@
 import uuid
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.config import Settings
 
@@ -246,3 +247,131 @@ def test_blank_environment_values_count_as_unset(monkeypatch: pytest.MonkeyPatch
     assert settings.smtp_port is None
     assert settings.google_client_id is None
     assert settings.koofr_user is None
+
+
+def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("SECRET_KEY", "x" * 32)
+
+
+def test_wildcard_cors_origin_exits(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example,*")
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+
+@pytest.mark.parametrize("timezone", ["Mars/Olympus_Mons", "/etc/passwd", "../UTC"])
+def test_unknown_or_malformed_timezone_exits(
+    monkeypatch: pytest.MonkeyPatch, timezone: str
+):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("APP_TIMEZONE", timezone)
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+
+def test_known_timezone_is_accepted(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("APP_TIMEZONE", "UTC")
+
+    assert Settings().app_timezone == "UTC"
+
+
+@pytest.mark.parametrize("environment", ["qa", "production"])
+def test_missing_valkey_password_exits_on_qa_and_production(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("APP_ENVIRONMENT", environment)
+    monkeypatch.delenv("VALKEY_PASSWORD", raising=False)
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+
+@pytest.mark.parametrize("environment", ["qa", "production"])
+def test_blank_valkey_password_exits_on_qa_and_production(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("APP_ENVIRONMENT", environment)
+    monkeypatch.setenv("VALKEY_PASSWORD", "")
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+
+@pytest.mark.parametrize("environment", ["qa", "production"])
+def test_valkey_password_is_accepted_on_qa_and_production(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("APP_ENVIRONMENT", environment)
+    monkeypatch.setenv("VALKEY_PASSWORD", "s3cret")
+
+    assert Settings().valkey_password == "s3cret"
+
+
+@pytest.mark.parametrize("environment", ["development", "test"])
+def test_missing_valkey_password_is_allowed_outside_qa_and_production(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("APP_ENVIRONMENT", environment)
+    monkeypatch.delenv("VALKEY_PASSWORD", raising=False)
+
+    assert Settings().valkey_password is None
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("SESSION_LIFETIME_MINUTES", "0"),
+        ("SESSION_LIFETIME_MINUTES", "1441"),
+        ("SESSION_IDLE_TIMEOUT_MINUTES", "-1"),
+        ("REFRESH_TOKEN_LIFETIME_DAYS", "0"),
+        ("REFRESH_TOKEN_LIFETIME_DAYS", "91"),
+        ("MAIL_KILL_SWITCH_PERIOD_DAYS", "0"),
+        ("MAIL_KILL_SWITCH_THRESHOLD", "0"),
+        ("EMAIL_VERIFICATION_TTL_MINUTES", "0"),
+        ("PASSWORD_RESET_TTL_MINUTES", "0"),
+        ("KOOFR_BACKUP_RETENTION_DAYS", "0"),
+        ("BACKUP_HOUR", "24"),
+        ("BACKUP_HOUR", "-1"),
+        ("BACKUP_MINUTE", "60"),
+        ("VALKEY_PORT", "0"),
+        ("VALKEY_PORT", "65536"),
+    ],
+)
+def test_out_of_range_numeric_setting_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+):
+    _base_env(monkeypatch)
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "attribute"),
+    [
+        ("SESSION_LIFETIME_MINUTES", "1440", "session_lifetime_minutes"),
+        ("REFRESH_TOKEN_LIFETIME_DAYS", "90", "refresh_token_lifetime_days"),
+        ("BACKUP_HOUR", "23", "backup_hour"),
+        ("BACKUP_MINUTE", "59", "backup_minute"),
+        ("VALKEY_PORT", "65535", "valkey_port"),
+    ],
+)
+def test_numeric_setting_accepts_its_upper_bound(
+    monkeypatch: pytest.MonkeyPatch, variable: str, value: str, attribute: str
+):
+    _base_env(monkeypatch)
+    monkeypatch.setenv(variable, value)
+
+    assert getattr(Settings(), attribute) == int(value)

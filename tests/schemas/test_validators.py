@@ -9,51 +9,55 @@ from app.schemas.validators import (
 
 
 class TestPasswordPolicyViolations:
-    def test_compliant_password_has_no_violations(self):
-        assert password_policy_violations("Passw0rd1") == []
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "a" * 10,
+            "a" * 64,
+            "korrekt pferd batterie",
+            "Ab1./+!@:_-x#$%&",
+            "nurbuchstaben",
+            "1234567890",
+            "Übergrößenträger",
+        ],
+    )
+    def test_compliant_password_has_no_violations(self, value: str):
+        assert password_policy_violations(value) == []
 
-    def test_every_allowed_special_character_is_accepted(self):
-        assert password_policy_violations("Ab1./+!@:_-x") == []
-
-    @pytest.mark.parametrize("value", ["Ab1defg", "Abcdefghij1234567"])
-    def test_length_outside_8_to_16_reports_only_the_length_rule(self, value: str):
+    @pytest.mark.parametrize("value", ["a" * 9, "", "a" * 65])
+    def test_length_outside_10_to_64_reports_only_the_length_rule(self, value: str):
         assert password_policy_violations(value) == [
-            "Das Passwort muss zwischen 8 und 16 Zeichen lang sein."
+            "Das Passwort muss zwischen 10 und 64 Zeichen lang sein."
         ]
 
-    def test_forbidden_character_reports_only_the_charset_rule(self):
-        violations = password_policy_violations("Passw0rd 1")
+    def test_exactly_72_bytes_are_accepted(self):
+        assert password_policy_violations("ä" * 36) == []
+
+    @pytest.mark.parametrize("value", ["ä" * 36 + "a", "😀" * 19, "ä" * 40])
+    def test_more_than_72_bytes_within_the_character_limit_reports_only_the_byte_rule(
+        self, value: str
+    ):
+        violations = password_policy_violations(value)
         assert len(violations) == 1
-        assert "unzulässige Zeichen" in violations[0]
+        assert "höchstens 72 Byte" in violations[0]
 
-    def test_trailing_newline_is_a_forbidden_character(self):
-        violations = password_policy_violations("Passw0rd1\n")
+    def test_text_that_cannot_be_encoded_reports_the_byte_rule(self):
+        violations = password_policy_violations("a" * 9 + "\ud800")
         assert len(violations) == 1
-        assert "unzulässige Zeichen" in violations[0]
+        assert "gültige Zeichen" in violations[0]
 
-    def test_missing_letter_reports_only_the_letter_rule(self):
-        assert password_policy_violations("12345678") == [
-            "Das Passwort muss mindestens einen Buchstaben enthalten."
-        ]
-
-    def test_missing_digit_reports_only_the_digit_rule(self):
-        assert password_policy_violations("Abcdefgh") == [
-            "Das Passwort muss mindestens eine Ziffer enthalten."
-        ]
-
-    def test_all_violated_rules_are_reported_together(self):
-        violations = password_policy_violations("ä")
-        assert len(violations) == 4
+    def test_both_rules_are_reported_together(self):
+        assert len(password_policy_violations("ä" * 65)) == 2
 
 
 class TestValidatePasswordPolicy:
     def test_returns_a_compliant_value_unchanged(self):
-        assert validate_password_policy("Passw0rd1") == "Passw0rd1"
+        assert validate_password_policy("Passw0rd12") == "Passw0rd12"
 
     def test_error_names_every_violated_rule(self):
         with pytest.raises(ValueError, match="Zeichen lang sein") as exc_info:
-            validate_password_policy("short")
-        assert "mindestens eine Ziffer" in str(exc_info.value)
+            validate_password_policy("ä" * 65)
+        assert "höchstens 72 Byte" in str(exc_info.value)
         assert "Richtlinien" not in str(exc_info.value)
 
 

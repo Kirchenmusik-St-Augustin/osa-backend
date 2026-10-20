@@ -2,8 +2,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
 from sqlalchemy import select
 
+from app.core.datetime_utils import get_app_timezone
 from app.db.models.performance import Performance
 
 if TYPE_CHECKING:
@@ -280,6 +282,112 @@ class TestValidation:
         response = client.post("/performances", json=payload, headers=headers)
 
         assert response.status_code == 422
+
+
+class TestOffsetAwareSchedule:
+    """Schedules are stored as naive wall-clock values in the application
+    time zone, so an input that carries an explicit offset is converted to
+    that clock at the schema boundary."""
+
+    @staticmethod
+    def _midnight_utc_in_30_days() -> datetime:
+        return (datetime.now(UTC) + timedelta(days=30)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+    @pytest.mark.parametrize(("suffix", "offset_hours"), [("Z", 0), ("+02:00", 2)])
+    def test_offset_aware_schedule_is_converted_to_the_local_wall_clock(
+        self, client, make_user, suffix, offset_hours
+    ):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        utc_moment = self._midnight_utc_in_30_days()
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=utc_moment.strftime("%Y-%m-%dT%H:%M:%S") + suffix,
+        )
+
+        response = client.post("/performances", json=payload, headers=headers)
+
+        assert response.status_code == 201
+        stored = datetime.fromisoformat(response.json()["schedule"])
+        assert stored.tzinfo is None
+        expected_utc = utc_moment - timedelta(hours=offset_hours)
+        assert stored == expected_utc.astimezone(get_app_timezone()).replace(
+            tzinfo=None
+        )
+
+    def test_naive_schedule_is_stored_as_typed(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        typed = self._midnight_utc_in_30_days().replace(hour=10, tzinfo=None)
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=typed.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+
+        response = client.post("/performances", json=payload, headers=headers)
+
+        assert response.status_code == 201
+        assert datetime.fromisoformat(response.json()["schedule"]) == typed
+
+    def test_offset_aware_rehearsal_is_converted_to_the_local_wall_clock(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        utc_moment = self._midnight_utc_in_30_days()
+        rehearsal_moment = utc_moment - timedelta(days=1)
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=utc_moment.strftime("%Y-%m-%dT%H:%M:%S") + "Z",
+            rehearsals=[
+                {
+                    "schedule": rehearsal_moment.strftime("%Y-%m-%dT%H:%M:%S")
+                    + "+00:00",
+                    "comment": None,
+                }
+            ],
+        )
+
+        create_response = client.post("/performances", json=payload, headers=headers)
+
+        assert create_response.status_code == 201
+        form_response = client.get(
+            f"/performances/{create_response.json()['id']}/form", headers=headers
+        )
+        stored = datetime.fromisoformat(
+            form_response.json()["rehearsals"][0]["schedule"]
+        )
+        assert stored.tzinfo is None
+        assert stored == rehearsal_moment.astimezone(get_app_timezone()).replace(
+            tzinfo=None
+        )
+
+    def test_offset_aware_schedule_before_tomorrow_returns_422(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S") + "Z",
+        )
+
+        response = client.post("/performances", json=payload, headers=headers)
+
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["body", "schedule"]
 
 
 class TestQueryCount:

@@ -6,6 +6,7 @@ import pytest
 import app.core.arq_pool as arq_pool_module
 from app.core.arq_pool import build_redis_settings, close_arq_pool, get_arq_pool
 from app.core.config import get_settings
+from app.core.job_serialization import dumps_job, loads_job
 
 
 @pytest.fixture(autouse=True)
@@ -41,6 +42,17 @@ def test_get_arq_pool_returns_the_same_instance_on_repeated_calls():
     assert first is fake_pool
     assert second is fake_pool
     mock_create_pool.assert_called_once()
+
+
+def test_get_arq_pool_uses_the_data_only_job_serializer():
+    mock_create_pool = AsyncMock(return_value=AsyncMock())
+
+    with patch.object(arq_pool_module, "create_pool", mock_create_pool):
+        asyncio.run(get_arq_pool())
+
+    kwargs = mock_create_pool.call_args.kwargs
+    assert kwargs["job_serializer"] is dumps_job
+    assert kwargs["job_deserializer"] is loads_job
 
 
 def test_get_arq_pool_creates_only_once_under_concurrent_first_callers():

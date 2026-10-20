@@ -593,8 +593,8 @@ def _register_request(**overrides: object) -> RegisterRequest:
         "givenname": f"max{unique}",
         "email": f"max.muster.{unique}@example.com",
         "phone": "+43 660 1234567",
-        "password": "Passw0rd1",
-        "password_confirmation": "Passw0rd1",
+        "password": "Passw0rd12",
+        "password_confirmation": "Passw0rd12",
     }
     defaults.update(overrides)
     return RegisterRequest(**defaults)
@@ -608,7 +608,7 @@ def test_register_user_persists_normalized_fields(db_session):
     assert user.surname == "MUSTER"
     assert user.givenname == "Max"
     assert user.email == request.email
-    assert user.auth_password != "Passw0rd1"
+    assert user.auth_password != "Passw0rd12"
 
 
 def test_register_user_rejects_duplicate_name_combo_case_insensitive(db_session):
@@ -862,7 +862,7 @@ def test_request_password_reset_updates_the_existing_row_in_place(
     assert first_row.token == hash_reset_token(second_token)
     with pytest.raises(ValueError, match="ungültig"):
         auth_service.execute_password_reset(
-            db_session, user.email, first_token, "Passw0rd1"
+            db_session, user.email, first_token, "Passw0rd12"
         )
 
 
@@ -880,7 +880,7 @@ def test_request_password_reset_restarts_the_token_lifetime(db_session, make_use
     db_session.refresh(row)
     assert row.created_at is not None
     assert datetime.now(UTC) - row.created_at < timedelta(minutes=1)
-    auth_service.execute_password_reset(db_session, user.email, new_token, "Passw0rd1")
+    auth_service.execute_password_reset(db_session, user.email, new_token, "Passw0rd12")
 
 
 def test_execute_password_reset_success_sets_password_and_invalidates_sessions(
@@ -892,12 +892,12 @@ def test_execute_password_reset_success_sets_password_and_invalidates_sessions(
     )
     token = auth_service.request_password_reset(db_session, user.email)
 
-    auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd1")
+    auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
 
     db_session.refresh(user)
     assert user.email_verified_at is not None
     new_user, reason = auth_service.authenticate_user(
-        db_session, user.email, "Passw0rd1"
+        db_session, user.email, "Passw0rd12"
     )
     assert reason == "ok"
     assert new_user is not None
@@ -913,7 +913,7 @@ def test_execute_password_reset_rejects_invalid_token(db_session, make_user):
 
     with pytest.raises(ValueError, match="ungültig"):
         auth_service.execute_password_reset(
-            db_session, user.email, "bogus-token", "Passw0rd1"
+            db_session, user.email, "bogus-token", "Passw0rd12"
         )
 
 
@@ -927,7 +927,7 @@ def test_execute_password_reset_rejects_expired_token(db_session, make_user):
     db_session.commit()
 
     with pytest.raises(ValueError, match="ungültig"):
-        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd1")
+        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
 
 
 # ---------------------------------------------------------------------------

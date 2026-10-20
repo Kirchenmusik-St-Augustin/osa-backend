@@ -170,8 +170,7 @@ class TestUpdateProfile:
             if error["loc"] == ["body", "password"]
         ]
         assert len(password_errors) == 1
-        assert "zwischen 8 und 16 Zeichen" in password_errors[0]["msg"]
-        assert "mindestens eine Ziffer" in password_errors[0]["msg"]
+        assert "zwischen 10 und 64 Zeichen" in password_errors[0]["msg"]
 
     def test_mismatched_confirmation_is_reported_on_its_own_field(
         self, client, make_user

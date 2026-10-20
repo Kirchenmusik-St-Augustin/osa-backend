@@ -1,8 +1,11 @@
+import logging
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
 import jwt
 import pytest
+from itsdangerous import URLSafeTimedSerializer
 
 from app.core import security
 
@@ -31,6 +34,44 @@ def test_verify_password_rejects_none_or_empty_hash():
 
 def test_verify_password_handles_malformed_hash_gracefully():
     assert not security.verify_password("hunter2", "not-a-real-bcrypt-hash")
+
+
+def test_verify_password_accepts_a_password_of_exactly_72_bytes():
+    password = "a" * 72
+    hashed = security.get_password_hash(password)
+
+    assert security.verify_password(password, hashed)
+
+
+@pytest.mark.parametrize("password", ["a" * 73, "ä" * 37, "x" * 10_000])
+def test_verify_password_refuses_over_long_input_without_logging(
+    password: str, caplog: pytest.LogCaptureFixture
+):
+    hashed = security.get_password_hash("hunter2")
+
+    with (
+        caplog.at_level(logging.DEBUG),
+        patch.object(security.bcrypt, "checkpw") as mock_checkpw,
+    ):
+        assert not security.verify_password(password, hashed)
+
+    mock_checkpw.assert_not_called()
+    assert caplog.text == ""
+
+
+def test_verify_password_refuses_text_that_cannot_be_encoded():
+    hashed = security.get_password_hash("hunter2")
+
+    assert not security.verify_password("\ud800", hashed)
+
+
+def test_verify_password_logs_a_malformed_stored_hash(
+    caplog: pytest.LogCaptureFixture,
+):
+    with caplog.at_level(logging.ERROR):
+        assert not security.verify_password("hunter2", "not-a-real-bcrypt-hash")
+
+    assert "Bcrypt verification error" in caplog.text
 
 
 def test_create_access_token_roundtrip():
@@ -103,6 +144,22 @@ def test_email_verification_token_roundtrip():
 
     assert decoded_user_id == user_id
     assert email_hash == security.hash_email_for_verification("user@example.test")
+
+
+def test_email_verification_token_is_not_signed_with_the_access_token_key():
+    token_signed_with_the_secret_key = URLSafeTimedSerializer(
+        security.SECRET_KEY, salt="email-verification"
+    ).dumps(
+        {
+            "user_id": str(uuid.uuid4()),
+            "email_hash": security.hash_email_for_verification("user@example.test"),
+        }
+    )
+
+    with pytest.raises(security.InvalidVerificationTokenError):
+        security.decode_email_verification_token(
+            token_signed_with_the_secret_key, max_age_seconds=3600
+        )
 
 
 def test_email_verification_token_rejects_expired_token():

@@ -26,8 +26,8 @@ def _register(**fields: object) -> BaseModel:
     return RegisterRequest.model_validate(
         {
             **_PERSON,
-            "password": "Passw0rd1",
-            "password_confirmation": "Passw0rd1",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
             **fields,
         }
     )
@@ -38,7 +38,7 @@ def _profile(**fields: object) -> BaseModel:
         {
             **_PERSON,
             "change_password": False,
-            "auth_password": "Passw0rd1",
+            "auth_password": "Passw0rd12",
             **fields,
         }
     )

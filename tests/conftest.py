@@ -29,6 +29,9 @@ os.environ["APP_ENVIRONMENT"] = "test"
 os.environ["BCRYPT_ROUNDS"] = "4"
 os.environ["CORS_ORIGINS"] = "http://localhost:21001"
 os.environ["SECRET_KEY"] = "test-secret-key-" + "x" * 32
+os.environ["VALKEY_PASSWORD"] = (
+    "test-valkey-password"  # required on qa and production, see Settings
+)
 
 # Guards against ever pointing this at a real dev/prod database: the
 # session fixture below drops and rebuilds the entire 'public' schema.

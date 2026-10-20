@@ -19,6 +19,7 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
 from app.core.config import get_settings
+from app.core.job_serialization import dumps_job, loads_job
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,11 @@ async def get_arq_pool() -> ArqRedis:
         return _pool
     async with _pool_lock:
         if _pool is None:
-            _pool = await create_pool(build_redis_settings())
+            _pool = await create_pool(
+                build_redis_settings(),
+                job_serializer=dumps_job,
+                job_deserializer=loads_job,
+            )
             logger.info("ARQ pool created (enqueue side).")
     return _pool
 
