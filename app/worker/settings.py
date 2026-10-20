@@ -34,6 +34,8 @@ from app.worker.tasks import (
     send_booked_or_standby_canceled_email_task,
     send_new_registration_notice_task,
     send_password_reset_email_task,
+    send_registration_account_exists_email_task,
+    send_registration_entry_exists_email_task,
     send_user_message_email_task,
     send_verification_email_task,
 )
@@ -93,6 +95,8 @@ class WorkerSettings:
 
     functions: ClassVar[list[WorkerCoroutine]] = [
         send_new_registration_notice_task,
+        send_registration_account_exists_email_task,
+        send_registration_entry_exists_email_task,
         send_verification_email_task,
         send_password_reset_email_task,
         send_booked_or_standby_canceled_email_task,

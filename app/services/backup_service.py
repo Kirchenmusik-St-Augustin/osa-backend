@@ -518,23 +518,29 @@ def _dump_table_data(
     --data-only dump by pg_dump itself, nothing to special-case."""
     pg_dump = _resolve_pg_tool("pg_dump")
     with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
-        tmp_path = tmp.name
-    _run_pg_subprocess(
-        [
-            pg_dump,
-            "--format=custom",
-            "--data-only",
-            f"--table={table}",
-            f"--file={tmp_path}",
-            f"--host={host}",
-            f"--port={port}",
-            f"--username={user}",
-            f"--dbname={dbname}",
-        ],
-        env=_build_pg_env(password),
-        tool_name="pg_dump",
-    )
-    return Path(tmp_path)
+        tmp_path = Path(tmp.name)
+    try:
+        _run_pg_subprocess(
+            [
+                pg_dump,
+                "--format=custom",
+                "--data-only",
+                f"--table={table}",
+                f"--file={tmp_path}",
+                f"--host={host}",
+                f"--port={port}",
+                f"--username={user}",
+                f"--dbname={dbname}",
+            ],
+            env=_build_pg_env(password),
+            tool_name="pg_dump",
+        )
+    except BaseException:
+        # A failed or interrupted pg_dump may leave a partial file behind; the
+        # caller only receives (and removes) the path of a successful dump.
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path
 
 
 def _restore_table_data(

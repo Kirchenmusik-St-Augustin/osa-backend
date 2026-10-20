@@ -10,6 +10,7 @@ from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.sent_email import SentEmail
+from app.db.models.user import User
 from app.services import auth_service
 from tests.google_credential import google_credential
 
@@ -325,46 +326,109 @@ def _registration_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def test_register_success_auto_logs_in_and_notifies_disponent(
-    client, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
+def _enqueued_functions(fake_arq_pool) -> list[str]:
+    return [call.args[0] for call in fake_arq_pool.enqueue_job.call_args_list]
+
+
+def test_register_creates_the_account_without_a_session_and_sends_the_mails(
+    client, fake_arq_pool, db_session, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    payload = _registration_payload()
 
-    response = client.post("/auth/register", json=_registration_payload())
+    response = client.post("/auth/register", json=payload)
 
     assert response.status_code == 200
     body = response.json()
-    assert body["access_token"]
-    assert "refresh_token" in response.cookies
-    enqueued_functions = [
-        call.args[0] for call in fake_arq_pool.enqueue_job.call_args_list
-    ]
-    assert enqueued_functions == [
+    assert "access_token" not in body
+    assert "refresh_token" not in response.cookies
+    assert body["status"] == "ok"
+    assert body["message"] == (
+        f"Bitte prüfe dein Postfach. Wir haben eine E-Mail an {payload['email']} "
+        "geschickt. Falls für diese Adresse noch kein Konto besteht, enthält sie "
+        "einen Bestätigungslink. Nach der Bestätigung bist du angemeldet."
+    )
+    assert db_session.query(User).filter_by(email=payload["email"]).count() == 1
+    assert _enqueued_functions(fake_arq_pool) == [
         "send_new_registration_notice_task",
         "send_verification_email_task",
     ]
 
 
-def test_register_rejects_duplicate_email(
-    client, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
+def test_register_with_a_known_address_creates_nothing_and_mails_its_owner(
+    client, fake_arq_pool, db_session, make_user
 ):
-    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
-    payload = _registration_payload()
-    first = client.post("/auth/register", json=payload)
-    assert first.status_code == 200
-    fake_arq_pool.enqueue_job.reset_mock()
+    existing = make_user(email=_com_email())
+    users_before = db_session.query(User).count()
 
-    second = client.post(
+    response = client.post(
         "/auth/register",
         json=_registration_payload(
-            surname="Andere", givenname="Person", email=payload["email"].upper()
+            surname="Andere", givenname="Person", email=existing.email.upper()
         ),
     )
 
-    assert second.status_code == 422
-    detail = second.json()["detail"]
-    assert any(err["loc"] == ["body", "email"] for err in detail)
-    fake_arq_pool.enqueue_job.assert_not_called()
+    assert response.status_code == 200
+    assert "access_token" not in response.json()
+    assert db_session.query(User).count() == users_before
+    fake_arq_pool.enqueue_job.assert_called_once_with(
+        "send_registration_account_exists_email_task", existing.email
+    )
+
+
+def test_register_with_a_taken_name_creates_nothing_and_mails_the_given_address(
+    client, fake_arq_pool, db_session, make_user
+):
+    existing = make_user(email=_com_email())
+    existing.surname = "MUSTERFRAU"
+    existing.givenname = "Erika"
+    db_session.commit()
+    users_before = db_session.query(User).count()
+    new_address = _com_email()
+
+    response = client.post(
+        "/auth/register",
+        json=_registration_payload(
+            surname="Musterfrau", givenname="Erika", email=new_address
+        ),
+    )
+
+    assert response.status_code == 200
+    assert db_session.query(User).count() == users_before
+    fake_arq_pool.enqueue_job.assert_called_once_with(
+        "send_registration_entry_exists_email_task",
+        new_address,
+        "Erika",
+        "Musterfrau",
+    )
+
+
+def test_register_answers_alike_for_a_new_address_a_known_address_and_a_taken_name(
+    client, db_session, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    known = make_user(email=_com_email())
+    known.surname = "MUSTERMANN"
+    known.givenname = "Max"
+    db_session.commit()
+    requests = [
+        _registration_payload(),
+        _registration_payload(email=known.email),
+        _registration_payload(surname="Mustermann", givenname="Max"),
+    ]
+
+    responses = [client.post("/auth/register", json=payload) for payload in requests]
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    answers = [
+        {
+            **response.json(),
+            "message": response.json()["message"].replace(payload["email"], "<email>"),
+        }
+        for response, payload in zip(responses, requests, strict=True)
+    ]
+    assert answers[0] == answers[1] == answers[2]
+    assert all("<email>" in answer["message"] for answer in answers)
 
 
 def test_register_rejects_weak_password(client):
@@ -974,9 +1038,8 @@ def test_register_is_rate_limited(client, monkeypatch: pytest.MonkeyPatch):
     payload = _registration_payload()
 
     for _ in range(5):
-        # First call succeeds (200); the rest hit the duplicate-email
-        # rejection (422) -- both still count against the limiter, which
-        # counts requests reaching the endpoint, not just successful ones.
+        # The first call creates the account, the rest are answered alike
+        # without creating anything -- all of them count against the limiter.
         response = client.post("/auth/register", json=payload)
         assert response.status_code != 429
 

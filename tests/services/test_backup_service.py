@@ -1326,6 +1326,53 @@ class TestStreamedTransfers:
 
         assert list(tmp_path.iterdir()) == []
 
+    def test_no_file_is_left_when_preserving_job_runs_fails(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(content=b"dump"),
+        )
+        base_run = _fake_pg_subprocess_run([])
+
+        def run_with_failing_job_runs_dump(
+            args: list[str], **kwargs: object
+        ) -> MagicMock:
+            if args[0] != FAKE_PG_DUMP:
+                return base_run(args, **kwargs)
+            target = next(arg for arg in args if arg.startswith("--file="))
+            Path(target.removeprefix("--file=")).write_bytes(b"half a dump")
+            raise CalledProcessError(1, "pg_dump", stderr=b"boom")
+
+        monkeypatch.setattr(
+            backup_service.subprocess, "run", run_with_failing_job_runs_dump
+        )
+
+        backup_service.run_restore(
+            backup_name="production-2024-01-01_00-00-00.dump", force=True
+        )
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_table_dump_file_is_removed_when_pg_dump_cannot_be_started(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        def unstartable_run(args: list[str], **_kw: object) -> MagicMock:
+            target = next(arg for arg in args if arg.startswith("--file="))
+            Path(target.removeprefix("--file=")).write_bytes(b"half a dump")
+            msg = "exec format error"
+            raise OSError(msg)
+
+        monkeypatch.setattr(backup_service.subprocess, "run", unstartable_run)
+
+        with pytest.raises(OSError, match="exec format error"):
+            backup_service._dump_table_data(
+                "localhost", "user", "secret", 5432, "testdb", table="public.job_runs"
+            )
+
+        assert list(tmp_path.iterdir()) == []
+
 
 class TestRetryTransientKoofrRequest:
     def test_succeeds_on_first_attempt(self, monkeypatch: pytest.MonkeyPatch):

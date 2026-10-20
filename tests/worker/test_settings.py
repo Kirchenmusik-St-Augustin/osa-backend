@@ -10,7 +10,7 @@ def test_functions_is_non_empty():
     # arq's Worker.__init__ raises RuntimeError at startup if this were
     # ever empty (see WorkerSettings' own docstring) -- a smoke test
     # against silently losing every on-demand job registration.
-    assert len(WorkerSettings.functions) == 5
+    assert len(WorkerSettings.functions) == 7
 
 
 def test_cron_jobs_is_non_empty_under_the_test_suite_s_default_environment():

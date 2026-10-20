@@ -35,11 +35,14 @@ from app.services.auth_service import (
     AccountNotLinkedError,
     InvalidSessionError,
     OauthBindingNotFoundError,
+    RegistrationConflict,
 )
 from app.services.permission_service import calculate_permissions
 from app.worker.tasks import (
     send_new_registration_notice_task,
     send_password_reset_email_task,
+    send_registration_account_exists_email_task,
+    send_registration_entry_exists_email_task,
     send_verification_email_task,
 )
 
@@ -250,6 +253,18 @@ def get_current_user_profile(
     )
 
 
+def _registration_notice(email: str) -> dict[str, str]:
+    return {
+        "status": "ok",
+        "message": (
+            f"Bitte prüfe dein Postfach. Wir haben eine E-Mail an {email} "
+            "geschickt. Falls für diese Adresse noch kein Konto besteht, "
+            "enthält sie einen Bestätigungslink. Nach der Bestätigung bist "
+            "du angemeldet."
+        ),
+    }
+
+
 @auth_router.post("/register")
 @rate_limited("5/hour")
 def register(
@@ -257,18 +272,33 @@ def register(
     data: RegisterRequest,
     db: Annotated[Session, Depends(get_db)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
-) -> JSONResponse:
-    """Register + auto-login right after user creation, then notify the disponent
-    address in the background -- registration itself must not wait on (or fail because
-    of) mail delivery. No auth/permission dependency exists on this endpoint (it must
-    work logged-out), so there is no dependency-ordering concern here, unlike
-    resend_verification_email below. A RegistrationConflictError propagates
-    to app.api.exception_handlers' global DomainValidationError handler."""
-    user = auth_service.register_user(db, data)
-    access_token, session_id, refresh_secret = auth_service.create_user_session(
-        db, user
-    )
+) -> dict[str, str]:
+    """Answers every registration alike, so an anonymous visitor cannot learn
+    whether an address or a name is already in use (the login and reset flows
+    avoid the same enumeration). A new address gets its account, the
+    verification mail and, in the background, the disponent notice; no session
+    is issued, the verification link logs in. An address that has an account,
+    or a name that is taken, creates nothing and gets a mail saying so.
+    Registration itself must not wait on (or fail because of) mail delivery.
+    No auth/permission dependency exists on this endpoint (it must work
+    logged-out), so there is no dependency-ordering concern here, unlike
+    resend_verification_email below."""
+    outcome = auth_service.register_user(db, data)
+    email = data.email.lower()
 
+    if outcome is RegistrationConflict.ACCOUNT_EXISTS:
+        job_queue.enqueue(send_registration_account_exists_email_task, email)
+        return _registration_notice(email)
+    if outcome is RegistrationConflict.ENTRY_EXISTS:
+        job_queue.enqueue(
+            send_registration_entry_exists_email_task,
+            email,
+            data.givenname,
+            data.surname,
+        )
+        return _registration_notice(email)
+
+    user = outcome
     job_queue.enqueue(
         send_new_registration_notice_task,
         surname=user.surname,
@@ -282,7 +312,7 @@ def register(
             send_verification_email_task, user.email, Redacted(verify_url)
         )
 
-    return _build_login_response(access_token, session_id, refresh_secret)
+    return _registration_notice(email)
 
 
 @auth_router.post("/resend-verification-email")

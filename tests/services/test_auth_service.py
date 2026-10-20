@@ -20,13 +20,14 @@ from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
+from app.db.models.user import User
 from app.schemas.auth import RegisterRequest
 from app.services import auth_service
 from app.services.auth_service import (
     AccountNotLinkedError,
     InvalidSessionError,
     OauthBindingNotFoundError,
-    RegistrationConflictError,
+    RegistrationConflict,
 )
 from tests.google_credential import google_credential, google_credential_key
 from tests.sql_capture import recorded_statements
@@ -626,64 +627,74 @@ def test_register_user_persists_normalized_fields(db_session):
 
     user = auth_service.register_user(db_session, request)
 
+    assert isinstance(user, User)
     assert user.surname == "MUSTER"
     assert user.givenname == "Max"
     assert user.email == request.email
     assert user.auth_password != "Passw0rd12"
 
 
-def test_register_user_rejects_duplicate_name_combo_case_insensitive(db_session):
+def test_register_user_reports_a_taken_name_combo_case_insensitive(db_session):
     unique = uuid.uuid4().hex[:8]
     existing = auth_service.register_user(
         db_session,
         _register_request(surname=f"muster{unique}", givenname=f"max{unique}"),
     )
+    assert isinstance(existing, User)
     assert existing.surname == f"MUSTER{unique}".upper()
+    users_before = db_session.query(User).count()
 
-    with pytest.raises(RegistrationConflictError) as exc_info:
-        auth_service.register_user(
-            db_session,
-            _register_request(surname=f"MUSTER{unique}", givenname=f"MAX{unique}"),
-        )
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(surname=f"MUSTER{unique}", givenname=f"MAX{unique}"),
+    )
 
-    fields = {field for field, _msg in exc_info.value.errors}
-    assert fields == {"givenname", "surname"}
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
+    assert db_session.query(User).count() == users_before
 
 
-def test_register_rejects_a_name_with_a_sharp_s_that_is_already_taken(db_session):
+def test_register_reports_a_name_with_a_sharp_s_that_is_already_taken(db_session):
     unique = uuid.uuid4().hex[:8]
     auth_service.register_user(
         db_session, _register_request(surname="Strauß", givenname=f"Johann{unique}")
     )
 
-    with pytest.raises(RegistrationConflictError) as exc_info:
-        auth_service.register_user(
-            db_session,
-            _register_request(surname="Strauß", givenname=f"Johann{unique}"),
-        )
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(surname="Strauß", givenname=f"Johann{unique}"),
+    )
 
-    assert {field for field, _msg in exc_info.value.errors} == {"givenname", "surname"}
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
 
 
-def test_register_user_rejects_duplicate_email_case_insensitive(db_session):
+def test_register_user_reports_a_taken_address_case_insensitive(db_session):
+    request = _register_request()
+    auth_service.register_user(db_session, request)
+    users_before = db_session.query(User).count()
+
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(
+            surname="Zweite", givenname="Person", email=request.email.upper()
+        ),
+    )
+
+    assert outcome is RegistrationConflict.ACCOUNT_EXISTS
+    assert db_session.query(User).count() == users_before
+
+
+def test_register_user_reports_the_address_when_name_and_address_are_both_taken(
+    db_session,
+):
     request = _register_request()
     auth_service.register_user(db_session, request)
 
-    with pytest.raises(RegistrationConflictError) as exc_info:
-        auth_service.register_user(
-            db_session,
-            _register_request(
-                surname="Zweite", givenname="Person", email=request.email.upper()
-            ),
-        )
+    outcome = auth_service.register_user(db_session, request)
 
-    fields = {field for field, _msg in exc_info.value.errors}
-    assert fields == {"email"}
+    assert outcome is RegistrationConflict.ACCOUNT_EXISTS
 
 
-def test_register_user_rejects_reusing_soft_deleted_users_identity(
-    db_session, make_user
-):
+def test_register_user_reports_reusing_soft_deleted_users_name(db_session, make_user):
     unique = uuid.uuid4().hex[:8]
     deleted_user = make_user(
         email=f"max.muster.{unique}@example.test", password="irrelevant-password"
@@ -693,15 +704,57 @@ def test_register_user_rejects_reusing_soft_deleted_users_identity(
     deleted_user.deleted_at = datetime.now(UTC)
     db_session.commit()
 
-    with pytest.raises(RegistrationConflictError):
-        auth_service.register_user(
-            db_session,
-            _register_request(
-                surname=f"muster{unique}",
-                givenname=f"max{unique}",
-                email=f"other.{unique}@example.com",
-            ),
-        )
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(
+            surname=f"muster{unique}",
+            givenname=f"max{unique}",
+            email=f"other.{unique}@example.com",
+        ),
+    )
+
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
+
+
+def test_register_user_sends_the_address_of_a_deleted_account_to_the_disposition(
+    db_session, make_user
+):
+    unique = uuid.uuid4().hex[:8]
+    deleted_user = make_user(
+        email=f"former.{unique}@example.com", password="irrelevant-password"
+    )
+    deleted_user.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(email=f"FORMER.{unique}@example.com"),
+    )
+
+    # A deleted account cannot log in or reset its password, so the hint
+    # "you already have an account" would lead nowhere.
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
+
+
+@pytest.mark.parametrize("address_is_taken", [False, True])
+def test_register_user_hashes_the_password_once_in_every_outcome(
+    db_session, monkeypatch: pytest.MonkeyPatch, address_is_taken: bool
+):
+    request = _register_request()
+    if address_is_taken:
+        auth_service.register_user(db_session, request)
+    hashed: list[str] = []
+    real_hash = auth_service.get_password_hash
+
+    def counting_hash(password: str) -> str:
+        hashed.append(password)
+        return real_hash(password)
+
+    monkeypatch.setattr(auth_service, "get_password_hash", counting_hash)
+
+    auth_service.register_user(db_session, request)
+
+    assert hashed == ["Passw0rd12"]
 
 
 # ---------------------------------------------------------------------------

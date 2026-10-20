@@ -33,10 +33,20 @@ def test_format_ymd_timestamp():
     assert mailer._format_ymd_timestamp(now) == "2026-03-05 09:07"
 
 
-def test_format_short_date_pads_month_but_not_day():
+def test_format_short_datetime_pads_month_but_not_day():
     # Day without leading zeros, month WITH leading zeros -- a single-digit
     # month must not be conflated with the day's no-padding rule.
-    assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 03. 2026"
+    assert (
+        mailer._format_short_datetime(datetime(2026, 3, 5, 9, 7, tzinfo=UTC))
+        == "5. 03. 2026, 09:07"
+    )
+
+
+def test_format_short_datetime_uses_24_hour_clock():
+    assert (
+        mailer._format_short_datetime(datetime(2026, 12, 24, 18, 30, tzinfo=UTC))
+        == "24. 12. 2026, 18:30"
+    )
 
 
 def test_format_notification_timestamp_has_no_leading_zeros():
@@ -348,6 +358,7 @@ class TestSendBookingStatusEmail:
         )
         assert "die folgende Aufführung" in row.body
         assert "gebucht" in row.body
+        assert "9. 08. 2026, 11:00" in row.body
 
     def test_plural_intro_for_multiple_entries(
         self, db_session, monkeypatch: pytest.MonkeyPatch
@@ -399,6 +410,86 @@ class TestSendBookedOrStandbyCanceledEmail:
         assert "Muster, Max hat soeben folgende Buchung storniert" in row.body
         assert "Gebucht" in row.body
         assert "Violine 1" in row.body
+        assert "1. 09. 2026, 10:00" in row.body
+
+
+class TestSendRegistrationConflictEmails:
+    def test_known_address_mail_links_to_login_and_password_reset(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        monkeypatch.setenv(
+            "FRONTEND_VERIFY_EMAIL_URL", "https://app.example.com/verify-email"
+        )
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_registration_account_exists_email("user@example.test")
+
+        message, recipients = mock_send.call_args.args
+        assert message["Subject"] == "Registrierung mit bereits bekannter Adresse"
+        assert recipients == ["user@example.test"]
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "registration-account-exists")
+            .one()
+        )
+        assert "Du hast bereits ein Konto" in row.body
+        assert '<a href="https://app.example.com/login">Anmelden</a>' in row.body
+        assert (
+            '<a href="https://app.example.com/forgot-password">Passwort vergessen</a>'
+            in row.body
+        )
+
+    def test_known_address_mail_needs_the_frontend_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        monkeypatch.delenv("FRONTEND_VERIFY_EMAIL_URL", raising=False)
+
+        with (
+            patch("app.core.mailer._send_message") as mock_send,
+            pytest.raises(RuntimeError, match="FRONTEND_VERIFY_EMAIL_URL"),
+        ):
+            mailer.send_registration_account_exists_email("user@example.test")
+
+        mock_send.assert_not_called()
+
+    def test_taken_name_mail_names_the_person_and_the_disposition(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        monkeypatch.setenv("MAIL_DISPONENT", "disposition@example.com")
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_registration_entry_exists_email(
+                "user@example.test", givenname="Max", surname="Muster"
+            )
+
+        message, recipients = mock_send.call_args.args
+        assert message["Subject"] == "Registrierung: Name bereits vorhanden"
+        assert recipients == ["user@example.test"]
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "registration-entry-exists")
+            .one()
+        )
+        assert "Für den Namen Max Muster gibt es bereits einen Eintrag." in row.body
+        assert "(disposition@example.com)" in row.body
+
+    def test_taken_name_mail_escapes_the_submitted_name(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        with patch("app.core.mailer._send_message"):
+            mailer.send_registration_entry_exists_email(
+                "user@example.test", givenname="<b>Max</b>", surname="Muster"
+            )
+
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.headers == "registration-entry-exists")
+            .one()
+        )
+        assert "<b>Max</b>" not in row.body
+        assert "&lt;b&gt;Max&lt;/b&gt;" in row.body
 
 
 class TestSendUserMessageEmail:

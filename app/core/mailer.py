@@ -17,6 +17,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
 from jinja2 import Environment, FileSystemLoader, Template
 from sqlalchemy import select
@@ -49,7 +50,7 @@ _LINK_BEARING_TEMPLATES = frozenset({"verify-email", "password-reset"})
 _REMOVED_LINK_PLACEHOLDER = "[Link entfernt]"
 
 
-def _format_short_date(value: datetime) -> str:
+def _format_short_datetime(value: datetime) -> str:
     # Day WITHOUT leading zeros, month WITH leading zeros (unlike
     # `_format_notification_timestamp`, where neither has any) -- easy to
     # conflate. Rendered in Python rather than as a Jinja template
@@ -57,7 +58,7 @@ def _format_short_date(value: datetime) -> str:
     # globals cleanly, and every other value already reaches these templates
     # pre-formatted the same way (see e.g. send_password_reset_email's
     # `count=`).
-    return f"{value.day}. {value.month:02d}. {value.year}"
+    return f"{value.day}. {value.month:02d}. {value.year}, {value:%H:%M}"
 
 
 def _format_ymd_timestamp(now: datetime) -> str:
@@ -306,6 +307,44 @@ def send_password_reset_email(to_email: str, reset_url: str) -> None:
     )
 
 
+def _frontend_page_url(page: str) -> str:
+    # All frontend pages share one origin, and the verification link setting is
+    # the one every deployment configures already: the other pages are derived
+    # from it instead of adding one variable per page.
+    verify_url = require_setting(
+        get_settings().frontend_verify_email_url, "FRONTEND_VERIFY_EMAIL_URL"
+    )
+    return urljoin(verify_url, f"/{page}")
+
+
+def send_registration_account_exists_email(to_email: str) -> None:
+    """Sent instead of a verification mail when someone registers with an
+    address that already has an account."""
+    _send_templated_email(
+        [to_email],
+        "Registrierung mit bereits bekannter Adresse",
+        "registration_account_exists.html",
+        "registration-account-exists",
+        login_url=_frontend_page_url("login"),
+        forgot_password_url=_frontend_page_url("forgot-password"),
+    )
+
+
+def send_registration_entry_exists_email(
+    to_email: str, *, givenname: str, surname: str
+) -> None:
+    """Sent instead of a verification mail when the name is already taken
+    (or the address belongs to a deleted account) and no account was created."""
+    _send_templated_email(
+        [to_email],
+        "Registrierung: Name bereits vorhanden",
+        "registration_entry_exists.html",
+        "registration-entry-exists",
+        name=f"{givenname} {surname}",
+        disponent_email=get_settings().mail_disponent,
+    )
+
+
 def send_new_registration_notice(
     *, surname: str, givenname: str, email: str, phone: str | None
 ) -> None:
@@ -343,7 +382,7 @@ class BookingStatusMailEntry:
 
 
 def _booking_status_entry_context(entry: BookingStatusMailEntry) -> dict[str, object]:
-    return {**asdict(entry), "schedule": _format_short_date(entry.schedule)}
+    return {**asdict(entry), "schedule": _format_short_datetime(entry.schedule)}
 
 
 def send_booking_status_email(
@@ -390,7 +429,7 @@ def send_booked_or_standby_canceled_email(
         "booked_or_standby_canceled.html",
         "booked-or-standby-canceled",
         canceling_user_name=canceling_user_name,
-        entry={**asdict(entry), "schedule": _format_short_date(entry.schedule)},
+        entry={**asdict(entry), "schedule": _format_short_datetime(entry.schedule)},
     )
 
 

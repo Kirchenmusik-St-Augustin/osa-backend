@@ -76,7 +76,7 @@ class CoreelementNotFoundError(NotFoundError):
 
 class CoreelementValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as auth_service.RegistrationConflictError."""
+    failing field."""
 
 
 class CoreelementInUseError(GeneralValidationError):

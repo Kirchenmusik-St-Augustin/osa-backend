@@ -90,7 +90,7 @@ class OrdinariumworkNotFoundError(NotFoundError):
 
 class OrdinariumworkValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as auth_service.RegistrationConflictError."""
+    failing field."""
 
 
 class OrdinariumworkInUseError(GeneralValidationError):

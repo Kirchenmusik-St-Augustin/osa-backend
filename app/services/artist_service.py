@@ -37,7 +37,7 @@ class ArtistNotFoundError(NotFoundError):
 
 class ArtistValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as auth_service.RegistrationConflictError."""
+    failing field."""
 
 
 class ArtistInUseError(GeneralValidationError):

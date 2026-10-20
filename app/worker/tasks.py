@@ -67,6 +67,24 @@ async def send_new_registration_notice_task(
     )
 
 
+async def send_registration_account_exists_email_task(
+    ctx: dict[str, object], to_email: str
+) -> None:
+    await _send_with_retry(ctx, mailer.send_registration_account_exists_email, to_email)
+
+
+async def send_registration_entry_exists_email_task(
+    ctx: dict[str, object], to_email: str, givenname: str, surname: str
+) -> None:
+    await _send_with_retry(
+        ctx,
+        mailer.send_registration_entry_exists_email,
+        to_email,
+        givenname=givenname,
+        surname=surname,
+    )
+
+
 async def send_verification_email_task(
     ctx: dict[str, object],
     to_email: str,

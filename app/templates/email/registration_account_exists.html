@@ -1,0 +1,10 @@
+{% extends "layout.html" %}
+{% block content %}
+<p>Jemand hat versucht, sich mit dieser Adresse zu registrieren. Du hast bereits ein Konto.</p>
+<p>Falls du das warst, melde dich an oder setze dein Passwort zurück:</p>
+<p>
+  <a href="{{ login_url }}">Anmelden</a><br />
+  <a href="{{ forgot_password_url }}">Passwort vergessen</a>
+</p>
+<p>Falls nicht, kannst du diese Nachricht ignorieren.</p>
+{% endblock %}

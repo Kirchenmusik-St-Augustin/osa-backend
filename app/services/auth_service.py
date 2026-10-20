@@ -1,5 +1,6 @@
 import secrets
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from functools import cache
 from typing import TYPE_CHECKING, Literal, NoReturn, cast
 from urllib.parse import urlencode
@@ -38,7 +39,6 @@ from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
-from app.services.errors import DomainValidationError, FieldError
 
 if TYPE_CHECKING:
     import uuid
@@ -320,19 +320,32 @@ def logout_user(db: Session, token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-class RegistrationConflictError(DomainValidationError):
-    """Field-level conflicts (email or name-combo already taken), surfaced
-    to the router as a 422 in the same {"detail": [...]} shape FastAPI's
-    own validation errors use."""
+class RegistrationConflict(Enum):
+    """Why a registration created no account. The client never learns which
+    one it was (that would tell an anonymous visitor who is a member): the
+    router answers every outcome alike and tells the owner of the address by
+    mail instead."""
+
+    # An active account already uses the address.
+    ACCOUNT_EXISTS = "account_exists"
+    # The name is taken, or the address belongs to a deleted account: the
+    # disposition has to sort it out.
+    ENTRY_EXISTS = "entry_exists"
 
 
-def check_registration_conflicts(
+def find_registration_conflict(
     db: Session, *, surname: str, givenname: str, email: str
-) -> None:
+) -> RegistrationConflict | None:
     """Case-insensitive duplicate check, including soft-deleted users (User.deleted_at
     is deliberately NOT filtered out), so a deleted user's name/email can't be silently
     reused for a new registration."""
-    errors: list[FieldError] = []
+    email_owner = db.execute(
+        select(User.deleted_at).where(func.lower(User.email) == email.lower())
+    ).first()
+    if email_owner is not None and email_owner.deleted_at is None:
+        return RegistrationConflict.ACCOUNT_EXISTS
+    if email_owner is not None:
+        return RegistrationConflict.ENTRY_EXISTS
 
     name_taken = db.execute(
         select(User.id).where(
@@ -341,35 +354,26 @@ def check_registration_conflicts(
             func.lower(User.givenname) == givenname.lower(),
         )
     ).first()
-    if name_taken is not None:
-        msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(FieldError("givenname", msg))
-        errors.append(FieldError("surname", msg))
-
-    email_taken = db.execute(
-        select(User.id).where(func.lower(User.email) == email.lower())
-    ).first()
-    if email_taken is not None:
-        msg = "Die E-Mail-Adresse wird bereits für ein bestehendes Konto verwendet."
-        errors.append(FieldError("email", msg))
-
-    if errors:
-        raise RegistrationConflictError(errors)
+    return RegistrationConflict.ENTRY_EXISTS if name_taken is not None else None
 
 
-def register_user(db: Session, data: RegisterRequest) -> User:
-    """Persists the new User row. Auto-login is the router's job via
-    create_user_session(), not this function's."""
-    check_registration_conflicts(
+def register_user(db: Session, data: RegisterRequest) -> User | RegistrationConflict:
+    """Persists the new User row, or returns the conflict that prevented it.
+    The password is hashed before the conflict check, so every outcome pays
+    for one bcrypt hash and the response time does not tell the cases apart."""
+    password_hash = get_password_hash(data.password)
+    conflict = find_registration_conflict(
         db, surname=data.surname, givenname=data.givenname, email=data.email
     )
+    if conflict is not None:
+        return conflict
 
     user = User(
         surname=normalize_surname(data.surname),
         givenname=normalize_givenname(data.givenname),
         email=data.email.lower(),
         phone=data.phone,
-        auth_password=get_password_hash(data.password),
+        auth_password=password_hash,
     )
     db.add(user)
     db.commit()

@@ -32,6 +32,26 @@ def test_send_new_registration_notice_task_forwards_all_fields():
     )
 
 
+def test_send_registration_account_exists_email_task_forwards_the_address():
+    with patch.object(mailer, "send_registration_account_exists_email") as mock_send:
+        asyncio.run(
+            tasks.send_registration_account_exists_email_task({}, "max@example.com")
+        )
+    mock_send.assert_called_once_with("max@example.com")
+
+
+def test_send_registration_entry_exists_email_task_forwards_address_and_name():
+    with patch.object(mailer, "send_registration_entry_exists_email") as mock_send:
+        asyncio.run(
+            tasks.send_registration_entry_exists_email_task(
+                {}, "max@example.com", "Max", "Mustermann"
+            )
+        )
+    mock_send.assert_called_once_with(
+        "max@example.com", givenname="Max", surname="Mustermann"
+    )
+
+
 def test_send_verification_email_task_forwards_email_and_url():
     with patch.object(mailer, "send_verification_email") as mock_send:
         asyncio.run(
@@ -116,6 +136,18 @@ _MAIL_TASKS = [
             "email": "max@example.com",
             "phone": None,
         },
+    ),
+    (
+        tasks.send_registration_account_exists_email_task,
+        "send_registration_account_exists_email",
+        ("max@example.com",),
+        {},
+    ),
+    (
+        tasks.send_registration_entry_exists_email_task,
+        "send_registration_entry_exists_email",
+        ("max@example.com", "Max", "Mustermann"),
+        {},
     ),
     (
         tasks.send_verification_email_task,
