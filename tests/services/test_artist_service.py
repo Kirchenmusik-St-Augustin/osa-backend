@@ -68,6 +68,26 @@ class TestSearchArtists:
     def test_empty_query_returns_empty(self, db_session: Session):
         assert artist_service.search_artists(db_session, "") == []
 
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, wildcard: str
+    ):
+        artist_service.create_artist(
+            db_session, _request(surname=_unique("Zzq"), givenname="Wolfgang")
+        )
+
+        assert artist_service.search_artists(db_session, wildcard) == []
+
+    def test_an_underscore_finds_a_name_that_contains_one(self, db_session: Session):
+        marker = _unique("Zz_q")
+        artist_service.create_artist(
+            db_session, _request(surname=marker, givenname="Wolfgang")
+        )
+
+        results = artist_service.search_artists(db_session, "_q-")
+
+        assert [a.surname for a in results] == [marker.upper()]
+
     def test_matches_by_surname_or_givenname(self, db_session: Session):
         marker = _unique("Zzq")
         artist_service.create_artist(
@@ -175,6 +195,47 @@ class TestCreateArtist:
         )
 
         assert (artist.birthyear, artist.deathyear) == (1756, 1791)
+
+    def test_rejects_a_death_year_before_the_birth_year(self, db_session: Session):
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
+            artist_service.create_artist(
+                db_session, _request(birthyear=1850, deathyear=1750)
+            )
+
+        assert exc_info.value.errors == [
+            ("deathyear", "Das Sterbejahr darf nicht vor dem Geburtsjahr liegen.")
+        ]
+
+    def test_accepts_the_same_year_for_birth_and_death(self, db_session: Session):
+        artist = artist_service.create_artist(
+            db_session, _request(birthyear=1756, deathyear=1756)
+        )
+
+        assert (artist.birthyear, artist.deathyear) == (1756, 1756)
+
+    @pytest.mark.parametrize(("birthyear", "deathyear"), [(1850, None), (None, 1750)])
+    def test_a_single_year_is_not_compared(
+        self, db_session: Session, birthyear: int | None, deathyear: int | None
+    ):
+        artist = artist_service.create_artist(
+            db_session, _request(birthyear=birthyear, deathyear=deathyear)
+        )
+
+        assert (artist.birthyear, artist.deathyear) == (birthyear, deathyear)
+
+    def test_update_rejects_a_death_year_before_the_birth_year(
+        self, db_session: Session
+    ):
+        artist = artist_service.create_artist(
+            db_session, _request(birthyear=1756, deathyear=1791)
+        )
+
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
+            artist_service.update_artist(
+                db_session, artist.id, _request(birthyear=1800, deathyear=1791)
+            )
+
+        assert [field for field, _ in exc_info.value.errors] == ["deathyear"]
 
 
 class TestUpdateArtist:

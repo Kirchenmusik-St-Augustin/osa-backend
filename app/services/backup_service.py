@@ -23,7 +23,6 @@ koofr_base_uri + koofr_backup_path + basename via `_koofr_url()`.
 """
 
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -31,7 +30,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 from xml.etree import ElementTree
 
 import requests
@@ -64,6 +63,9 @@ _FILENAME_PATTERN = re.compile(
     r"(?:-manual)?\.dump$"
 )
 _DAV_HREF_TAG = "{DAV:}href"
+# A dump travels between Koofr and a temporary file in blocks of this size,
+# so it is never held in memory as a whole.
+_TRANSFER_CHUNK_BYTES = 1024 * 1024
 
 
 class BackupError(Exception):
@@ -74,7 +76,11 @@ class BackupError(Exception):
 
 def _require_postgres(database_url: str) -> None:
     if not database_url.startswith("postgresql"):
-        msg = f"Backup/restore requires a PostgreSQL DATABASE_URL, got: {database_url}"
+        # Scheme only: the URL carries the database password, and this message
+        # ends up in logs and in the job-run output shown to administrators.
+        scheme, separator, _ = database_url.partition("://")
+        shown = scheme if separator else "(none)"
+        msg = f"Backup/restore requires a PostgreSQL DATABASE_URL, got scheme: {shown}"
         raise BackupError(msg)
 
 
@@ -106,7 +112,10 @@ def _parse_db_url(database_url: str) -> tuple[str, str, str, int, str]:
 
 
 def _build_pg_env(password: str) -> dict[str, str]:
-    return {**os.environ, "PGPASSWORD": password}
+    # Only what libpq needs: the worker's own environment (signing key, Koofr
+    # and Valkey credentials) must not reach the pg_dump/pg_restore/psql child
+    # processes. The tools are started by absolute path, so no PATH is needed.
+    return {"PGPASSWORD": password, "PGCONNECT_TIMEOUT": "10"}
 
 
 def _run_pg_subprocess(
@@ -191,35 +200,40 @@ def run_backup(*, manual: bool = False) -> str:
 
     logger.info("Creating pg_dump snapshot: %s", archive_name)
     pg_dump = _resolve_pg_tool("pg_dump")
-    result = _run_pg_subprocess(
-        [
-            pg_dump,
-            "--format=custom",
-            # job_runs holds this STAGE's own scheduled-job run history
-            # (see app.db.models.job_run) -- excluded from every backup's
-            # row data (schema still included) so a downsync/restore never
-            # replaces a stage's own history with another stage's. See
-            # run_restore()'s _dump_table_data()/_restore_table_data() for
-            # the other half of this: preserving the target's own rows
-            # across the restore this backup eventually feeds.
-            "--exclude-table-data=public.job_runs",
-            f"--host={host}",
-            f"--port={port}",
-            f"--username={user}",
-            f"--dbname={dbname}",
-        ],
-        env=_build_pg_env(password),
-        tool_name="pg_dump",
-    )
+    with tempfile.NamedTemporaryFile(suffix=".dump") as dump_file:
+        _run_pg_subprocess(
+            [
+                pg_dump,
+                "--format=custom",
+                # job_runs holds this STAGE's own scheduled-job run history
+                # (see app.db.models.job_run) -- excluded from every backup's
+                # row data (schema still included) so a downsync/restore never
+                # replaces a stage's own history with another stage's. See
+                # run_restore()'s _dump_table_data()/_restore_table_data() for
+                # the other half of this: preserving the target's own rows
+                # across the restore this backup eventually feeds.
+                "--exclude-table-data=public.job_runs",
+                f"--file={dump_file.name}",
+                f"--host={host}",
+                f"--port={port}",
+                f"--username={user}",
+                f"--dbname={dbname}",
+            ],
+            env=_build_pg_env(password),
+            tool_name="pg_dump",
+        )
 
-    logger.info("Uploading backup to Koofr: %s", archive_name)
-    _upload_to_koofr(archive_name, result.stdout)
+        logger.info("Uploading backup to Koofr: %s", archive_name)
+        with Path(dump_file.name).open("rb") as dump_stream:
+            _upload_to_koofr(archive_name, dump_stream)
 
     logger.info("Backup complete: %s", archive_name)
     return archive_name
 
 
-def _upload_to_koofr(filename: str, data: bytes) -> None:
+def _upload_to_koofr(filename: str, data: BinaryIO) -> None:
+    """`data` is streamed from the open file: requests takes the length from
+    the file and sends it in blocks."""
     user, password = _koofr_auth()
     try:
         response = requests.put(
@@ -301,16 +315,21 @@ def list_backups(*, stage: str | None = None) -> list[str]:
 def _parse_backup_filenames(propfind_xml: str) -> list[str]:
     """Extract backup basenames from a WebDAV PROPFIND response body.
 
-    Trusted input: Koofr is our own authenticated cloud-storage account,
-    not attacker-controlled data -- xml.etree's documented XXE risk applies
-    to untrusted/third-party XML, not a response from a service we
-    authenticate to with our own credentials.
+    The answer crosses the network, so a document that carries a DTD is
+    refused before it reaches the standard-library parser (entity expansion
+    would let a few hundred bytes allocate gigabytes); xml.etree does not
+    resolve external entities.
 
     Deliberately extracts ONLY the basename from each href, regardless of
     whether Koofr returns absolute or relative paths -- see this module's
     docstring for why raw listing paths are never reused.
     """
-    root = ElementTree.fromstring(propfind_xml)  # noqa: S314 -- trusted source, see docstring
+    if "<!DOCTYPE" in propfind_xml or "<!ENTITY" in propfind_xml:
+        # A WebDAV multistatus answer never contains a DTD; refusing one rules
+        # out entity-expansion payloads in the standard-library parser.
+        msg = "Koofr directory listing contains a DTD, refusing to parse it."
+        raise BackupError(msg)
+    root = ElementTree.fromstring(propfind_xml)  # noqa: S314 -- DTD-free, see above
     names: list[str] = []
     for href in root.iter(_DAV_HREF_TAG):
         if href.text is None:
@@ -624,21 +643,49 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
         msg = f"'{backup_name}' is not a valid backup filename."
         raise BackupError(msg)
 
+    dump_path = _download_from_koofr(backup_name)
+    try:
+        return _restore_downloaded_dump(database_url, backup_name, dump_path)
+    finally:
+        dump_path.unlink(missing_ok=True)
+
+
+def _download_from_koofr(backup_name: str) -> Path:
+    """Stream a backup into a fresh temporary file and return its path (the
+    caller removes it). A failed attempt removes its partial file before the
+    next try."""
     user, password = _koofr_auth()
 
-    def _do_download() -> requests.Response:
-        response = requests.get(
-            _koofr_url(backup_name), auth=(user, password), timeout=120
-        )
-        response.raise_for_status()
-        return response
+    def _do_download() -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
+            path = Path(tmp.name)
+            try:
+                with requests.get(
+                    _koofr_url(backup_name),
+                    auth=(user, password),
+                    timeout=120,
+                    stream=True,
+                ) as response:
+                    response.raise_for_status()
+                    for chunk in response.iter_content(_TRANSFER_CHUNK_BYTES):
+                        tmp.write(chunk)
+            except BaseException:
+                path.unlink(missing_ok=True)
+                raise
+        return path
 
     try:
-        response = _retry_transient_koofr_request(_do_download)
+        return _retry_transient_koofr_request(_do_download)
     except requests.RequestException as exc:
         msg = f"Koofr download failed for {backup_name}: {exc}"
         raise BackupError(msg) from exc
 
+
+def _restore_downloaded_dump(
+    database_url: str, backup_name: str, dump_path: Path
+) -> str:
+    """Wipe the live schema, restore `dump_path` into it and verify the
+    result; returns `backup_name`. The caller removes `dump_path`."""
     host, db_user, db_password, port, dbname = _parse_db_url(database_url)
 
     # Preserve this stage's own job_runs history before the schema wipe
@@ -647,10 +694,6 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
     job_runs_dump_path = _preserve_job_runs_before_wipe(
         host, db_user, db_password, port, dbname
     )
-
-    with tempfile.NamedTemporaryFile(suffix=".dump", delete=False) as tmp:
-        tmp.write(response.content)
-        tmp_path = tmp.name
 
     logger.info("Restoring DB from backup: %s", backup_name)
     pg_restore = _resolve_pg_tool("pg_restore")
@@ -669,7 +712,7 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
                 # restored object simply belongs to the role that restores.
                 "--no-owner",
                 "--no-acl",
-                tmp_path,
+                str(dump_path),
             ],
             env=_build_pg_env(db_password),
             tool_name="pg_restore",
@@ -683,7 +726,6 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
             host, db_user, db_password, port, dbname, dump_path=job_runs_dump_path
         )
     finally:
-        Path(tmp_path).unlink()
         if job_runs_dump_path is not None:
             job_runs_dump_path.unlink(missing_ok=True)
 

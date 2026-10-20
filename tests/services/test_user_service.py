@@ -167,6 +167,26 @@ class TestSearchUsers:
     def test_empty_query_returns_no_results(self, db_session: Session):
         assert user_service.search_users(db_session, "   ") == []
 
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, make_user, wildcard: str
+    ):
+        make_user()
+
+        assert user_service.search_users(db_session, wildcard) == []
+
+    def test_an_underscore_finds_a_name_that_contains_one(
+        self, db_session: Session, make_user
+    ):
+        marker = _unique("Zwe_tschke")
+        user = make_user()
+        user.surname = marker
+        db_session.commit()
+
+        results = user_service.search_users(db_session, "we_t")
+
+        assert [u.id for u in results] == [user.id]
+
     def test_excludes_soft_deleted_users(self, db_session: Session, make_user):
         marker = _unique("Geloescht")
         user = make_user()

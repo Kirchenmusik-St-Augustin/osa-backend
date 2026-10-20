@@ -192,7 +192,7 @@ def search_users(db: Session, query: str) -> Sequence[User]:
         select(User)
         .where(
             User.deleted_at.is_(None),
-            *[combined_name.like(f"%{word}%") for word in words],
+            *[combined_name.contains(word, autoescape=True) for word in words],
         )
         .order_by(User.surname, User.givenname)
         .limit(_SEARCH_RESULT_LIMIT)

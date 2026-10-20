@@ -42,6 +42,33 @@ class TestSearchUsersIncludingDeleted:
             == []
         )
 
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, make_user, wildcard: str
+    ):
+        make_user()
+
+        assert (
+            user_administration_service.search_users_including_deleted(
+                db_session, wildcard
+            )
+            == []
+        )
+
+    def test_an_underscore_finds_a_name_that_contains_one(
+        self, db_session: Session, make_user
+    ):
+        marker = _unique("Gelo_escht")
+        user = make_user()
+        user.surname = marker
+        db_session.commit()
+
+        results = user_administration_service.search_users_including_deleted(
+            db_session, "lo_e"
+        )
+
+        assert [u.id for u in results] == [user.id]
+
 
 class TestListDeletedUsers:
     def test_only_returns_soft_deleted_users(self, db_session: Session, make_user):

@@ -146,6 +146,30 @@ class TestSearchOrdinariumworks:
     def test_empty_query_returns_empty(self, db_session: Session):
         assert ordinariumwork_service.search_ordinariumworks(db_session, "") == []
 
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, wildcard: str
+    ):
+        artist_id = _make_artist(db_session)
+        ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist_id, name=_unique("Requiem"))
+        )
+
+        assert ordinariumwork_service.search_ordinariumworks(db_session, wildcard) == []
+
+    def test_an_underscore_finds_a_work_name_that_contains_one(
+        self, db_session: Session
+    ):
+        artist_id = _make_artist(db_session)
+        marker = _unique("Req_uiem")
+        ordinariumwork_service.create_ordinariumwork(
+            db_session, _request(artist_id, name=marker)
+        )
+
+        results = ordinariumwork_service.search_ordinariumworks(db_session, "req_u")
+
+        assert [marker in result.label for result in results] == [True]
+
     def test_matches_by_work_name(self, db_session: Session):
         artist_id = _make_artist(db_session)
         marker = _unique("Requiem")

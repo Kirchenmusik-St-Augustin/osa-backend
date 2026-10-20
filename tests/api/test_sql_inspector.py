@@ -108,6 +108,29 @@ class TestTableData:
 
         assert response.status_code == 422
 
+    def test_page_above_the_upper_bound_is_rejected(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        response = client.get(
+            "/administrator/sql-inspector/tables/users",
+            params={"page": 100_001},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+
+    def test_the_last_allowed_page_answers_with_no_rows(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=True)
+
+        response = client.get(
+            "/administrator/sql-inspector/tables/users",
+            params={"page": 100_000},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["rows"] == []
+
     def test_page_size_above_upper_bound_is_rejected(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
 

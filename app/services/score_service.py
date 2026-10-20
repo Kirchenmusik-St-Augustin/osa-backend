@@ -136,7 +136,7 @@ def search_scores(db: Session, query: str) -> list[ScoreSearchResult]:
     )
     stmt = (
         select(Score)
-        .where(*[combined.like(f"%{word}%") for word in words])
+        .where(*[combined.contains(word, autoescape=True) for word in words])
         # werk, teil and id make the order of hits with the same composer
         # stable, so versions of one work keep their place between searches.
         .order_by(Score.surname, Score.werk, Score.teil, Score.id)

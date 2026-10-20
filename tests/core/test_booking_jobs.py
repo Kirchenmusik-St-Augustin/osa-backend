@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy import select
 
 from app.core.datetime_utils import local_now
@@ -386,6 +387,103 @@ class TestNotifyUpcomingBookingStatus:
         # object without expire() forcing an actual re-SELECT.
         db_session.expire(log)
         assert log.notified_at is not None
+
+    def _notifiable_users(self, db_session: Session, make_user, count: int):
+        users = []
+        for _ in range(count):
+            user = make_user()
+            user.email_verified_at = datetime.now(UTC)
+            db_session.commit()
+            _make_log(
+                db_session,
+                performance_id=_make_performance(db_session),
+                user_id=user.id,
+                booking_type="book",
+            )
+            users.append(user)
+        return users
+
+    def test_commits_after_every_mail_not_once_at_the_end(
+        self, db_session: Session, make_user
+    ):
+        users = self._notifiable_users(db_session, make_user, 2)
+        recipients = {user.email for user in users}
+        events: list[str] = []
+        real_commit = db_session.commit
+
+        def recording_commit() -> None:
+            events.append("commit")
+            real_commit()
+
+        def fake_send(to_email: str, _entries: object) -> None:
+            if to_email in recipients:
+                events.append("mail")
+
+        with (
+            patch.object(db_session, "commit", recording_commit),
+            patch("app.core.mailer.send_booking_status_email", fake_send),
+        ):
+            booking_jobs.notify_upcoming_booking_status()
+
+        assert events == ["mail", "commit", "mail", "commit"]
+
+    def test_a_failing_mail_keeps_the_users_notified_before_it(
+        self, db_session: Session, make_user
+    ):
+        users = self._notifiable_users(db_session, make_user, 2)
+        sent: list[str] = []
+
+        def failing_second(to_email: str, _entries: object) -> None:
+            if to_email not in {user.email for user in users}:
+                return
+            if sent:
+                msg = "smtp refused"
+                raise RuntimeError(msg)
+            sent.append(to_email)
+
+        with (
+            patch("app.core.mailer.send_booking_status_email", failing_second),
+            pytest.raises(RuntimeError, match="smtp refused"),
+        ):
+            booking_jobs.notify_upcoming_booking_status()
+
+        db_session.expire_all()
+        notified = {
+            log.user_id
+            for log in db_session.execute(select(BookingLog)).scalars()
+            if log.notified_at is not None
+        }
+        assert len(notified) == 1
+        assert len(sent) == 1
+
+    def test_query_count_does_not_scale_with_entries_per_user_after_a_commit(
+        self, db_session: Session, make_user, count_queries
+    ):
+        # Every user but the last is followed by a commit, which expires all
+        # loaded objects: reading an entry afterwards would cost one refresh
+        # query per entry.
+        users = self._notifiable_users(db_session, make_user, 2)
+        with (
+            patch("app.core.mailer._send_message"),
+            count_queries() as single_entries,
+        ):
+            booking_jobs.notify_upcoming_booking_status()
+
+        for user in users:
+            for _ in range(3):
+                _make_log(
+                    db_session,
+                    performance_id=_make_performance(db_session),
+                    user_id=user.id,
+                    booking_type="book",
+                )
+        with (
+            patch("app.core.mailer._send_message"),
+            count_queries() as four_entries,
+        ):
+            booking_jobs.notify_upcoming_booking_status()
+
+        assert four_entries.count == single_entries.count
 
     def test_skips_users_without_verified_email(
         self,

@@ -136,7 +136,7 @@ def search_propriumworks(db: Session, query: str) -> Sequence[PropriumworkSearch
     stmt = (
         select(Propriumwork, Artist)
         .join(Artist, Propriumwork.artist_id == Artist.id)
-        .where(*[combined.like(f"%{word}%") for word in words])
+        .where(*[combined.contains(word, autoescape=True) for word in words])
         .order_by(Artist.surname, Artist.givenname, Propriumwork.name)
         .limit(_SEARCH_RESULT_LIMIT)
     )

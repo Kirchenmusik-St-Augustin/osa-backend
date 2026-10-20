@@ -68,7 +68,7 @@ def search_users_including_deleted(db: Session, query: str) -> Sequence[User]:
     combined_name = func.lower(User.surname + ", " + User.givenname)
     stmt = (
         select(User)
-        .where(*[combined_name.like(f"%{word}%") for word in words])
+        .where(*[combined_name.contains(word, autoescape=True) for word in words])
         .order_by(User.surname, User.givenname)
         .limit(_SEARCH_RESULT_LIMIT)
     )

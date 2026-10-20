@@ -2,9 +2,12 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
+from app.db.models.role import Role
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
 from app.services import coreelement_service
+from tests.sql_capture import recorded_statements
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -321,6 +324,186 @@ class TestDeleteCoreelement:
             coreelement_service.delete_coreelement(
                 db_session, CoreelementType.role, role.id
             )
+
+
+def _permission_role(db_session: Session, name: str = "planner") -> Role:
+    """The role row of the permission matrix, with no user assigned (an
+    assigned role could not be deleted for that reason alone)."""
+    role = db_session.execute(
+        select(Role).where(Role.name == name)
+    ).scalar_one_or_none()
+    if role is None:
+        role = Role(
+            name=name, label=f"Label {name}", description=f"Beschreibung {name}"
+        )
+        db_session.add(role)
+        db_session.commit()
+    return role
+
+
+class TestLocationColor:
+    @pytest.mark.parametrize("color", ["abc", "zzzzzz", "12345g", "red", "12345"])
+    def test_create_rejects_a_value_that_is_not_six_hex_digits(
+        self, db_session: Session, color: str
+    ):
+        with pytest.raises(coreelement_service.CoreelementValidationError) as exc_info:
+            coreelement_service.create_coreelement(
+                db_session,
+                CoreelementType.location,
+                _request(address="Hauptstraße 1", color=color),
+            )
+
+        assert [field for field, _ in exc_info.value.errors] == ["color"]
+
+    @pytest.mark.parametrize("color", ["ff0000", "00FF7f", "123456"])
+    def test_create_accepts_six_hex_digits(self, db_session: Session, color: str):
+        item = coreelement_service.create_coreelement(
+            db_session,
+            CoreelementType.location,
+            _request(address="Hauptstraße 1", color=color),
+        )
+
+        assert item.color == color
+
+    def test_update_rejects_a_value_that_is_not_six_hex_digits(
+        self, db_session: Session
+    ):
+        item = coreelement_service.create_coreelement(
+            db_session,
+            CoreelementType.location,
+            _request(address="Hauptstraße 1", color="ff0000"),
+        )
+
+        with pytest.raises(coreelement_service.CoreelementValidationError) as exc_info:
+            coreelement_service.update_coreelement(
+                db_session,
+                CoreelementType.location,
+                item.id,
+                _request(item.name, address="Hauptstraße 1", color="red"),
+            )
+
+        assert [field for field, _ in exc_info.value.errors] == ["color"]
+
+
+class TestPermissionRoles:
+    def test_renaming_a_role_of_the_permission_matrix_is_refused(
+        self, db_session: Session
+    ):
+        role = _permission_role(db_session)
+
+        with pytest.raises(coreelement_service.CoreelementValidationError) as exc_info:
+            coreelement_service.update_coreelement(
+                db_session,
+                CoreelementType.role,
+                role.id,
+                _request("planer", label="Planer", description="Planung"),
+            )
+
+        assert [field for field, _ in exc_info.value.errors] == ["name"]
+        db_session.refresh(role)
+        assert role.name == "planner"
+
+    def test_label_and_description_of_such_a_role_stay_editable(
+        self, db_session: Session
+    ):
+        role = _permission_role(db_session)
+
+        updated = coreelement_service.update_coreelement(
+            db_session,
+            CoreelementType.role,
+            role.id,
+            _request(" planner ", label="Planung neu", description="Neue Beschreibung"),
+        )
+
+        assert (updated.name, updated.label, updated.description) == (
+            "planner",
+            "Planung neu",
+            "Neue Beschreibung",
+        )
+
+    @pytest.mark.parametrize(
+        "name", ["billing", "disponent", "planner", "scores", "shorturls"]
+    )
+    def test_deleting_a_role_of_the_permission_matrix_is_refused(
+        self, db_session: Session, name: str
+    ):
+        role = _permission_role(db_session, name)
+
+        with pytest.raises(coreelement_service.GeneralValidationError) as exc_info:
+            coreelement_service.delete_coreelement(
+                db_session, CoreelementType.role, role.id
+            )
+
+        assert exc_info.type is coreelement_service.GeneralValidationError
+        assert db_session.get(Role, role.id) is not None
+
+    def test_another_role_can_still_be_renamed(self, db_session: Session):
+        role = coreelement_service.create_coreelement(
+            db_session,
+            CoreelementType.role,
+            _request(_unique("r")[:16], label=_unique("Alt"), description="Alt"),
+        )
+
+        new_name = _unique("n")[:16]
+
+        updated = coreelement_service.update_coreelement(
+            db_session,
+            CoreelementType.role,
+            role.id,
+            _request(new_name, label=_unique("Neu"), description="Neue Beschreibung"),
+        )
+
+        assert updated.name == new_name
+
+    def test_a_non_role_type_with_the_same_name_is_not_protected(
+        self, db_session: Session
+    ):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.instrument, _request("planner")
+        )
+
+        coreelement_service.delete_coreelement(
+            db_session, CoreelementType.instrument, item.id
+        )
+
+
+class TestOrderLock:
+    def test_create_takes_the_advisory_lock_before_it_reads_the_maximum(
+        self, db_session: Session
+    ):
+        with recorded_statements() as statements:
+            coreelement_service.create_coreelement(
+                db_session, CoreelementType.instrument, _request()
+            )
+
+        assert "pg_advisory_xact_lock" in statements[0]
+        assert any("max(" in s.lower() for s in statements[1:])
+
+    def test_move_takes_the_advisory_lock_first(self, db_session: Session):
+        first = coreelement_service.create_coreelement(
+            db_session, CoreelementType.voice, _request()
+        )
+        first_id = first.id
+
+        with recorded_statements() as statements:
+            coreelement_service.move_coreelement(
+                db_session, CoreelementType.voice, first_id, "down"
+            )
+
+        assert "pg_advisory_xact_lock" in statements[0]
+
+    def test_update_and_listing_take_no_lock(self, db_session: Session):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.choirjob, _request()
+        )
+
+        with recorded_statements() as statements:
+            coreelement_service.update_coreelement(
+                db_session, CoreelementType.choirjob, item.id, _request(item.name)
+            )
+            coreelement_service.list_coreelements(db_session, CoreelementType.choirjob)
+
+        assert all("pg_advisory_xact_lock" not in s for s in statements)
 
 
 class TestMoveCoreelement:

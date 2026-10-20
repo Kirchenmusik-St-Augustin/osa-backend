@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -22,6 +23,7 @@ from app.services.errors import (
     NotFoundError,
 )
 from app.services.pagination import select_page
+from app.services.permission_service import PERMISSION_ROLE_NAMES
 
 if TYPE_CHECKING:
     import uuid
@@ -60,6 +62,12 @@ _ActiveCoreelementModel = Instrument | Voice | Choirjob
 
 
 _IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
+_HEX_COLOR_PATTERN = re.compile(r"[0-9a-fA-F]{6}")
+_HEX_COLOR_MESSAGE = "Muss ein sechsstelliger Hex-Farbwert sein (z. B. ff0000)."
+_PERMISSION_ROLE_DETAIL = (
+    "Diese Rolle wird von der Rechteverwaltung verwendet und kann weder "
+    "umbenannt noch gelöscht werden."
+)
 
 
 class CoreelementNotFoundError(NotFoundError):
@@ -84,6 +92,8 @@ class FieldSpec:
     min_length: int
     max_length: int
     unique: bool = False
+    pattern: re.Pattern[str] | None = None
+    pattern_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -184,7 +194,13 @@ COREELEMENT_CONFIG: dict[CoreelementType, CoreelementTypeConfig] = {
         model=Location,
         extra_fields=(
             FieldSpec("address", min_length=3, max_length=60),
-            FieldSpec("color", min_length=3, max_length=6),
+            FieldSpec(
+                "color",
+                min_length=3,
+                max_length=6,
+                pattern=_HEX_COLOR_PATTERN,
+                pattern_message=_HEX_COLOR_MESSAGE,
+            ),
         ),
         has_dependencies=_location_has_dependent_performances,
     ),
@@ -241,6 +257,8 @@ def _validate_extra_field(
             spec.name,
             f"Muss zwischen {spec.min_length} und {spec.max_length} Zeichen lang sein.",
         )
+    if spec.pattern is not None and not spec.pattern.fullmatch(value):
+        return FieldError(spec.name, spec.pattern_message)
     if spec.unique and _value_taken(db, config.model, spec.name, value, exclude_id):
         return FieldError(spec.name, "Dieser Wert ist bereits vergeben.")
     return None
@@ -330,10 +348,20 @@ def list_coreelements_page(
     return select_page(db, _coreelement_select(type_), page)
 
 
+def _lock_order(db: Session, config: CoreelementTypeConfig) -> None:
+    """Serialises the writers of one type's `order` column until the end of
+    the transaction: two concurrent creates would otherwise read the same
+    maximum and produce two rows with the same position."""
+    db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(config.model.__tablename__)))
+    )
+
+
 def create_coreelement(
     db: Session, type_: CoreelementType, data: CoreelementRequest
 ) -> CoreelementModel:
     config = COREELEMENT_CONFIG[type_]
+    _lock_order(db, config)
     errors = _validate(db, type_, data, exclude_id=None)
     if errors:
         raise CoreelementValidationError(errors)
@@ -365,6 +393,12 @@ def update_coreelement(
 ) -> CoreelementModel:
     config = COREELEMENT_CONFIG[type_]
     obj = _get_or_404(db, config.model, element_id)
+    if (
+        type_ is CoreelementType.role
+        and obj.name in PERMISSION_ROLE_NAMES
+        and data.name.strip() != obj.name
+    ):
+        raise CoreelementValidationError([FieldError("name", _PERMISSION_ROLE_DETAIL)])
     errors = _validate(db, type_, data, exclude_id=element_id)
     if errors:
         raise CoreelementValidationError(errors)
@@ -388,6 +422,8 @@ def delete_coreelement(
 ) -> None:
     config = COREELEMENT_CONFIG[type_]
     obj = _get_or_404(db, config.model, element_id)
+    if type_ is CoreelementType.role and obj.name in PERMISSION_ROLE_NAMES:
+        raise GeneralValidationError(_PERMISSION_ROLE_DETAIL)
     if config.has_dependencies is not None and config.has_dependencies(db, obj):
         raise CoreelementInUseError
     db.delete(obj)
@@ -403,6 +439,7 @@ def move_coreelement(
     """Two-row order swap (only the two affected rows are written, the rest
     of the list is never reindexed). No-op at either boundary of the
     list."""
+    _lock_order(db, COREELEMENT_CONFIG[type_])
     items = list(list_coreelements(db, type_))
     index = next((i for i, item in enumerate(items) if item.id == element_id), None)
     if index is None:

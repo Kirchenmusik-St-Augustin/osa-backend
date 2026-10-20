@@ -14,6 +14,7 @@ from app.services.request_log_service import (
     RequestLogNotFoundError,
     RequestLogUserNotFoundError,
 )
+from tests.sql_capture import recorded_statements
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -72,6 +73,13 @@ class TestRedact:
         # request_logs unredacted.
         result = request_log_service.redact({"user": {"id": "..."}, "newpw": "S3cr3t!"})
         assert result == {"user": {"id": "..."}, "newpw": "__removed__"}
+
+    @pytest.mark.parametrize(
+        "key", ["credential", "id_token", "client_secret", "refresh_secret"]
+    )
+    def test_masks_the_google_credential_and_other_secrets(self, key: str):
+        result = request_log_service.redact({key: "eyJhbGciOi.payload.signature"})
+        assert result == {key: "__removed__"}
 
     def test_matches_keys_case_insensitively(self):
         result = request_log_service.redact({"Authorization": "Bearer xyz"})
@@ -181,6 +189,49 @@ class TestRecordRequest:
             .all()
         )
         assert len(matches) == 1
+
+    @pytest.mark.parametrize(
+        ("length", "stored"), [(5000, 512), (513, 512), (512, 512)]
+    )
+    def test_an_oversized_user_agent_is_stored_clipped(
+        self, db_session: Session, length: int, stored: int
+    ):
+        request_log_service.record_request(
+            db_session,
+            client_ip="127.0.0.1",
+            client_ips=["127.0.0.1"],
+            user_id=None,
+            user_agent_string="u" * length,
+            request_method="GET",
+            request_path="/some/path",
+            request_input={},
+            response_status=200,
+            response_content=None,
+            memory_usage=1,
+        )
+
+        agent = db_session.execute(select(ClientUserAgent)).scalar_one()
+        assert len(agent.string) == stored
+
+    def test_two_oversized_agents_with_the_same_start_share_one_row(
+        self, db_session: Session
+    ):
+        for suffix in ("a", "b"):
+            request_log_service.record_request(
+                db_session,
+                client_ip="127.0.0.1",
+                client_ips=["127.0.0.1"],
+                user_id=None,
+                user_agent_string="u" * 512 + suffix,
+                request_method="GET",
+                request_path="/some/path",
+                request_input={},
+                response_status=200,
+                response_content=None,
+                memory_usage=1,
+            )
+
+        assert len(db_session.execute(select(ClientUserAgent)).scalars().all()) == 1
 
     def test_get_or_create_client_user_agent_survives_a_concurrent_insert_race(
         self, db_session: Session, monkeypatch: pytest.MonkeyPatch
@@ -375,6 +426,58 @@ class TestListDaysWithUsersForMonth:
         ids = [item.id for item in day_group.users if item.id in (first.id, third.id)]
 
         assert ids == [first.id, third.id]
+
+    def test_the_database_returns_one_row_per_user_and_day(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        for hour in (8, 9, 10, 11):
+            _make_entry(
+                db_session,
+                user_id=user.id,
+                created_at=datetime(2026, 6, 10, hour, 0, tzinfo=UTC),
+            )
+
+        with recorded_statements() as statements:
+            result = request_log_service.list_days_with_users_for_month(
+                db_session, 2026, 6
+            )
+
+        request_log_selects = [s for s in statements if "FROM request_logs" in s]
+        assert len(request_log_selects) == 1
+        assert "DISTINCT" in request_log_selects[0]
+        assert "timezone(" in request_log_selects[0]
+        assert [(g.day, [u.id for u in g.users]) for g in result] == [
+            (date(2026, 6, 10), [user.id])
+        ]
+
+    def test_a_late_evening_request_belongs_to_the_next_day_in_summer_time(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 7, 10, 22, 30, tzinfo=UTC),
+        )
+
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 7)
+
+        assert [g.day for g in result] == [date(2026, 7, 11)]
+
+    def test_a_late_evening_request_stays_on_its_day_in_winter_time(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+        _make_entry(
+            db_session,
+            user_id=user.id,
+            created_at=datetime(2026, 1, 10, 22, 30, tzinfo=UTC),
+        )
+
+        result = request_log_service.list_days_with_users_for_month(db_session, 2026, 1)
+
+        assert [g.day for g in result] == [date(2026, 1, 10)]
 
     def test_days_are_sorted_newest_first(self, db_session: Session, make_user):
         for day in (3, 15, 27):

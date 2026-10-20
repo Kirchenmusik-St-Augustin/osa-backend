@@ -16,6 +16,7 @@ from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from app.db.models.performance_rehearsal import PerformanceRehearsal
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.propriumwork import Propriumwork
 from app.db.models.voice import Voice
@@ -28,6 +29,7 @@ from app.schemas.performance import (
     PerformanceSetupInput,
 )
 from app.services import artist_service, performance_service
+from tests.sql_capture import recorded_statements
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -273,6 +275,52 @@ class TestListPerformancesForMonth:
         )
         assert result == []
 
+    @pytest.mark.parametrize(
+        ("year", "month", "last_moment", "first_of_next"),
+        [
+            (
+                2033,
+                3,
+                datetime(2033, 3, 31, 23, 59),  # noqa: DTZ001 -- naive on purpose
+                datetime(2033, 4, 1, 0, 0),  # noqa: DTZ001
+            ),
+            (
+                2033,
+                12,
+                datetime(2033, 12, 31, 23, 59),  # noqa: DTZ001
+                datetime(2034, 1, 1, 0, 0),  # noqa: DTZ001
+            ),
+        ],
+    )
+    def test_month_bounds_include_both_edges_and_exclude_the_next_midnight(
+        self,
+        db_session: Session,
+        make_user: Callable[..., User],
+        year: int,
+        month: int,
+        last_moment: datetime,
+        first_of_next: datetime,
+    ):
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        first_moment = performance_service.create_performance(
+            db_session,
+            _request(location.id, work.id, schedule=datetime(year, month, 1, 0, 0)),  # noqa: DTZ001 -- naive on purpose
+        )
+        inside = performance_service.create_performance(
+            db_session, _request(location.id, work.id, schedule=last_moment)
+        )
+        performance_service.create_performance(
+            db_session, _request(location.id, work.id, schedule=first_of_next)
+        )
+
+        items = performance_service.list_performances_for_month(
+            db_session, year, month, make_user().id
+        )
+
+        assert [item.id for item in items] == [first_moment.id, inside.id]
+
 
 class TestCreatePerformance:
     def test_basic_create_returns_response(self, db_session: Session):
@@ -369,6 +417,51 @@ class TestCreatePerformance:
         assert exc_info.value.errors == [
             ("setup", "instruments: Element nicht gefunden.")
         ]
+
+    @pytest.mark.parametrize("count", [1, 2, 4])
+    def test_the_existence_of_the_positions_is_checked_with_one_query(
+        self, db_session: Session, count: int
+    ):
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, _make_artist(db_session, composer=True))
+        setup = PerformanceSetupInput(
+            instruments=[
+                PerformancePositionInput(id=_make_instrument(db_session).id, quantity=1)
+                for _ in range(count)
+            ]
+        )
+        request = _request(location.id, work.id, setup=setup)
+
+        with recorded_statements() as statements:
+            performance_service._validate_positions(
+                db_session, request.setup.instruments, "instruments"
+            )
+
+        assert len([s for s in statements if "FROM instruments" in s]) == 1
+
+    def test_every_unknown_position_is_reported(self, db_session: Session):
+        known = _make_instrument(db_session)
+        setup_items = [
+            PerformancePositionInput(id=uuid.uuid4(), quantity=1),
+            PerformancePositionInput(id=known.id, quantity=1),
+            PerformancePositionInput(id=uuid.uuid4(), quantity=1),
+        ]
+
+        errors = performance_service._validate_positions(
+            db_session, setup_items, "instruments"
+        )
+
+        assert errors == [
+            ("setup", "instruments: Element nicht gefunden."),
+            ("setup", "instruments: Element nicht gefunden."),
+        ]
+
+    def test_an_empty_position_list_costs_no_query(self, db_session: Session):
+        with recorded_statements() as statements:
+            errors = performance_service._validate_positions(db_session, [], "voices")
+
+        assert errors == []
+        assert statements == []
 
     def test_rejects_duplicate_position_entry(self, db_session: Session):
         composer_id = _make_artist(db_session, composer=True)
@@ -988,6 +1081,207 @@ class TestUpdatePerformance:
             kept_element.id: new_work_for_kept.id,
             added_element.id: added_work.id,
         }
+
+    def _performance_with_rehearsal(self, db_session: Session):
+        """A performance at noon, several days ahead, with a rehearsal the
+        evening before; returns it with both dates."""
+        composer_id = _make_artist(db_session, composer=True)
+        location = _make_location(db_session)
+        work = _make_ordinariumwork(db_session, composer_id)
+        schedule = _unique_schedule().replace(hour=12)
+        rehearsal = schedule - timedelta(days=1)
+        created = performance_service.create_performance(
+            db_session,
+            _request(
+                location.id,
+                work.id,
+                schedule=schedule,
+                rehearsals=[
+                    PerformanceRehearsalInput(schedule=rehearsal, comment="GP")
+                ],
+            ),
+        )
+        return created, location, work, schedule, rehearsal
+
+    def test_a_rehearsal_that_has_passed_does_not_block_a_later_edit(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        created, location, work, schedule, rehearsal = self._performance_with_rehearsal(
+            db_session
+        )
+        now = schedule - timedelta(hours=3)
+        monkeypatch.setattr(performance_service, "local_now", lambda: now)
+
+        updated = performance_service.update_performance(
+            db_session,
+            created.id,
+            _request(
+                location.id,
+                work.id,
+                schedule=schedule,
+                description="Korrektur am Aufführungstag",
+                rehearsals=[
+                    PerformanceRehearsalInput(schedule=rehearsal, comment="GP")
+                ],
+            ),
+        )
+
+        assert updated.description == "Korrektur am Aufführungstag"
+        stored = (
+            db_session.execute(
+                select(PerformanceRehearsal.schedule).where(
+                    PerformanceRehearsal.performance_id == created.id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert stored == [rehearsal]
+
+    def test_a_new_rehearsal_in_the_past_is_still_rejected_on_update(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        created, location, work, schedule, rehearsal = self._performance_with_rehearsal(
+            db_session
+        )
+        monkeypatch.setattr(
+            performance_service, "local_now", lambda: schedule - timedelta(hours=3)
+        )
+
+        with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
+            performance_service.update_performance(
+                db_session,
+                created.id,
+                _request(
+                    location.id,
+                    work.id,
+                    schedule=schedule,
+                    rehearsals=[
+                        PerformanceRehearsalInput(schedule=rehearsal, comment="GP"),
+                        PerformanceRehearsalInput(
+                            schedule=rehearsal - timedelta(hours=2), comment="neu"
+                        ),
+                    ],
+                ),
+            )
+
+        assert exc_info.value.errors == [
+            ("rehearsals", "Proben-Datum muss frühestens morgen sein.")
+        ]
+
+    def test_a_moved_rehearsal_in_the_past_is_rejected(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        created, location, work, schedule, rehearsal = self._performance_with_rehearsal(
+            db_session
+        )
+        monkeypatch.setattr(
+            performance_service, "local_now", lambda: schedule - timedelta(hours=3)
+        )
+
+        with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
+            performance_service.update_performance(
+                db_session,
+                created.id,
+                _request(
+                    location.id,
+                    work.id,
+                    schedule=schedule,
+                    rehearsals=[
+                        PerformanceRehearsalInput(
+                            schedule=rehearsal + timedelta(hours=1), comment="GP"
+                        )
+                    ],
+                ),
+            )
+
+        assert exc_info.value.errors == [
+            ("rehearsals", "Proben-Datum muss frühestens morgen sein.")
+        ]
+
+    def test_a_kept_rehearsal_must_still_lie_before_the_performance(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        created, location, work, schedule, rehearsal = self._performance_with_rehearsal(
+            db_session
+        )
+        monkeypatch.setattr(
+            performance_service, "local_now", lambda: schedule - timedelta(hours=3)
+        )
+        earlier_performance = rehearsal - timedelta(hours=1)
+
+        with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
+            performance_service.update_performance(
+                db_session,
+                created.id,
+                _request(
+                    location.id,
+                    work.id,
+                    schedule=earlier_performance,
+                    rehearsals=[
+                        PerformanceRehearsalInput(schedule=rehearsal, comment="GP")
+                    ],
+                ),
+            )
+
+        assert ("rehearsals", "Proben-Datum muss vor Aufführungs-Datum liegen.") in (
+            exc_info.value.errors
+        )
+
+    def test_a_performance_later_today_keeps_its_unchanged_date_on_edit(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        created, location, work, schedule, _rehearsal = (
+            self._performance_with_rehearsal(db_session)
+        )
+        monkeypatch.setattr(
+            performance_service, "local_now", lambda: schedule - timedelta(hours=3)
+        )
+
+        updated = performance_service.update_performance(
+            db_session,
+            created.id,
+            _request(location.id, work.id, schedule=schedule, description="heute"),
+        )
+
+        assert updated.description == "heute"
+        assert updated.schedule == schedule
+
+    def test_moving_a_performance_to_another_time_today_is_rejected(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        created, location, work, schedule, _rehearsal = (
+            self._performance_with_rehearsal(db_session)
+        )
+        monkeypatch.setattr(
+            performance_service, "local_now", lambda: schedule - timedelta(hours=3)
+        )
+
+        with pytest.raises(performance_service.PerformanceValidationError) as exc_info:
+            performance_service.update_performance(
+                db_session,
+                created.id,
+                _request(location.id, work.id, schedule=schedule + timedelta(hours=2)),
+            )
+
+        assert exc_info.value.errors == [
+            ("schedule", "Aufführungs-Datum muss frühestens morgen sein.")
+        ]
+
+    def test_rehearsals_get_their_creation_time_from_the_database(
+        self, db_session: Session
+    ):
+        created, _location, _work, _schedule, _rehearsal = (
+            self._performance_with_rehearsal(db_session)
+        )
+
+        created_at = db_session.execute(
+            select(PerformanceRehearsal.created_at).where(
+                PerformanceRehearsal.performance_id == created.id
+            )
+        ).scalar_one()
+
+        assert created_at is not None
 
     def test_past_performance_cannot_be_updated(self, db_session: Session):
         composer_id = _make_artist(db_session, composer=True)

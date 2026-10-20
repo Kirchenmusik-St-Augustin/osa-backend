@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, extract, func, select
+from sqlalchemy import delete, func, select
 
 from app.core.config import get_settings
 from app.core.datetime_utils import local_now
@@ -128,19 +128,23 @@ def _validate_positions(
 ) -> list[FieldError]:
     model = POSITION_MODELS[position_type]
     errors: list[FieldError] = []
-    seen_ids: set[uuid.UUID] = set()
+    requested_ids: list[uuid.UUID] = []
     for item in items:
-        if item.id in seen_ids:
+        if item.id in requested_ids:
             errors.append(FieldError("setup", f"{position_type}: doppelter Eintrag."))
             continue
-        seen_ids.add(item.id)
-        exists = db.execute(
-            select(model.id).where(model.id == item.id)
-        ).scalar_one_or_none()
-        if exists is None:
-            errors.append(
-                FieldError("setup", f"{position_type}: Element nicht gefunden.")
-            )
+        requested_ids.append(item.id)
+    if not requested_ids:
+        return errors
+    # One query for the whole list instead of one per position.
+    known_ids = set(
+        db.execute(select(model.id).where(model.id.in_(requested_ids))).scalars()
+    )
+    errors.extend(
+        FieldError("setup", f"{position_type}: Element nicht gefunden.")
+        for position_id in requested_ids
+        if position_id not in known_ids
+    )
     return errors
 
 
@@ -173,13 +177,21 @@ def _validate_proprium(db: Session, data: PerformanceRequest) -> list[FieldError
     return errors
 
 
-def _validate_rehearsals(data: PerformanceRequest) -> list[FieldError]:
+def _validate_rehearsals(
+    data: PerformanceRequest, kept_schedules: frozenset[datetime]
+) -> list[FieldError]:
+    """`kept_schedules`: rehearsals the performance already has. Only new or
+    moved rehearsals must lie in the future -- one that merely stays in the
+    list after its date has passed must not block every later edit."""
     errors: list[FieldError] = []
     tomorrow_start = _tomorrow_start()
     schedule = data.schedule
     for rehearsal in data.rehearsals:
         rehearsal_schedule = rehearsal.schedule
-        if rehearsal_schedule < tomorrow_start:
+        if (
+            rehearsal_schedule < tomorrow_start
+            and rehearsal_schedule not in kept_schedules
+        ):
             errors.append(FieldError("rehearsals", _REHEARSAL_TOO_EARLY))
         if rehearsal_schedule > schedule:
             errors.append(FieldError("rehearsals", _REHEARSAL_AFTER_PERFORMANCE))
@@ -213,12 +225,20 @@ def _validate_collision(
 
 
 def _validate(
-    db: Session, data: PerformanceRequest, exclude_id: uuid.UUID | None
+    db: Session,
+    data: PerformanceRequest,
+    exclude_id: uuid.UUID | None,
+    *,
+    unchanged_schedule: datetime | None = None,
+    kept_rehearsals: frozenset[datetime] = frozenset(),
 ) -> list[FieldError]:
+    """`unchanged_schedule` / `kept_rehearsals`: the stored dates of the
+    performance being updated. The 'earliest tomorrow' rule applies to a date
+    that is being set, not to one that is merely resubmitted unchanged."""
     errors: list[FieldError] = []
     schedule = data.schedule
 
-    if schedule < _tomorrow_start():
+    if schedule < _tomorrow_start() and schedule != unchanged_schedule:
         errors.append(FieldError("schedule", _SCHEDULE_TOO_EARLY))
 
     if (
@@ -254,7 +274,7 @@ def _validate(
     errors.extend(_validate_positions(db, data.setup.voices, "voices"))
     errors.extend(_validate_positions(db, data.setup.choirjobs, "choirjobs"))
     errors.extend(_validate_proprium(db, data))
-    errors.extend(_validate_rehearsals(data))
+    errors.extend(_validate_rehearsals(data, kept_rehearsals))
     errors.extend(_validate_collision(db, data, exclude_id))
 
     return errors
@@ -357,7 +377,6 @@ def _sync_rehearsals(
             PerformanceRehearsal.performance_id == performance_id
         )
     )
-    now = datetime.now(UTC)
     seen_schedules: set[datetime] = set()
     for rehearsal in data.rehearsals:
         schedule = rehearsal.schedule
@@ -369,7 +388,6 @@ def _sync_rehearsals(
                 performance_id=performance_id,
                 schedule=schedule,
                 comment=rehearsal.comment,
-                created_at=now,
             )
         )
 
@@ -675,18 +693,22 @@ def load_performance_batch_data(
 def list_performances_for_month(
     db: Session, year: int, month: int, user_id: uuid.UUID
 ) -> Sequence[PerformanceCalendarItem]:
-    """Real indexed DB query (dialect-portable year/month extract() match)
-    -- relies on `schedule` always being
-    written as a naive local wall-clock value (Settings.app_timezone, see
-    app.core.datetime_utils.local_now()), never UTC-converted, so a plain
-    year+month match is reliable. extract() compiles to each dialect's
-    native EXTRACT/date-part function, portable across database engines."""
+    """Range query on `schedule` (the column's index can serve it, unlike an
+    EXTRACT over the column) -- relies on `schedule` always being written as
+    a naive local wall-clock value (Settings.app_timezone, see
+    app.core.datetime_utils.local_now()), never UTC-converted."""
+    month_start = datetime(year, month, 1)  # noqa: DTZ001 -- naive local wall clock
+    next_month_start = (
+        datetime(year + 1, 1, 1)  # noqa: DTZ001
+        if month == 12
+        else datetime(year, month + 1, 1)  # noqa: DTZ001
+    )
     performances = (
         db.execute(
             select(Performance)
             .where(
-                extract("year", Performance.schedule) == year,
-                extract("month", Performance.schedule) == month,
+                Performance.schedule >= month_start,
+                Performance.schedule < next_month_start,
             )
             .order_by(Performance.schedule)
         )
@@ -901,7 +923,19 @@ def update_performance(
 ) -> PerformanceResponse:
     performance = _get_or_404(db, performance_id)
     _ensure_not_past(performance)
-    errors = _validate(db, data, exclude_id=performance_id)
+    errors = _validate(
+        db,
+        data,
+        exclude_id=performance_id,
+        unchanged_schedule=performance.schedule,
+        kept_rehearsals=frozenset(
+            db.execute(
+                select(PerformanceRehearsal.schedule).where(
+                    PerformanceRehearsal.performance_id == performance_id
+                )
+            ).scalars()
+        ),
+    )
     if errors:
         raise PerformanceValidationError(errors)
 

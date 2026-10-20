@@ -90,6 +90,26 @@ class TestSearchScores:
     def test_blank_query_returns_no_results(self, db_session: Session):
         assert score_service.search_scores(db_session, "   ") == []
 
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, wildcard: str
+    ):
+        score_service.create_score(
+            db_session, _payload(surname="Haydn", givenname="Joseph", werk=_unique())
+        )
+
+        assert score_service.search_scores(db_session, wildcard) == []
+
+    def test_an_underscore_finds_a_title_that_contains_one(self, db_session: Session):
+        marker = _unique("Wer_k")
+        score_service.create_score(
+            db_session, _payload(surname="Haydn", givenname="Joseph", werk=marker)
+        )
+
+        results = score_service.search_scores(db_session, "wer_k")
+
+        assert [marker in result.label for result in results] == [True]
+
     def test_finds_by_composer_surname_and_givenname(self, db_session: Session):
         marker = _unique("Mozartsuche")
         score_service.create_score(

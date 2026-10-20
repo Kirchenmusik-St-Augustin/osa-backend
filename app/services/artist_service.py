@@ -77,6 +77,16 @@ def _name_year_range_error(field: str, value: int | None) -> FieldError | None:
     return None
 
 
+def _death_before_birth_error(
+    birthyear: int | None, deathyear: int | None
+) -> FieldError | None:
+    if birthyear is not None and deathyear is not None and deathyear < birthyear:
+        return FieldError(
+            "deathyear", "Das Sterbejahr darf nicht vor dem Geburtsjahr liegen."
+        )
+    return None
+
+
 def _validate(
     db: Session, data: ArtistRequest, exclude_id: uuid.UUID | None
 ) -> list[FieldError]:
@@ -94,6 +104,7 @@ def _validate(
         for year_error in (
             _name_year_range_error("birthyear", data.birthyear),
             _name_year_range_error("deathyear", data.deathyear),
+            _death_before_birth_error(data.birthyear, data.deathyear),
         )
         if year_error
     )
@@ -146,7 +157,7 @@ def search_artists(db: Session, query: str) -> Sequence[Artist]:
     combined_name = func.lower(Artist.surname + " " + Artist.givenname)
     stmt = (
         select(Artist)
-        .where(*[combined_name.like(f"%{word}%") for word in words])
+        .where(*[combined_name.contains(word, autoescape=True) for word in words])
         .order_by(Artist.surname, Artist.givenname)
         .limit(_SEARCH_RESULT_LIMIT)
     )

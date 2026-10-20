@@ -2,6 +2,8 @@ import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from app.worker import scheduled_jobs
 
@@ -119,6 +121,93 @@ class TestRunAndRecord:
             asyncio.run(scheduled_jobs.downsync_task({}))
 
         mock_record_job_run.assert_not_called()
+
+
+class TestSelfRecordingTasks:
+    """backup_koofr and downsync record their own outcome; an exception that
+    escapes the job body (an OSError from a temporary file) must still reach
+    the scheduler overview."""
+
+    @pytest.fixture(autouse=True)
+    def mock_record_job_run(self, monkeypatch: pytest.MonkeyPatch) -> Mock:
+        mock = Mock()
+        monkeypatch.setattr(scheduled_jobs, "record_job_run", mock)
+        return mock
+
+    @pytest.mark.parametrize(
+        ("task", "target_name", "job_id"),
+        [
+            (scheduled_jobs.backup_koofr_task, "job_backup_koofr", "backup_koofr"),
+            (scheduled_jobs.downsync_task, "job_downsync", "downsync"),
+        ],
+    )
+    def test_an_escaped_exception_is_recorded_and_reraised(
+        self, task, target_name: str, job_id: str, mock_record_job_run: Mock
+    ):
+        with (
+            patch.object(scheduled_jobs, target_name, side_effect=OSError("disk full")),
+            pytest.raises(OSError, match="disk full"),
+        ):
+            asyncio.run(task({}))
+
+        mock_record_job_run.assert_called_once()
+        assert mock_record_job_run.call_args.args[0] == job_id
+        assert mock_record_job_run.call_args.kwargs == {
+            "status": "failure",
+            "output": "OSError: disk full",
+        }
+
+    @pytest.mark.parametrize(
+        ("task", "target_name"),
+        [
+            (scheduled_jobs.backup_koofr_task, "job_backup_koofr"),
+            (scheduled_jobs.downsync_task, "job_downsync"),
+        ],
+    )
+    def test_the_failure_is_recorded_through_the_threadpool(
+        self, task, target_name: str
+    ):
+        with patch(
+            "app.worker.scheduled_jobs.run_in_threadpool", new_callable=AsyncMock
+        ) as spy:
+            spy.side_effect = [OSError("disk full"), None]
+            with pytest.raises(OSError, match="disk full"):
+                asyncio.run(task({}))
+
+        assert spy.await_args_list[1].args[0] is scheduled_jobs.record_job_run
+
+
+class TestFailureOutput:
+    def test_a_plain_exception_is_recorded_as_type_and_message_without_traceback(self):
+        output = scheduled_jobs._failure_output(ValueError("boom"))
+
+        assert output == "ValueError: boom"
+
+    def test_a_database_error_keeps_no_statement_parameter_or_value(self, db_session):
+        email = "anna.vertraulich@example.test"
+        try:
+            db_session.execute(
+                text("SELECT * FROM users WHERE email = :email AND nope = 1"),
+                {"email": email},
+            )
+        except SQLAlchemyError as exc:
+            output = scheduled_jobs._failure_output(exc)
+            db_session.rollback()
+
+        assert output == 'ProgrammingError: column "nope" does not exist'
+        assert email not in output
+        assert "SELECT" not in output
+        assert "parameters" not in output
+
+    def test_a_database_error_without_a_message_does_not_fail(self):
+        assert scheduled_jobs._failure_output(SQLAlchemyError("")) == "SQLAlchemyError:"
+
+    def test_only_the_first_line_of_a_multi_line_driver_message_is_kept(self):
+        error = OperationalError(
+            "SELECT 1", {}, Exception("first line\nDETAIL: Key (email)=(x)")
+        )
+
+        assert scheduled_jobs._failure_output(error) == "OperationalError: first line"
 
 
 class TestRunAndRecordUsesThreadpool:

@@ -29,6 +29,7 @@ from app.services.auth_service import (
     RegistrationConflictError,
 )
 from tests.google_credential import google_credential, google_credential_key
+from tests.sql_capture import recorded_statements
 
 pytestmark = pytest.mark.usefixtures("db_session")
 
@@ -389,6 +390,26 @@ def test_refresh_session_rotates_secret(db_session, make_user):
     # Old secret must no longer verify -- it was rotated, not reused.
     with pytest.raises(InvalidSessionError):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+
+def test_refresh_session_locks_the_session_row_while_it_rotates_the_secret(
+    db_session, make_user
+):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    with recorded_statements() as statements:
+        auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+    session_selects = [
+        statement
+        for statement in statements
+        if "FROM personal_access_tokens" in statement
+        and statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert session_selects
+    assert all("FOR UPDATE" in statement for statement in session_selects)
 
 
 def test_refresh_session_bumps_auth_lastsignal(db_session, make_user):
@@ -787,6 +808,34 @@ def test_request_password_reset_creates_token_row(db_session, make_user):
     assert row.token == hash_reset_token(token)
 
 
+def test_request_password_reset_ignores_a_soft_deleted_account(db_session, make_user):
+    created = make_user()
+    created.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    token = auth_service.request_password_reset(db_session, created.email)
+
+    assert token is None
+    assert (
+        db_session.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.email == created.email.lower()
+            )
+        ).scalar_one_or_none()
+        is None
+    )
+
+
+def test_build_password_reset_url_returns_none_for_a_soft_deleted_account(
+    db_session, make_user
+):
+    created = make_user()
+    created.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    assert auth_service.build_password_reset_url(db_session, created.email) is None
+
+
 def test_build_password_reset_url_returns_none_for_unknown_email(
     db_session, monkeypatch: pytest.MonkeyPatch
 ):
@@ -928,6 +977,47 @@ def test_execute_password_reset_rejects_expired_token(db_session, make_user):
 
     with pytest.raises(ValueError, match="ungültig"):
         auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+
+def test_execute_password_reset_ignores_a_soft_deleted_account(db_session, make_user):
+    user = make_user()
+    token = auth_service.request_password_reset(db_session, user.email)
+    original_hash = user.auth_password
+    user.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="nicht gefunden"):
+        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+    db_session.refresh(user)
+    assert user.auth_password == original_hash
+
+
+def test_execute_password_reset_rejects_a_token_without_creation_time(
+    db_session, make_user
+):
+    user = make_user()
+    token = auth_service.request_password_reset(db_session, user.email)
+    row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
+    ).scalar_one()
+    row.created_at = None
+    db_session.commit()
+    original_hash = user.auth_password
+
+    with pytest.raises(ValueError, match="ungültig"):
+        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+    db_session.refresh(user)
+    assert user.auth_password == original_hash
+    assert (
+        db_session.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.email == user.email.lower()
+            )
+        ).scalar_one_or_none()
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------

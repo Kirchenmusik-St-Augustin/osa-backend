@@ -139,9 +139,18 @@ class BookedOrStandbyCanceledNotification:
 # --- shared helpers ----------------------------------------------------------
 
 
-def _get_performance_or_404(db: Session, performance_id: uuid.UUID) -> Performance:
-    result = db.execute(select(Performance).where(Performance.id == performance_id))
-    performance = result.scalar_one_or_none()
+def _get_performance_or_404(
+    db: Session, performance_id: uuid.UUID, *, lock: bool = False
+) -> Performance:
+    """`lock=True` takes a row lock that lasts until the transaction ends:
+    the writers of one performance's cast (planner saves, cancellations,
+    setup changes) then run one after the other instead of recomputing
+    promotions and log entries from a read the other has already made stale.
+    Readers are not blocked."""
+    stmt = select(Performance).where(Performance.id == performance_id)
+    if lock:
+        stmt = stmt.with_for_update()
+    performance = db.execute(stmt).scalar_one_or_none()
     if performance is None:
         raise PerformanceNotFoundError
     return performance
@@ -1010,15 +1019,17 @@ def _save_cast_item(
 
     # recreate from scratch -- order becomes the array index
     _delete_position_bookings()
-    for order, (user_id, fee) in enumerate(new_cast):
-        # Enforce UNIQUE(performance_id, user_id) app-side: moving someone
-        # to a new position auto-unbooks them from wherever else they
-        # were booked on this performance.
+    # Enforce UNIQUE(performance_id, user_id) app-side: moving someone to a
+    # new position auto-unbooks them from wherever else they were booked on
+    # this performance (one statement for the whole cast).
+    if new_cast:
         db.execute(
             delete(Booking).where(
-                Booking.performance_id == performance_id, Booking.user_id == user_id
+                Booking.performance_id == performance_id,
+                Booking.user_id.in_([user_id for user_id, _ in new_cast]),
             )
         )
+    for order, (user_id, fee) in enumerate(new_cast):
         db.add(
             Booking(
                 performance_id=performance_id,
@@ -1109,7 +1120,7 @@ def _apply_notbooked(
 def save_cast(
     db: Session, performance_id: uuid.UUID, data: CastSaveRequest
 ) -> CastFormData:
-    performance = _get_performance_or_404(db, performance_id)
+    performance = _get_performance_or_404(db, performance_id, lock=True)
     _ensure_not_past(performance)
     setup = performance_service.get_setup(db, performance_id)
     _apply_cast(db, performance, setup, data.cast)
@@ -1129,6 +1140,8 @@ def reconcile_setup_change(
     -- purges bookings on removed positions, then
     re-evaluates promote/demote on every remaining position against its OLD
     quantity."""
+    # Locked before the first read of the bookings, see _get_performance_or_404.
+    performance = _get_performance_or_404(db, performance_id, lock=True)
     for position_type, position_id in removed_keys:
         _save_cast_item(
             db,
@@ -1139,7 +1152,6 @@ def reconcile_setup_change(
             old_quantity=None,
         )
 
-    performance = _get_performance_or_404(db, performance_id)
     setup = performance_service.get_setup(db, performance_id)
     current_cast = _get_cast_form_data(db, performance, setup).cast
     cast_groups: tuple[tuple[PositionType, list[CastSetupItemOutput]], ...] = (
@@ -1296,7 +1308,7 @@ def change_user_request_status(
     notification.canceling_user_name, notification.entry)` -- the
     descriptor captures the OLD status before this function's own
     db.commit() below."""
-    performance = _get_performance_or_404(db, performance_id)
+    performance = _get_performance_or_404(db, performance_id, lock=True)
     _ensure_not_past(performance)
     current = user_booking_status(db, performance, user.id)
 

@@ -23,7 +23,31 @@ SQLALCHEMY_DATABASE_URL = cast("str", get_settings().database_url)
 # transparently reconnecting if the server dropped it (e.g. after a
 # pg_restore or a network blip) instead of surfacing a stale-connection
 # error on the next request.
-engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+#
+# The pool and the server-side limits keep one slow or runaway statement
+# from holding a connection until every other request waits for it: a
+# request thread waits at most 10 seconds for a pooled connection, a
+# statement runs at most 30 seconds, waits for a lock at most 10 seconds and
+# an open transaction may sit idle for at most a minute. Restore and backup
+# run in their own pg_restore/pg_dump/psql subprocesses and are not bound by
+# these limits; the migrations use their own connection (alembic/env.py).
+_POOL_SIZE = 5
+_POOL_MAX_OVERFLOW = 5
+_POOL_TIMEOUT_SECONDS = 10
+_CONNECTION_OPTIONS = (
+    "-c statement_timeout=30000 "
+    "-c idle_in_transaction_session_timeout=60000 "
+    "-c lock_timeout=10000 "
+    "-c application_name=osa-backend"
+)
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=_POOL_SIZE,
+    max_overflow=_POOL_MAX_OVERFLOW,
+    pool_timeout=_POOL_TIMEOUT_SECONDS,
+    connect_args={"options": _CONNECTION_OPTIONS},
+)
 
 # Named SessionLocal (not e.g. SyncSessionLocal) so the existing ruff
 # banned-api rule in pyproject.toml

@@ -12,11 +12,12 @@ actually invokes these functions.
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, or_
+from sqlalchemy import delete, exists, func, or_
 
 from app.core.config import get_settings
 from app.db.database import SessionLocal
 from app.db.models.auth_log import AuthLog
+from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.request_log import RequestLog
@@ -58,7 +59,8 @@ def purge_expired_password_reset_tokens() -> None:
 
 def purge_old_request_logs() -> None:
     """Retention sweep of what grows with use: request_logs older than 40 days
-    (see _REQUEST_LOG_RETENTION_DAYS), auth_logs older than a year (see
+    (see _REQUEST_LOG_RETENTION_DAYS) and the user-agent strings no request log
+    refers to any more, auth_logs older than a year (see
     _AUTH_LOG_RETENTION_DAYS; the login throttle only reads the last 15
     minutes), sent_emails older than a year (see _SENT_EMAIL_RETENTION_DAYS;
     the stored bodies hold one-time links and personal data) and sessions that
@@ -80,6 +82,13 @@ def purge_old_request_logs() -> None:
         # TypeError risk from the default "evaluate" strategy otherwise).
         db.execute(
             delete(RequestLog).where(RequestLog.created_at <= request_log_cutoff),
+            execution_options={"synchronize_session": False},
+        )
+        # User-agent strings no remaining request log points at.
+        db.execute(
+            delete(ClientUserAgent).where(
+                ~exists().where(RequestLog.client_user_agent_id == ClientUserAgent.id)
+            ),
             execution_options={"synchronize_session": False},
         )
         db.execute(

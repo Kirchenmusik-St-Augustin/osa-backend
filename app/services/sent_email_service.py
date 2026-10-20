@@ -1,7 +1,8 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import extract, select
+from sqlalchemy import select
 
+from app.core.datetime_utils import local_month_bounds_utc
 from app.db.models.sent_email import SentEmail
 from app.schemas.sent_email import SentEmailShortOutput, SentEmailShowOutput
 from app.services.pagination import select_page
@@ -21,17 +22,18 @@ class SentEmailNotFoundError(Exception):
 def list_for_month(
     db: Session, year: int, month: int, page: PageParams
 ) -> PagedRows[SentEmailShortOutput]:
-    """Filters/sorts by `created_at`, same real-indexed-query technique as
-    performance_service.list_performances_for_month()'s year/month
-    extract() match. `updated_at` is deliberately not used: it gets no
-    value on insert (only a real UPDATE fires the set_updated_at()
-    trigger, which never happens for this write-once table) -- created_at
-    is the only column guaranteed to hold this row's timestamp."""
+    """Mails created in the given calendar month of Settings.app_timezone
+    (the same month boundaries as the request-log viewer), newest first, as a
+    range on `created_at` that an index can serve. `updated_at` is
+    deliberately not used: it gets no value on insert (only a real UPDATE
+    fires the set_updated_at() trigger, which never happens for this
+    write-once table)."""
+    month_start_utc, next_month_start_utc = local_month_bounds_utc(year, month)
     stmt = (
         select(SentEmail)
         .where(
-            extract("year", SentEmail.created_at) == year,
-            extract("month", SentEmail.created_at) == month,
+            SentEmail.created_at >= month_start_utc,
+            SentEmail.created_at < next_month_start_utc,
         )
         .order_by(SentEmail.created_at.desc(), SentEmail.id)
     )

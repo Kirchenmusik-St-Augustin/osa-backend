@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Job output is free text built from exception messages (pg_restore stderr,
+# HTTP errors); the column is shown in the admin UI and copied into backups.
+_MAX_OUTPUT_LENGTH = 2000
+
 
 def record_job_run(
     job_id: str,
@@ -49,7 +53,7 @@ def record_job_run(
                     started_at=started_at,
                     finished_at=datetime.now(UTC),
                     status=status,
-                    output=output,
+                    output=output[:_MAX_OUTPUT_LENGTH] if output else output,
                 )
             )
             db.commit()

@@ -1,5 +1,6 @@
 from app.services.permission_service import (
     ALL_PERMISSIONS,
+    PERMISSION_ROLE_NAMES,
     PERMISSION_RULES,
     calculate_permissions,
     get_permission_rules_display,
@@ -134,3 +135,17 @@ def test_has_permission_agrees_with_calculate_permissions(make_user):
         assert has_permission(user, permission) == (
             permission in calculate_permissions(user)
         )
+
+
+def test_permission_role_names_are_exactly_the_roles_the_rules_react_to():
+    candidates = {"billing", "disponent", "planner", "scores", "shorturls", "member"}
+    reacting = {
+        role
+        for role in candidates
+        if any(
+            rule.condition({role}, False) != rule.condition(set(), False)
+            for rule in PERMISSION_RULES
+        )
+    }
+
+    assert reacting == PERMISSION_ROLE_NAMES

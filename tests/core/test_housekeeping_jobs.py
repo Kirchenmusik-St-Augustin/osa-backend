@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.models.auth_log import AuthLog
+from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.request_log import RequestLog
@@ -114,6 +115,53 @@ class TestPurgeOldRequestLogs:
             select(RequestLog).where(RequestLog.id == recent_entry.id)
         ).scalar_one_or_none()
         assert remaining is not None
+
+
+class TestPurgeOrphanedUserAgents:
+    def test_deletes_a_user_agent_no_request_log_refers_to_and_keeps_a_used_one(
+        self, db_session: Session
+    ):
+        orphan = ClientUserAgent(string=_unique("orphan-agent"))
+        used = ClientUserAgent(string=_unique("used-agent"))
+        db_session.add_all([orphan, used])
+        db_session.commit()
+        orphan_id, used_id = orphan.id, used.id
+        entry = _make_request_log(db_session, created_at=datetime.now(UTC))
+        entry.client_user_agent_id = used_id
+        db_session.commit()
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        remaining = set(
+            db_session.execute(
+                select(ClientUserAgent.id).where(
+                    ClientUserAgent.id.in_([orphan_id, used_id])
+                )
+            ).scalars()
+        )
+        assert remaining == {used_id}
+
+    def test_a_user_agent_loses_its_last_log_to_the_retention_in_the_same_run(
+        self, db_session: Session
+    ):
+        agent = ClientUserAgent(string=_unique("aging-agent"))
+        db_session.add(agent)
+        db_session.commit()
+        agent_id = agent.id
+        old_entry = _make_request_log(
+            db_session, created_at=datetime.now(UTC) - timedelta(days=41)
+        )
+        old_entry.client_user_agent_id = agent_id
+        db_session.commit()
+
+        housekeeping_jobs.purge_old_request_logs()
+
+        assert (
+            db_session.execute(
+                select(ClientUserAgent.id).where(ClientUserAgent.id == agent_id)
+            ).scalar_one_or_none()
+            is None
+        )
 
 
 def _make_auth_log(db_session: Session, *, age_days: int) -> AuthLog:

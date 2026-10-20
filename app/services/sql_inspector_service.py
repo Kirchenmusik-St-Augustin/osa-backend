@@ -23,6 +23,9 @@ _MASKED_COLUMNS = frozenset(
     }
 )
 _MASKED_VALUE = "__masked__"
+# One page can hold 100 rows of JSONB request bodies or mail HTML: a cell
+# shows its beginning only.
+_MAX_CELL_LENGTH = 500
 
 
 class TableNotFoundError(Exception):
@@ -43,7 +46,10 @@ def _display_value(table_name: str, column_name: str, value: object) -> str | No
         return None
     if (table_name, column_name) in _MASKED_COLUMNS:
         return _MASKED_VALUE
-    return str(value)
+    text_value = str(value)
+    if len(text_value) <= _MAX_CELL_LENGTH:
+        return text_value
+    return f"{text_value[:_MAX_CELL_LENGTH]}…"
 
 
 def get_table_data(
@@ -60,9 +66,10 @@ def get_table_data(
         raise TableNotFoundError
 
     inspector = inspect(db.get_bind())
-    primary_key_columns = set(
-        inspector.get_pk_constraint(table_name).get("constrained_columns", [])
+    key_columns: list[str] = inspector.get_pk_constraint(table_name).get(
+        "constrained_columns", []
     )
+    primary_key_columns = set(key_columns)
     raw_columns = inspector.get_columns(table_name)
     columns = [
         TableColumnOutput(
@@ -78,7 +85,16 @@ def get_table_data(
     total = db.execute(
         text(f"SELECT COUNT(*) FROM {quoted_table_name}")  # noqa: S608
     ).scalar_one()
-    sql = f"SELECT * FROM {quoted_table_name} LIMIT :limit OFFSET :offset"  # noqa: S608
+    # Without ORDER BY the pages of a table are not stable: rows repeat or go
+    # missing between page 1 and page 2. The key columns come from the
+    # catalog, not from the request.
+    quote = db.get_bind().dialect.identifier_preparer.quote
+    order_by = ", ".join(quote(column) for column in key_columns)
+    order_clause = f"ORDER BY {order_by}" if order_by else ""
+    sql = (
+        f"SELECT * FROM {quoted_table_name} {order_clause} "  # noqa: S608
+        "LIMIT :limit OFFSET :offset"
+    )
     rows_result = db.execute(
         text(sql),
         {"limit": page_size, "offset": (page - 1) * page_size},

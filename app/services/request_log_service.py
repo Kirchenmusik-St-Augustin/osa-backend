@@ -1,14 +1,10 @@
-from datetime import date, datetime
 from typing import TYPE_CHECKING, cast, overload
 
-from sqlalchemy import select
+from sqlalchemy import Date, func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.core.datetime_utils import (
-    ensure_tz_aware,
-    get_app_timezone,
-    local_day_bounds_utc,
-)
+from app.core.config import get_settings
+from app.core.datetime_utils import local_day_bounds_utc, local_month_bounds_utc
 from app.core.human_names import label_for_name
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import RequestLog
@@ -23,6 +19,7 @@ from app.schemas.request_log import (
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import date
 
     from sqlalchemy.orm import Session
 
@@ -55,8 +52,17 @@ REDACT_KEYS = frozenset(
         "token",
         "secret",
         "authorization",
+        # Google ID token of /auth/google/callback and /auth/google/link: valid
+        # for about an hour and accepted by the backend as proof of identity.
+        "credential",
+        "id_token",
+        "client_secret",
+        "refresh_secret",
     }
 )
+# The server accepts far longer headers; the stored string only has to tell
+# clients apart for monitoring.
+_MAX_USER_AGENT_LENGTH = 512
 _REDACTED_VALUE = "__removed__"
 
 
@@ -88,7 +94,8 @@ def should_skip(path: str, *, skip_header_present: bool) -> bool:
     return skip_header_present or path in _SKIP_PATHS
 
 
-def _get_or_create_client_user_agent(db: Session, user_agent_string: str) -> uuid.UUID:
+def _get_or_create_client_user_agent(db: Session, raw_user_agent: str) -> uuid.UUID:
+    user_agent_string = raw_user_agent[:_MAX_USER_AGENT_LENGTH]
     result = db.execute(
         select(ClientUserAgent.id).where(ClientUserAgent.string == user_agent_string)
     )
@@ -174,37 +181,31 @@ def list_days_with_users_for_month(
     N+1-safe in exactly 2 queries regardless of day/user count, same
     batch-load-then-assemble-in-Python shape as
     performance_service._build_proprium_by_performance()."""
-    first_of_month = date(year, month, 1)
-    first_of_next_month = (
-        date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-    )
-    month_start_utc, _ = local_day_bounds_utc(first_of_month)
-    month_end_utc, _ = local_day_bounds_utc(first_of_next_month)
+    month_start_utc, month_end_utc = local_month_bounds_utc(year, month)
 
-    # Query 1/2: tuples only, no need for full RequestLog ORM objects here.
+    # Query 1/2: one row per (local day, user), grouped by the database --
+    # the month holds thousands of request rows, the answer a few hundred.
+    local_day = func.date(
+        func.timezone(get_settings().app_timezone, RequestLog.created_at),
+        type_=Date,
+    )
     rows = db.execute(
-        select(RequestLog.created_at, RequestLog.user_id).where(
+        select(local_day, RequestLog.user_id)
+        .where(
             RequestLog.created_at >= month_start_utc,
             RequestLog.created_at < month_end_utc,
             RequestLog.user_id.is_not(None),
         )
+        .distinct()
     ).all()
     if not rows:
         return []
 
-    tz = get_app_timezone()
     user_ids_by_day: dict[date, set[uuid.UUID]] = {}
-    for raw_created_at, raw_user_id in rows:
-        # Narrows the ORM columns' nullable static type (both Mapped[T | None]
-        # at the model level) -- not a defensive runtime branch: the WHERE
-        # clause above already guarantees both are non-null in every row that
-        # reaches this loop (a NULL created_at can never satisfy the range
-        # filter; user_id is filtered via is_not(None)), so an `if ... is
-        # None: continue` here would be unreachable dead code.
-        created_at = cast("datetime", raw_created_at)
-        user_id = cast("uuid.UUID", raw_user_id)
-        local_day = ensure_tz_aware(created_at).astimezone(tz).date()
-        user_ids_by_day.setdefault(local_day, set()).add(user_id)
+    for day, raw_user_id in rows:
+        # Narrows the ORM column's nullable static type -- not a defensive
+        # runtime branch: the WHERE clause above guarantees a non-null user_id.
+        user_ids_by_day.setdefault(day, set()).add(cast("uuid.UUID", raw_user_id))
 
     all_user_ids = {uid for ids in user_ids_by_day.values() for uid in ids}
     # Query 2/2: includes soft-deleted users (no `deleted_at` filter).

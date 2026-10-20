@@ -241,8 +241,13 @@ def _invalidate_session(
 def refresh_session(
     db: Session, session_id: str, refresh_secret: str
 ) -> tuple[str, str]:
+    # The row stays locked until the rotation is committed: a second refresh
+    # with the same cookie waits here and then fails the secret check, instead
+    # of both passing it and the loser being logged out as token reuse.
     result = db.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken)
+        .where(PersonalAccessToken.token == session_id)
+        .with_for_update()
     )
     session = result.scalar_one_or_none()
     if session is None:
@@ -441,7 +446,9 @@ def request_password_reset(db: Session, email: str) -> str | None:
     enumeration), only queuing the actual mail when a token comes back."""
     normalized_email = email.lower()
     user = db.execute(
-        select(User).where(func.lower(User.email) == normalized_email)
+        select(User).where(
+            func.lower(User.email) == normalized_email, User.deleted_at.is_(None)
+        )
     ).scalar_one_or_none()
     if user is None:
         return None
@@ -489,8 +496,9 @@ def execute_password_reset(
     if reset_row is None or not verify_reset_token(token, reset_row.token):
         raise ValueError(invalid_token_msg)
 
-    created_at = ensure_tz_aware(reset_row.created_at) or datetime.now(UTC)
-    if datetime.now(UTC) - created_at > timedelta(
+    # A row without a creation time has no known lifetime: it counts as expired.
+    created_at = ensure_tz_aware(reset_row.created_at)
+    if created_at is None or datetime.now(UTC) - created_at > timedelta(
         minutes=settings.password_reset_ttl_minutes
     ):
         db.delete(reset_row)
@@ -498,7 +506,9 @@ def execute_password_reset(
         raise ValueError(invalid_token_msg)
 
     user = db.execute(
-        select(User).where(func.lower(User.email) == normalized_email)
+        select(User).where(
+            func.lower(User.email) == normalized_email, User.deleted_at.is_(None)
+        )
     ).scalar_one_or_none()
     if user is None:
         msg = (

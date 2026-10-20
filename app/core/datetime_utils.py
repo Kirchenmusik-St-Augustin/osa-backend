@@ -94,3 +94,16 @@ def local_day_bounds_utc(day: date) -> tuple[datetime, datetime]:
     start_local = datetime.combine(day, time.min, tzinfo=tz)
     end_local = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz)
     return start_local.astimezone(UTC), end_local.astimezone(UTC)
+
+
+def local_month_bounds_utc(year: int, month: int) -> tuple[datetime, datetime]:
+    """Returns the [start, end) UTC instant bounds of one local calendar month
+    in Settings.app_timezone -- for range-filtering genuinely-UTC timestamp
+    columns by month (see local_day_bounds_utc for the single-day case), a range an
+    index on the column can serve."""
+    first_of_next_month = (
+        date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    )
+    month_start_utc, _ = local_day_bounds_utc(date(year, month, 1))
+    next_month_start_utc, _ = local_day_bounds_utc(first_of_next_month)
+    return month_start_utc, next_month_start_utc

@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from subprocess import CalledProcessError
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -11,7 +12,8 @@ from app.services import backup_service
 from app.services.backup_service import BackupError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+    from typing import BinaryIO
 
 PG_URL = "postgresql://user:secret@localhost:5432/testdb"
 NON_POSTGRES_URL = "mysql://user:secret@localhost:3306/testdb"
@@ -46,6 +48,18 @@ def _fake_pg_subprocess_run(
     return fake_run
 
 
+def _fake_pg_dump_writing(dump: bytes) -> Callable[..., MagicMock]:
+    """subprocess.run fake for run_backup(): like the real pg_dump it writes
+    the dump to the file named by --file and leaves stdout empty."""
+
+    def fake_run(args: list[str], **_kw: object) -> MagicMock:
+        target = next(arg for arg in args if arg.startswith("--file="))
+        Path(target.removeprefix("--file=")).write_bytes(dump)
+        return MagicMock(stdout=b"", returncode=0)
+
+    return fake_run
+
+
 class _FakeResponse:
     def __init__(
         self, *, status_code: int = 200, content: bytes = b"", text: str = ""
@@ -54,10 +68,20 @@ class _FakeResponse:
         self.content = content
         self.text = text
 
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             msg = f"status {self.status_code}"
             raise requests.HTTPError(msg)
+
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:
+        for start in range(0, len(self.content), chunk_size):
+            yield self.content[start : start + chunk_size]
 
 
 class _FakeEngine:
@@ -109,6 +133,70 @@ class TestParseDbUrl:
         )
 
 
+class TestPgEnvironment:
+    def test_carries_only_what_libpq_needs(self):
+        assert backup_service._build_pg_env("s3cret") == {
+            "PGPASSWORD": "s3cret",
+            "PGCONNECT_TIMEOUT": "10",
+        }
+
+    def test_every_pg_subprocess_runs_without_the_application_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("APP_ENVIRONMENT", "production")
+        monkeypatch.setenv("DATABASE_URL", PG_URL)
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
+        environments: list[dict[str, str]] = []
+
+        def fake_run(_args: list[str], **kwargs: dict[str, str]) -> MagicMock:
+            environments.append(kwargs["env"])
+            return MagicMock(stdout=b"5", returncode=0)
+
+        monkeypatch.setattr(backup_service.subprocess, "run", fake_run)
+        monkeypatch.setattr(
+            backup_service.requests, "put", lambda *_a, **_kw: _FakeResponse()
+        )
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(content=b"dump"),
+        )
+        monkeypatch.setattr(backup_service, "engine", _FakeEngine())
+
+        backup_service.run_backup()
+        backup_service.run_restore(
+            backup_name="production-2026-01-01_00-00-00.dump", force=True
+        )
+
+        assert len(environments) >= 6
+        assert all(
+            set(env) == {"PGPASSWORD", "PGCONNECT_TIMEOUT"} for env in environments
+        )
+
+
+class TestRequirePostgres:
+    def test_names_the_scheme_but_never_the_credentials(self):
+        with pytest.raises(BackupError) as exc_info:
+            backup_service._require_postgres(NON_POSTGRES_URL)
+
+        message = str(exc_info.value)
+        assert "mysql" in message
+        assert "secret" not in message
+        assert "user" not in message
+        assert "localhost" not in message
+
+    def test_a_value_without_a_scheme_is_not_echoed(self):
+        with pytest.raises(BackupError) as exc_info:
+            backup_service._require_postgres("user:secret@localhost/testdb")
+
+        assert "secret" not in str(exc_info.value)
+
+    def test_accepts_a_postgres_url(self):
+        backup_service._require_postgres(PG_URL)
+
+
 class TestRunBackup:
     @pytest.fixture(autouse=True)
     def _production_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,18 +214,16 @@ class TestRunBackup:
         monkeypatch.setenv("KOOFR_PASSWORD", "pw")
         monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
         monkeypatch.setattr(
-            backup_service.subprocess,
-            "run",
-            lambda *_a, **_kw: MagicMock(stdout=b"PG_DUMP_DATA", returncode=0),
+            backup_service.subprocess, "run", _fake_pg_dump_writing(b"PG_DUMP_DATA")
         )
 
         uploaded: dict[str, object] = {}
 
         def fake_put(
-            url: str, *, data: bytes, auth: object, **_kwargs: object
+            url: str, *, data: BinaryIO, auth: object, **_kwargs: object
         ) -> _FakeResponse:
             uploaded["url"] = url
-            uploaded["data"] = data
+            uploaded["data"] = data.read()
             uploaded["auth"] = auth
             return _FakeResponse(status_code=200)
 
@@ -552,6 +638,38 @@ class TestListBackups:
         assert names == [
             "production-2026-08-13_20-50-14-manual.dump",
             "production-2026-08-14_03-00-00.dump",
+        ]
+
+
+class TestPropfindParsing:
+    _BILLION_LAUGHS = (
+        '<?xml version="1.0"?>'
+        '<!DOCTYPE lolz [<!ENTITY lol "lol">'
+        '<!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>'
+        '<d:multistatus xmlns:d="DAV:"><d:response><d:href>&lol2;</d:href>'
+        "</d:response></d:multistatus>"
+    )
+
+    def test_refuses_a_listing_that_carries_a_dtd(self):
+        with pytest.raises(BackupError, match="DTD"):
+            backup_service._parse_backup_filenames(self._BILLION_LAUGHS)
+
+    def test_refuses_a_bare_entity_declaration(self):
+        with pytest.raises(BackupError, match="DTD"):
+            backup_service._parse_backup_filenames(
+                '<!ENTITY a "b"><d:multistatus xmlns:d="DAV:"/>'
+            )
+
+    def test_still_parses_comments_and_cdata(self):
+        listing = (
+            '<?xml version="1.0"?><!-- listing -->'
+            '<d:multistatus xmlns:d="DAV:"><d:response><d:href>'
+            "<![CDATA[/dav/Backups/production-2026-01-01_00-00-00.dump]]>"
+            "</d:href></d:response></d:multistatus>"
+        )
+
+        assert backup_service._parse_backup_filenames(listing) == [
+            "production-2026-01-01_00-00-00.dump"
         ]
 
 
@@ -1034,6 +1152,179 @@ class TestRunRestore:
         assert result == "production-2024-01-01_00-00-00.dump"
         assert len(restore_calls) == 2
         assert "could not reinsert" in caplog.text.lower()
+
+
+class _InterruptedResponse(_FakeResponse):
+    """A download whose connection breaks after the first block."""
+
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:
+        yield b"PARTIAL"
+        msg = "connection broken"
+        raise requests.exceptions.ChunkedEncodingError(msg)
+
+
+class TestStreamedTransfers:
+    @pytest.fixture(autouse=True)
+    def _env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("APP_ENVIRONMENT", "production")
+        monkeypatch.setenv("DATABASE_URL", PG_URL)
+        monkeypatch.setenv("KOOFR_USER", "user")
+        monkeypatch.setenv("KOOFR_PASSWORD", "pw")
+        monkeypatch.setattr(backup_service.shutil, "which", _which_side_effect)
+        monkeypatch.setattr(backup_service, "engine", _FakeEngine())
+        monkeypatch.setattr(backup_service.time, "sleep", lambda _seconds: None)
+        # Every temporary file of the code under test lands in tmp_path, so a
+        # test can assert that nothing is left behind.
+        monkeypatch.setattr(backup_service.tempfile, "tempdir", str(tmp_path))
+
+    def test_dump_goes_to_a_file_and_is_uploaded_as_a_stream(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        arguments: list[list[str]] = []
+        fake_dump = _fake_pg_dump_writing(b"PG_DUMP_DATA")
+
+        def recording_run(args: list[str], **kwargs: object) -> MagicMock:
+            arguments.append(args)
+            return fake_dump(args, **kwargs)
+
+        sent: dict[str, object] = {}
+
+        def fake_put(_url: str, *, data: BinaryIO, **_kw: object) -> _FakeResponse:
+            sent["is_stream"] = hasattr(data, "read") and not isinstance(data, bytes)
+            sent["content"] = data.read()
+            return _FakeResponse()
+
+        monkeypatch.setattr(backup_service.subprocess, "run", recording_run)
+        monkeypatch.setattr(backup_service.requests, "put", fake_put)
+
+        backup_service.run_backup()
+
+        assert any(arg.startswith("--file=") for arg in arguments[0])
+        assert sent == {"is_stream": True, "content": b"PG_DUMP_DATA"}
+        assert list(tmp_path.iterdir()) == []
+
+    def test_dump_file_is_removed_when_pg_dump_fails(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        def failing_run(args: list[str], **_kw: object) -> MagicMock:
+            target = next(arg for arg in args if arg.startswith("--file="))
+            Path(target.removeprefix("--file=")).write_bytes(b"half a dump")
+            raise CalledProcessError(1, "pg_dump", stderr=b"boom")
+
+        monkeypatch.setattr(backup_service.subprocess, "run", failing_run)
+
+        with pytest.raises(BackupError, match="pg_dump failed"):
+            backup_service.run_backup()
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_dump_file_is_removed_when_the_upload_fails(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        def failing_put(*_a: object, **_kw: object) -> _FakeResponse:
+            msg = "boom"
+            raise requests.ConnectionError(msg)
+
+        monkeypatch.setattr(
+            backup_service.subprocess, "run", _fake_pg_dump_writing(b"dump")
+        )
+        monkeypatch.setattr(backup_service.requests, "put", failing_put)
+
+        with pytest.raises(BackupError, match="upload failed"):
+            backup_service.run_backup()
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_restore_reads_the_dump_from_a_file_that_was_downloaded_in_blocks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.setattr(backup_service, "_TRANSFER_CHUNK_BYTES", 4)
+        requested: dict[str, object] = {}
+
+        def fake_get(_url: str, **kwargs: object) -> _FakeResponse:
+            requested.update(kwargs)
+            return _FakeResponse(content=b"0123456789")
+
+        restored: list[bytes] = []
+        base_run = _fake_pg_subprocess_run([])
+
+        def recording_run(args: list[str], **kwargs: object) -> MagicMock:
+            if args[0] == FAKE_PG_RESTORE and "--no-owner" in args:
+                restored.append(Path(args[-1]).read_bytes())
+            return base_run(args, **kwargs)
+
+        monkeypatch.setattr(backup_service.requests, "get", fake_get)
+        monkeypatch.setattr(backup_service.subprocess, "run", recording_run)
+
+        backup_service.run_restore(
+            backup_name="production-2024-01-01_00-00-00.dump", force=True
+        )
+
+        assert requested["stream"] is True
+        assert restored == [b"0123456789"]
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_partial_download_is_discarded_before_the_retry(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        responses = iter([_InterruptedResponse(), _FakeResponse(content=b"COMPLETE")])
+        restored: list[bytes] = []
+        base_run = _fake_pg_subprocess_run([])
+
+        def recording_run(args: list[str], **kwargs: object) -> MagicMock:
+            if args[0] == FAKE_PG_RESTORE and "--no-owner" in args:
+                restored.append(Path(args[-1]).read_bytes())
+            return base_run(args, **kwargs)
+
+        monkeypatch.setattr(
+            backup_service.requests, "get", lambda *_a, **_kw: next(responses)
+        )
+        monkeypatch.setattr(backup_service.subprocess, "run", recording_run)
+
+        backup_service.run_restore(
+            backup_name="production-2024-01-01_00-00-00.dump", force=True
+        )
+
+        assert restored == [b"COMPLETE"]
+        assert list(tmp_path.iterdir()) == []
+
+    def test_no_file_is_left_when_every_download_attempt_breaks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.setattr(
+            backup_service.requests, "get", lambda *_a, **_kw: _InterruptedResponse()
+        )
+
+        with pytest.raises(BackupError, match="download failed"):
+            backup_service.run_restore(
+                backup_name="production-2024-01-01_00-00-00.dump", force=True
+            )
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_dump_file_is_removed_when_pg_restore_fails(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        monkeypatch.setattr(
+            backup_service.requests,
+            "get",
+            lambda *_a, **_kw: _FakeResponse(content=b"dump"),
+        )
+        base_run = _fake_pg_subprocess_run([])
+
+        def failing_run(args: list[str], **kwargs: object) -> MagicMock:
+            if args[0] == FAKE_PG_RESTORE and "--no-owner" in args:
+                raise CalledProcessError(1, "pg_restore", stderr=b"boom")
+            return base_run(args, **kwargs)
+
+        monkeypatch.setattr(backup_service.subprocess, "run", failing_run)
+
+        with pytest.raises(BackupError, match="pg_restore failed"):
+            backup_service.run_restore(
+                backup_name="production-2024-01-01_00-00-00.dump", force=True
+            )
+
+        assert list(tmp_path.iterdir()) == []
 
 
 class TestRetryTransientKoofrRequest:

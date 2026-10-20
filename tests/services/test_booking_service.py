@@ -48,11 +48,13 @@ from app.services import (
     performance_service,
 )
 from app.services.user_position_service import create_user_position
+from tests.sql_capture import recorded_statements
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.schemas.booking import PerformanceShortOutput
+    from app.services.position_types import PositionType
 
 _ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
 
@@ -668,6 +670,156 @@ class TestSaveCastItem:
             .all()
         )
         assert [log.booking_type for log in logs] == ["book", "unbook"]
+
+
+def _delete_statements(statements: list[str]) -> list[str]:
+    return [
+        s for s in statements if s.lstrip().upper().startswith("DELETE FROM BOOKINGS")
+    ]
+
+
+class TestSaveCastItemStatements:
+    @pytest.mark.parametrize("cast_size", [1, 3, 8])
+    def test_clearing_other_positions_costs_one_delete_however_large_the_cast(
+        self, db_session: Session, make_user, cast_size: int
+    ):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        users = [make_user() for _ in range(cast_size)]
+
+        with recorded_statements() as statements:
+            booking_service._save_cast_item(
+                db_session,
+                performance_id,
+                "instruments",
+                instrument.id,
+                new_cast=[(user.id, 80) for user in users],
+                old_quantity=None,
+            )
+
+        # One delete of the position's old rows, one for the members' rows
+        # at other positions.
+        assert len(_delete_statements(statements)) == 2
+
+    def test_an_empty_cast_clears_no_other_position(self, db_session: Session):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+
+        with recorded_statements() as statements:
+            booking_service._save_cast_item(
+                db_session,
+                performance_id,
+                "instruments",
+                instrument.id,
+                new_cast=[],
+                old_quantity=None,
+            )
+
+        assert len(_delete_statements(statements)) == 1
+
+    def test_several_members_moved_at_once_leave_one_booking_each(
+        self, db_session: Session, make_user
+    ):
+        instrument = _make_instrument(db_session)
+        voice = _make_voice(db_session)
+        performance_id = _make_performance(
+            db_session, instruments={instrument.id: 2}, voices={voice.id: 2}
+        )
+        first, second = make_user(), make_user()
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            "instruments",
+            instrument.id,
+            new_cast=[(first.id, 80), (second.id, 80)],
+            old_quantity=None,
+        )
+
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            "voices",
+            voice.id,
+            new_cast=[(second.id, 100), (first.id, 100)],
+            old_quantity=None,
+        )
+
+        bookings = (
+            db_session.execute(
+                select(Booking)
+                .where(Booking.performance_id == performance_id)
+                .order_by(Booking.order)
+            )
+            .scalars()
+            .all()
+        )
+        assert [(b.user_id, b.voice_id, b.instrument_id) for b in bookings] == [
+            (second.id, voice.id, None),
+            (first.id, voice.id, None),
+        ]
+
+
+def _performance_selects(statements: list[str]) -> list[str]:
+    return [
+        s
+        for s in statements
+        if s.lstrip().upper().startswith("SELECT") and "FROM performances " in s
+    ]
+
+
+class TestWritersLockThePerformance:
+    def test_save_cast_locks_the_performance_row(self, db_session: Session):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+
+        with recorded_statements() as statements:
+            booking_service.save_cast(
+                db_session,
+                performance_id,
+                CastSaveRequest(cast=CastSectionInput(), not_booked=[]),
+            )
+
+        assert "FOR UPDATE" in _performance_selects(statements)[0]
+
+    def test_change_user_request_status_locks_the_performance_row(
+        self, db_session: Session, make_user
+    ):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        user = make_user()
+        _qualify(db_session, user.id, "instruments", instrument.id)
+
+        with recorded_statements() as statements:
+            booking_service.change_user_request_status(db_session, performance_id, user)
+
+        assert "FOR UPDATE" in _performance_selects(statements)[0]
+
+    def test_reconcile_setup_change_locks_before_it_reads_any_booking(
+        self, db_session: Session
+    ):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+        removed_keys: set[tuple[PositionType, uuid.UUID]] = {
+            ("instruments", instrument.id)
+        }
+
+        with recorded_statements() as statements:
+            booking_service.reconcile_setup_change(
+                db_session, performance_id, removed_keys, {}
+            )
+
+        first = statements[0]
+        assert "FROM performances " in first
+        assert "FOR UPDATE" in first
+
+    def test_a_read_only_lookup_takes_no_lock(self, db_session: Session):
+        instrument = _make_instrument(db_session)
+        performance_id = _make_performance(db_session, instruments={instrument.id: 1})
+
+        with recorded_statements() as statements:
+            booking_service.get_cast_page(db_session, performance_id)
+
+        assert all("FOR UPDATE" not in s for s in statements)
 
 
 class TestCancelAuthUserBooking:

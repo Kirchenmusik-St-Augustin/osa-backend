@@ -103,21 +103,25 @@ def _latest_unnotified_entries(
 
 def _capture_entry_data_before_any_commit(
     entries_by_user: dict[uuid.UUID, list[tuple[uuid.UUID, BookingLog]]],
-) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, list[uuid.UUID]]]:
-    """Reads entry.id/entry.booking_type once, before
-    mailer.send_booking_status_email()'s own internal db.commit() (see
-    _log_sent_email) expires every object in the session's identity map --
-    reading either attribute again afterwards would force one extra
-    refresh SELECT per entry, scaling with the number of notify-worthy
-    entries (found live while adding this module's query-count regression
-    test)."""
-    booking_type_by_entry_id: dict[uuid.UUID, str] = {}
+) -> tuple[
+    dict[uuid.UUID, list[tuple[uuid.UUID, bool]]], dict[uuid.UUID, list[uuid.UUID]]
+]:
+    """Reads (performance id, booked) and the id of every entry once, before
+    the first db.commit() (the per-user commit in notify_upcoming_booking_status,
+    and the one inside mailer.send_booking_status_email via _log_sent_email)
+    expires every object in the session's identity map -- reading an
+    attribute of a BookingLog again afterwards would force one extra refresh
+    SELECT per entry, scaling with the number of notify-worthy entries (found
+    live while adding this module's query-count regression test)."""
+    booked_by_user: dict[uuid.UUID, list[tuple[uuid.UUID, bool]]] = {}
     entry_ids_by_user: dict[uuid.UUID, list[uuid.UUID]] = {}
     for user_id, pairs in entries_by_user.items():
         entry_ids_by_user[user_id] = [entry.id for _performance_id, entry in pairs]
-        for _performance_id, entry in pairs:
-            booking_type_by_entry_id[entry.id] = entry.booking_type
-    return booking_type_by_entry_id, entry_ids_by_user
+        booked_by_user[user_id] = [
+            (performance_id, entry.booking_type == "book")
+            for performance_id, entry in pairs
+        ]
+    return booked_by_user, entry_ids_by_user
 
 
 def notify_upcoming_booking_status() -> None:
@@ -159,14 +163,21 @@ def notify_upcoming_booking_status() -> None:
         if not entries_by_user:
             return
 
-        booking_type_by_entry_id, entry_ids_by_user = (
-            _capture_entry_data_before_any_commit(entries_by_user)
+        booked_by_user, entry_ids_by_user = _capture_entry_data_before_any_commit(
+            entries_by_user
         )
 
-        users_by_id = {
-            user.id: user
+        # Plain tuples, read once: the per-user commit below expires every
+        # ORM object of the session, and re-reading a User afterwards would
+        # cost one refresh query per user.
+        recipient_by_user_id = {
+            user.id: (user.email, f"{user.surname}, {user.givenname}")
             for user in db.execute(
-                select(User).where(User.id.in_(entries_by_user.keys()))
+                select(User).where(
+                    User.id.in_(entries_by_user.keys()),
+                    User.email.is_not(None),
+                    User.email_verified_at.is_not(None),
+                )
             )
             .scalars()
             .all()
@@ -197,9 +208,12 @@ def notify_upcoming_booking_status() -> None:
         }
 
         now = datetime.now(UTC)
-        for user_id, pairs in entries_by_user.items():
-            user = users_by_id.get(user_id)
-            if user is None or user.email is None or user.email_verified_at is None:
+        for user_id, booked_entries in booked_by_user.items():
+            recipient = recipient_by_user_id.get(user_id)
+            if recipient is None:
+                continue
+            email, user_name = recipient
+            if email is None:
                 continue
             mail_entries = [
                 mailer.BookingStatusMailEntry(
@@ -212,12 +226,12 @@ def notify_upcoming_booking_status() -> None:
                     schedule=schedule_by_performance[performance_id],
                     location_name=performance_batch[performance_id].location.name,
                     location_address=performance_batch[performance_id].location.address,
-                    user_name=f"{user.surname}, {user.givenname}",
-                    booked=booking_type_by_entry_id[entry.id] == "book",
+                    user_name=user_name,
+                    booked=booked,
                 )
-                for performance_id, entry in pairs
+                for performance_id, booked in booked_entries
             ]
-            mailer.send_booking_status_email(user.email, mail_entries)
+            mailer.send_booking_status_email(email, mail_entries)
             # Bulk UPDATE by id instead of assigning entry.notified_at on
             # each (by now possibly session-expired) ORM object -- avoids
             # the same per-entry refresh-SELECT the booking_type capture
@@ -233,6 +247,8 @@ def notify_upcoming_booking_status() -> None:
                 .values(notified_at=now)
                 .execution_options(synchronize_session=False)
             )
-        db.commit()
+            # Commit per user: a crash on the next mail must not make the
+            # next run send this user's mail a second time.
+            db.commit()
     finally:
         db.close()

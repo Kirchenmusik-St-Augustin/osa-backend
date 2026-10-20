@@ -28,7 +28,7 @@ def get_table_data(
     table_name: str,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _VIEW],
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=100_000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 25,
 ) -> TableDataOutput:
     try:
