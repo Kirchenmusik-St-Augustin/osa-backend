@@ -9,18 +9,17 @@ from app.db.uuid_pk import uuid_pk
 
 # Every numeric column below is either a physical count (how many
 # copies/parts/instrument-headcount slots the archive card lists) or a
-# year (geboren/gestorben/jahr) -- negative values are never meaningful
-# for either. All 42 are already validated `Field(ge=0, ...)` at the
-# Pydantic layer (app/schemas/score.py); these CHECK constraints close
-# the same "validated at the API, never enforced in the database" gap the
-# money-column CHECKs closed for fees/bookings/performances. NULL passes
-# every one of these CHECKs unconditionally (standard SQL), which is what
-# keeps geboren/gestorben/jahr's now-nullable "no year entered" state
-# valid alongside the required counts.
+# year (geboren/gestorben/jahr). A count is never negative, a year is a
+# real year of at least 1: "nothing entered" is NULL, never 0. Both rules
+# are already validated at the Pydantic layer (app/schemas/score.py);
+# these CHECK constraints close the same "validated at the API, never
+# enforced in the database" gap the money-column CHECKs closed for
+# fees/bookings/performances. NULL passes every one of these CHECKs
+# unconditionally (standard SQL), which is what keeps geboren/gestorben/
+# jahr's nullable "no year entered" state valid alongside the required
+# counts.
+_YEAR_CHECKS: tuple[str, ...] = ("geboren", "gestorben", "jahr")
 _COUNT_CHECKS: tuple[str, ...] = (
-    "geboren",
-    "gestorben",
-    "jahr",
     "part1anz",
     "part2anz",
     "klausz1anz",
@@ -141,9 +140,15 @@ class Score(Base):
     domains use, keeping this table fully self-contained."""
 
     __tablename__ = "scores"
-    __table_args__ = tuple(
-        CheckConstraint(f"{column} >= 0", name=f"scores_{column}_check")
-        for column in _COUNT_CHECKS
+    __table_args__ = (
+        *(
+            CheckConstraint(f"{column} > 0", name=f"scores_{column}_check")
+            for column in _YEAR_CHECKS
+        ),
+        *(
+            CheckConstraint(f"{column} >= 0", name=f"scores_{column}_check")
+            for column in _COUNT_CHECKS
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

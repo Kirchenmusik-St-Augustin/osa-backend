@@ -185,10 +185,12 @@ class TestCreateOrdinariumwork:
 
     def test_rejects_out_of_range_duration(self):
         # Like test_rejects_short_name: the schema itself rejects an
-        # out-of-range duration (OrdinariumworkRequest's Field(le=999)),
-        # matching the service-level 0-999 constant.
+        # out-of-range duration (OrdinariumworkRequest's Field(ge=1, le=999)),
+        # matching the service-level 1-999 constants.
         with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
             _request(uuid.uuid4(), duration=1000)
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(ge=1)
+            _request(uuid.uuid4(), duration=0)
 
     def test_rejects_unknown_artist(self, db_session: Session):
         with pytest.raises(

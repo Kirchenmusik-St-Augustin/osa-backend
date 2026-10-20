@@ -29,7 +29,7 @@ class OrdinariumworkRequest(StrictInputModel):
     name: WorkName
     description: OptionalText = None
     artist_id: LenientUuid
-    duration: int | None = Field(default=None, ge=0, le=999)
+    duration: int | None = Field(default=None, ge=1, le=999)
     demanding: bool = False
     setup: OrdinariumworkSetupInput
 

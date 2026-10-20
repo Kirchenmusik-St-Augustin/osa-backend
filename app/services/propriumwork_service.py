@@ -26,9 +26,7 @@ if TYPE_CHECKING:
 
 _NAME_MIN_LENGTH = 3
 _NAME_MAX_LENGTH = 60
-# Propriumwork requires a duration of at least 1, while Ordinariumwork
-# (ordinariumwork_service.py) allows 0 -- not a typo, the two genuinely
-# differ on this bound.
+# Same bound as the ordinarium work: a work of zero minutes is meaningless.
 _DURATION_MIN = 1
 _DURATION_MAX = 999
 _SEARCH_RESULT_LIMIT = 20

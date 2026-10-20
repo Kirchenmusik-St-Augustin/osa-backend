@@ -21,7 +21,7 @@ _OptionalArt = Annotated[_ArtValue | None, BlankToNone]
 # check sits on the inner `int`, not the outer union -- Pydantic applies a
 # numeric constraint to whatever type it's attached to, and applied to the
 # union it raises a TypeError on the None branch instead of skipping it.
-_OptionalYear = Annotated[Annotated[int, Field(ge=0, le=9999)] | None, BlankToNone]
+_OptionalYear = Annotated[Annotated[int, Field(ge=1, le=9999)] | None, BlankToNone]
 
 _SparteValue = Literal[
     "Advent/Weihnacht",
