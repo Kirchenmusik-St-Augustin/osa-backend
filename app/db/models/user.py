@@ -1,10 +1,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, FetchedValue, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    FetchedValue,
+    UniqueConstraint,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
+from app.db.models.oauth2_binding import oauth2_provider_enum
 from app.db.models.role import Role
 from app.db.uuid_pk import uuid_pk
 
@@ -37,13 +45,13 @@ class User(Base):
     phone: Mapped[str | None]
     auth_password: Mapped[str | None]
     auth_remember_token: Mapped[str | None]
-    auth_lastlogin_provider: Mapped[str | None]
+    auth_lastlogin_provider: Mapped[str | None] = mapped_column(oauth2_provider_enum)
     auth_lastlogin: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     auth_lastsignal: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     auth_lastlogout: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    auth_locked: Mapped[bool] = mapped_column(default=False)
-    administrator: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime | None] = mapped_column(
+    auth_locked: Mapped[bool] = mapped_column(default=False, server_default=false())
+    administrator: Mapped[bool] = mapped_column(default=False, server_default=false())
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

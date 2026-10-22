@@ -16,8 +16,8 @@ _MASKED_COLUMNS = frozenset(
     {
         ("users", "auth_password"),
         ("users", "auth_remember_token"),
-        ("personal_access_tokens", "token"),
-        ("personal_access_tokens", "abilities"),
+        ("personal_access_tokens", "jti"),
+        ("personal_access_tokens", "refresh_token_hash"),
         ("password_reset_tokens", "token"),
         ("sent_emails", "body"),
     }

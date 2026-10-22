@@ -49,6 +49,10 @@ class OrdinariumworkPosition(Base):
             "num_nonnulls(instrument_id, voice_id) = 1",
             name="ordinariumwork_positions_position_exactly_one_check",
         ),
+        CheckConstraint(
+            "quantity BETWEEN 1 AND 99",
+            name="ordinariumwork_positions_quantity_check",
+        ),
         Index("ordinariumwork_positions_instrument_id_index", "instrument_id"),
         Index("ordinariumwork_positions_voice_id_index", "voice_id"),
     )
@@ -64,7 +68,7 @@ class OrdinariumworkPosition(Base):
         ForeignKey("voices.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     quantity: Mapped[int]
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

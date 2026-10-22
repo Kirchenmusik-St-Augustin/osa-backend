@@ -174,8 +174,6 @@ def _genre(score: Score) -> str:
 
 
 def _entered_on(score: Score) -> str:
-    if score.created_at is None:
-        return ""
     return f"erfasst am {score.created_at:%d.%m.%Y}"
 
 

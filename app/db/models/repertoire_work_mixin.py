@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, ForeignKey, func
+from sqlalchemy import DateTime, FetchedValue, ForeignKey, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.uuid_pk import uuid_pk
@@ -28,12 +28,12 @@ class RepertoireWorkColumns:
     id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str]
     description: Mapped[str | None]
-    demanding: Mapped[bool] = mapped_column(default=False)
+    demanding: Mapped[bool] = mapped_column(default=False, server_default=false())
     artist_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("artists.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     duration: Mapped[int | None]
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

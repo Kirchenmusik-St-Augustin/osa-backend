@@ -63,6 +63,9 @@ ACCOUNT_THROTTLE_WINDOW_SECONDS = 900
 
 
 AuthFailureReason = Literal["unknown_email", "wrong_password", "account_locked"]
+# The events the application writes; the database type also holds a few that
+# only rows from earlier years carry (see app.db.models.auth_log).
+AuthEvent = Literal["Login", "Failed", "Lockout", "Logout", "Verified", "PasswordReset"]
 
 # Upper bounds for what an unauthenticated client can make us store.
 _MAX_LOGGED_EMAIL_LENGTH = 254
@@ -76,7 +79,7 @@ def _clipped(value: str | None, limit: int) -> str | None:
 
 def log_auth_event(
     db: Session,
-    event: str,
+    event: AuthEvent,
     email: str | None,
     *,
     ip_address: str | None = None,
@@ -135,7 +138,7 @@ def _retry_after_seconds(
         .order_by(AuthLog.fired_at.asc())
     )
     raw_failed_times = db.execute(failed_stmt).scalars().all()
-    failed_times = [ensure_tz_aware(t) for t in raw_failed_times if t is not None]
+    failed_times = [ensure_tz_aware(t) for t in raw_failed_times]
 
     if len(failed_times) < max_attempts:
         return None
@@ -213,8 +216,7 @@ def create_user_session(db: Session, user: User) -> tuple[str, str, str]:
     db.add(
         PersonalAccessToken(
             user_id=user.id,
-            name="session",
-            token=session_id,
+            jti=session_id,
             refresh_token_hash=hash_refresh_secret(refresh_secret),
             last_used_at=now,
         )
@@ -246,7 +248,7 @@ def refresh_session(
     # of both passing it and the loser being logged out as token reuse.
     result = db.execute(
         select(PersonalAccessToken)
-        .where(PersonalAccessToken.token == session_id)
+        .where(PersonalAccessToken.jti == session_id)
         .with_for_update()
     )
     session = result.scalar_one_or_none()
@@ -300,7 +302,7 @@ def logout_user(db: Session, token: str) -> None:
         return
 
     result = db.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == token_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == token_id)
     )
     session = result.scalar_one_or_none()
     if session is None:
@@ -500,9 +502,8 @@ def execute_password_reset(
     if reset_row is None or not verify_reset_token(token, reset_row.token):
         raise ValueError(invalid_token_msg)
 
-    # A row without a creation time has no known lifetime: it counts as expired.
     created_at = ensure_tz_aware(reset_row.created_at)
-    if created_at is None or datetime.now(UTC) - created_at > timedelta(
+    if datetime.now(UTC) - created_at > timedelta(
         minutes=settings.password_reset_ttl_minutes
     ):
         db.delete(reset_row)

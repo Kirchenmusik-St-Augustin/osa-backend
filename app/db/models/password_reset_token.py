@@ -25,7 +25,7 @@ class PasswordResetToken(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     email: Mapped[str]
     token: Mapped[str]
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

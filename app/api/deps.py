@@ -68,7 +68,7 @@ def try_decode_token(token: str) -> str | None:
 
 def _get_session_record(db: Session, token_id: str) -> PersonalAccessToken:
     result = db.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == token_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == token_id)
     )
     session_record = result.scalar_one_or_none()
     if session_record is None:

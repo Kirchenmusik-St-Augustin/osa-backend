@@ -7,7 +7,7 @@ from app.core.config import get_settings
 from app.core.datetime_utils import local_day_bounds_utc, local_month_bounds_utc
 from app.core.human_names import label_for_name
 from app.db.models.client_user_agent import ClientUserAgent
-from app.db.models.request_log import RequestLog
+from app.db.models.request_log import HTTP_METHODS, RequestLog
 from app.db.models.user import User
 from app.schemas.request_log import (
     RequestLogDayGroupOutput,
@@ -139,7 +139,13 @@ def record_request(
     """Dedupes the User-Agent string via ClientUserAgent get-or-create, then
     writes one RequestLog row. Called from RequestLoggingMiddleware via
     `starlette.concurrency.run_in_threadpool()` (this function itself stays
-    a plain sync function, no event-loop awareness needed here)."""
+    a plain sync function, no event-loop awareness needed here).
+
+    A request with a method outside RFC 9110 (probing traffic) is answered
+    with 405 and not logged: the column only holds the standard methods, and
+    a rejected insert would be logged as an error for every such request."""
+    if request_method not in HTTP_METHODS:
+        return
     client_user_agent_id = (
         _get_or_create_client_user_agent(db, user_agent_string)
         if user_agent_string
@@ -268,7 +274,6 @@ def list_entries_for_user_day(
                 request_path=entry.request_path,
             )
             for entry in entries
-            if entry.created_at is not None
         ],
     )
 
@@ -281,7 +286,7 @@ def get(db: Session, request_log_id: uuid.UUID) -> RequestLogShowOutput:
     row = db.execute(
         select(RequestLog).where(RequestLog.id == request_log_id)
     ).scalar_one_or_none()
-    if row is None or row.created_at is None:
+    if row is None:
         raise RequestLogNotFoundError
 
     client_user_agent_string: str | None = None

@@ -13,6 +13,7 @@ from app.db.models.sent_email import SentEmail
 from app.db.models.user import User
 from app.services import auth_service
 from tests.google_credential import google_credential
+from tests.sent_emails import sent_email
 
 
 def test_login_success_sets_refresh_cookie_and_returns_access_token(client, make_user):
@@ -122,8 +123,8 @@ def test_login_missing_fields_returns_german_validation_messages(client):
 
 
 def test_refresh_with_empty_origin_returns_403(client):
-    # CSRF defense for the refresh-token cookie (samesite="none", see
-    # _ensure_trusted_origin's docstring) -- checked before the cookie
+    # CSRF defense for the refresh-token cookie (see _ensure_trusted_origin's
+    # docstring) -- checked before the cookie
     # itself, so this is 403, not the cookie-missing 401 below. Empty
     # rather than absent (httpx2's Headers.update() rejects None as a
     # header value) -- request.headers.get("origin") treats a missing
@@ -253,7 +254,7 @@ def test_me_reflects_kill_switch_status(
     see app.core.mailer.get_kill_switch_status()."""
     db_session.query(SentEmail).delete()
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
-    db_session.add(SentEmail(to="a@example.test", created_at=datetime.now(UTC)))
+    db_session.add(sent_email(to="a@example.test", created_at=datetime.now(UTC)))
     db_session.commit()
 
     user = make_user(password="correct-password")
@@ -491,7 +492,7 @@ def test_register_rejects_invalid_phone(client):
 
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert any("Telefonnummer" in err["msg"] for err in detail)
+    assert any(err["msg"] == "Das Rufnummern-Format ist ungültig." for err in detail)
 
 
 # ---------------------------------------------------------------------------
@@ -1075,21 +1076,31 @@ def test_google_callback_and_link_are_rate_limited(
         assert blocked_link.status_code == 429
 
 
-def test_refresh_cookie_carries_the_security_flags(client, make_user):
-    # The cookie is SameSite=None on purpose: the frontend and the API may live
-    # on different domains (the CSRF origin check covers that). HttpOnly and
-    # Secure must never be dropped by a refactor.
+def _login_cookie(client, make_user) -> str:
     user = make_user(password="correct-password")
-
     response = client.post(
         "/auth/login", data={"username": user.email, "password": "correct-password"}
     )
+    return response.headers.get_list("set-cookie")[0]
 
-    cookie = response.headers.get_list("set-cookie")[0]
+
+def test_refresh_cookie_carries_the_security_flags(client, make_user):
+    # HttpOnly and Secure must never be dropped by a refactor.
+    cookie = _login_cookie(client, make_user)
+
     assert "HttpOnly" in cookie
     assert "Secure" in cookie
-    assert "SameSite=none" in cookie
+    assert "SameSite=strict" in cookie
     assert "Path=/api/auth" in cookie
+
+
+@pytest.mark.parametrize("samesite", ["lax", "none"])
+def test_refresh_cookie_samesite_follows_the_setting(
+    client, make_user, monkeypatch: pytest.MonkeyPatch, samesite: str
+):
+    monkeypatch.setenv("REFRESH_COOKIE_SAMESITE", samesite)
+
+    assert f"SameSite={samesite}" in _login_cookie(client, make_user)
 
 
 def test_after_logout_neither_the_access_token_nor_the_refresh_cookie_works(

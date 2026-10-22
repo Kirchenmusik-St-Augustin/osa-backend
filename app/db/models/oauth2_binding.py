@@ -1,11 +1,24 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    FetchedValue,
+    ForeignKey,
+    Index,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 from app.db.uuid_pk import uuid_pk
+
+# Native Postgres ENUM shared by oauth2_bindings.provider and
+# users.auth_lastlogin_provider. Bare string literals instead of a Python
+# enum.Enum class, same reasoning as booking_log.booking_type_enum.
+oauth2_provider_enum = Enum("google", name="oauth2_provider")
 
 
 class Oauth2Binding(Base):
@@ -14,8 +27,10 @@ class Oauth2Binding(Base):
     binding has no meaning independent of the local user it authenticates.
 
     `bound_at`/`lastuse_at` are TIMESTAMPTZ and Python-managed via
-    datetime.now(UTC) (this table has no created_at/updated_at pair, so no
-    server_default/trigger applies here)."""
+    datetime.now(UTC). `created_at`/`updated_at` are the timestamp pair every
+    table carries: `created_at` is populated by the database's own DEFAULT
+    now(), `updated_at` by the shared set_updated_at() BEFORE UPDATE
+    trigger -- neither is assigned from Python."""
 
     __tablename__ = "oauth2_bindings"
     __table_args__ = (
@@ -24,7 +39,7 @@ class Oauth2Binding(Base):
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    provider: Mapped[str]
+    provider: Mapped[str] = mapped_column(oauth2_provider_enum)
     remote_id: Mapped[str]
     remote_name: Mapped[str]
     local_id: Mapped[uuid.UUID] = mapped_column(
@@ -32,3 +47,9 @@ class Oauth2Binding(Base):
     )
     bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     lastuse_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_onupdate=FetchedValue()
+    )

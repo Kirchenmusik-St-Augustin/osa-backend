@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, func
+from sqlalchemy import CheckConstraint, DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -22,10 +22,17 @@ class ClientUserAgent(Base):
     get-or-create), so `updated_at` stays NULL for the lifetime of a row."""
 
     __tablename__ = "client_user_agents"
+    # Mirrors request_log_service._MAX_USER_AGENT_LENGTH, so no other writer
+    # can store an unbounded header.
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(string) <= 512", name="client_user_agents_string_length_check"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     string: Mapped[str] = mapped_column(unique=True)
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

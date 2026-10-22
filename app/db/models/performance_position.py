@@ -48,6 +48,10 @@ class PerformancePosition(PositionColumns, Base):
             "num_nonnulls(instrument_id, voice_id, choirjob_id) = 1",
             name="performance_positions_position_exactly_one_check",
         ),
+        CheckConstraint(
+            "quantity BETWEEN 1 AND 99",
+            name="performance_positions_quantity_check",
+        ),
         Index("performance_positions_instrument_id_index", "instrument_id"),
         Index("performance_positions_voice_id_index", "voice_id"),
         Index("performance_positions_choirjob_id_index", "choirjob_id"),
@@ -58,7 +62,7 @@ class PerformancePosition(PositionColumns, Base):
         ForeignKey("performances.id", ondelete="CASCADE", onupdate="CASCADE")
     )
     quantity: Mapped[int]
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

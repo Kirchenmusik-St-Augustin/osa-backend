@@ -6,12 +6,11 @@ from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import (
     MAX_CATALOGUE_ENTRIES,
     LenientUuid,
-    OptionalText,
     PersonName,
     StrictInputModel,
 )
 from app.schemas.performance import PositionRefOutput
-from app.schemas.validators import PHONE_PATTERN, lowercase_email
+from app.schemas.validators import OptionalPhoneNumber, lowercase_email
 
 
 class RoleRefOutput(BaseModel):
@@ -53,7 +52,7 @@ class UserRequest(StrictInputModel):
     givenname: PersonName
     surname: PersonName
     email: EmailStr | None = Field(default=None, max_length=190)
-    phone: OptionalText = None
+    phone: OptionalPhoneNumber = None
     auth_locked: bool = False
     instruments: list[LenientUuid] = Field(
         default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
@@ -73,14 +72,6 @@ class UserRequest(StrictInputModel):
     @classmethod
     def _lowercase_email(cls, value: str | None) -> str | None:
         return lowercase_email(value)
-
-    @field_validator("phone")
-    @classmethod
-    def _validate_phone(cls, value: str | None) -> str | None:
-        if value is not None and not PHONE_PATTERN.fullmatch(value):
-            msg = "Das Rufnummern-Format ist ungültig."
-            raise ValueError(msg)
-        return value
 
 
 class UserResponse(BaseModel):

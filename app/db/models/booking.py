@@ -95,7 +95,7 @@ class Booking(PositionColumns, Base):
     )
     order: Mapped[int] = mapped_column("sort_order", default=0)
     fee: Mapped[int]
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

@@ -2,10 +2,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from app.db.models.sent_email import SentEmail
+from tests.sent_emails import sent_email
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from app.db.models.sent_email import SentEmail
 
 
 def _unique(base: str = "Email") -> str:
@@ -23,7 +25,7 @@ def _auth_headers(client, make_user, *, administrator: bool = False) -> dict[str
 
 def _make_sent_email(db_session: Session, *, year: int, month: int) -> SentEmail:
     moment = datetime(year, month, 15, 10, 0, tzinfo=UTC)
-    email = SentEmail(
+    email = sent_email(
         mail_from="noreply@example.test",
         to=f"{_unique('empfaenger')}@example.test",
         subject=_unique("Betreff"),

@@ -1,15 +1,17 @@
-"""Shared field-validation rules, used across Auth/User/Profile schemas.
-
-Each schema still declares its own @field_validator with its own error text
-where the wording differs per form for the identical rule (e.g. phone)."""
+"""Shared field-validation rules, used across Auth/User/Profile schemas."""
 
 import re
+from typing import Annotated
+
+from pydantic import AfterValidator, StringConstraints
+
+from app.schemas.base import BlankToNone
 
 # Optional leading "+", then 4-60 digits, spaces, slashes, parentheses or
-# hyphens. Single fixed error message regardless of which sub-condition
-# fails. Match it with fullmatch(): a "$" anchor would also accept a trailing
-# newline.
-PHONE_PATTERN = re.compile(r"\+?[0-9 /()-]{4,60}")
+# hyphens, at least four of them digits. Match it with fullmatch(): a "$"
+# anchor would also accept a trailing newline. Single fixed error message
+# regardless of which sub-condition fails.
+PHONE_PATTERN = re.compile(r"\+?(?=(?:\D*\d){4})[0-9 /()-]{4,60}")
 
 
 def lowercase_email(value: str | None) -> str | None:
@@ -76,3 +78,19 @@ def validate_confirmation(value: str, other: str | None) -> str:
         msg = "Die Passwort-Bestätigung stimmt nicht überein."
         raise ValueError(msg)
     return value
+
+
+def validate_phone(value: str) -> str:
+    if not PHONE_PATTERN.fullmatch(value):
+        msg = "Das Rufnummern-Format ist ungültig."
+        raise ValueError(msg)
+    return value
+
+
+# A phone number without the blanks around it. OptionalPhoneNumber turns an
+# empty (or whitespace-only) value into None, for the form where the number is
+# optional.
+PhoneNumber = Annotated[
+    str, StringConstraints(strip_whitespace=True), AfterValidator(validate_phone)
+]
+OptionalPhoneNumber = Annotated[PhoneNumber | None, BlankToNone]

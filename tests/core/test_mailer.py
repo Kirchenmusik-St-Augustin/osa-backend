@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core import mailer
 from app.db.models.sent_email import SentEmail
+from tests.sent_emails import sent_email
 
 
 @pytest.fixture(autouse=True)
@@ -19,13 +20,6 @@ def _clear_sent_emails(db_session):
     db_session.query(SentEmail).delete()
     db_session.commit()
     return
-
-
-def test_count_recipients_handles_none_empty_and_multiple():
-    assert mailer._count_recipients(None) == 0
-    assert mailer._count_recipients("") == 0
-    assert mailer._count_recipients("a@example.test") == 1
-    assert mailer._count_recipients("a@example.test, b@example.test") == 2
 
 
 def test_format_ymd_timestamp():
@@ -68,7 +62,7 @@ def test_kill_switch_activates_at_threshold(
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "3")
     now = datetime.now(UTC)
     db_session.add(
-        SentEmail(to="a@example.test, b@example.test, c@example.test", created_at=now)
+        sent_email(to="a@example.test, b@example.test, c@example.test", created_at=now)
     )
     db_session.commit()
 
@@ -84,7 +78,7 @@ def test_kill_switch_ignores_emails_outside_rolling_window(
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
     monkeypatch.setenv("MAIL_KILL_SWITCH_PERIOD_DAYS", "30")
     stale = datetime.now(UTC) - timedelta(days=31)
-    db_session.add(SentEmail(to="a@example.test", created_at=stale))
+    db_session.add(sent_email(to="a@example.test", created_at=stale))
     db_session.commit()
 
     assert mailer.get_kill_switch_status(db_session).active is False
@@ -125,7 +119,11 @@ def test_send_verification_email_sends_and_logs(
     recipients = mock_send.call_args.args[1]
     assert recipients == ["user@example.test"]
 
-    row = db_session.query(SentEmail).filter(SentEmail.headers == "verify-email").one()
+    row = (
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "verify-email")
+        .one()
+    )
     assert row.to == "user@example.test"
     assert "verify" in row.body.lower() or "bestätig" in row.body.lower()
 
@@ -145,7 +143,11 @@ def test_send_verification_email_subject_uses_app_timezone_not_utc(
     with patch("app.core.mailer._send_message"):
         mailer.send_verification_email("user@example.test", "https://x.test/verify")
 
-    row = db_session.query(SentEmail).filter(SentEmail.headers == "verify-email").one()
+    row = (
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "verify-email")
+        .one()
+    )
     assert "15. 8. 2026, 00:30" in row.subject
 
 
@@ -161,7 +163,11 @@ def test_send_user_message_email_subject_uses_app_timezone_not_utc(
     with patch("app.core.mailer._send_message"):
         mailer.send_user_message_email(["a@example.test"], "Muster, Max", "Hallo!")
 
-    row = db_session.query(SentEmail).filter(SentEmail.headers == "user-message").one()
+    row = (
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "user-message")
+        .one()
+    )
     assert "2026-08-15 00:30" in row.subject
 
 
@@ -176,7 +182,9 @@ def test_send_password_reset_email_body_contains_ttl_minutes(
         )
 
     row = (
-        db_session.query(SentEmail).filter(SentEmail.headers == "password-reset").one()
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "password-reset")
+        .one()
     )
     assert "60 Minuten" in row.body
 
@@ -200,7 +208,7 @@ def test_send_new_registration_notice_goes_to_disponent_address(
 
     row = (
         db_session.query(SentEmail)
-        .filter(SentEmail.headers == "new-registration")
+        .filter(SentEmail.template_key == "new-registration")
         .one()
     )
     assert "SCHIMPL" in row.body
@@ -213,7 +221,7 @@ def test_kill_switch_suppresses_send_without_logging_or_sending(
     _make_smtp_settings(monkeypatch)
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
     db_session.add(
-        SentEmail(to="preexisting@example.test", created_at=datetime.now(UTC))
+        sent_email(to="preexisting@example.test", created_at=datetime.now(UTC))
     )
     db_session.commit()
 
@@ -353,7 +361,7 @@ class TestSendBookingStatusEmail:
         assert recipients == ["user@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "booking-status")
+            .filter(SentEmail.template_key == "booking-status")
             .one()
         )
         assert "die folgende Aufführung" in row.body
@@ -372,7 +380,7 @@ class TestSendBookingStatusEmail:
 
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "booking-status")
+            .filter(SentEmail.template_key == "booking-status")
             .one()
         )
         assert "die folgenden Aufführungen" in row.body
@@ -404,7 +412,7 @@ class TestSendBookedOrStandbyCanceledEmail:
         assert recipients == ["disponent1@example.test", "disponent2@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "booked-or-standby-canceled")
+            .filter(SentEmail.template_key == "booked-or-standby-canceled")
             .one()
         )
         assert "Muster, Max hat soeben folgende Buchung storniert" in row.body
@@ -429,7 +437,7 @@ class TestSendRegistrationConflictEmails:
         assert recipients == ["user@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "registration-account-exists")
+            .filter(SentEmail.template_key == "registration-account-exists")
             .one()
         )
         assert "Du hast bereits ein Konto" in row.body
@@ -468,7 +476,7 @@ class TestSendRegistrationConflictEmails:
         assert recipients == ["user@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "registration-entry-exists")
+            .filter(SentEmail.template_key == "registration-entry-exists")
             .one()
         )
         assert "Für den Namen Max Muster gibt es bereits einen Eintrag." in row.body
@@ -485,7 +493,7 @@ class TestSendRegistrationConflictEmails:
 
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "registration-entry-exists")
+            .filter(SentEmail.template_key == "registration-entry-exists")
             .one()
         )
         assert "<b>Max</b>" not in row.body
@@ -506,7 +514,7 @@ class TestSendUserMessageEmail:
         assert recipients == ["a@example.test", "b@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "user-message")
+            .filter(SentEmail.template_key == "user-message")
             .one()
         )
         assert "Muster, Max hat folgende Nachricht geschickt" in row.body
@@ -533,7 +541,7 @@ class TestSendUserMessageEmail:
 
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "user-message")
+            .filter(SentEmail.template_key == "user-message")
             .one()
         )
         assert row.to is None
@@ -548,7 +556,7 @@ class TestSendUserMessageEmail:
 
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "user-message")
+            .filter(SentEmail.template_key == "user-message")
             .one()
         )
         assert "<script>" not in row.body
@@ -577,7 +585,7 @@ class TestStoredBodiesOmitOneTimeLinks:
         stored = db_session.query(SentEmail).one()
         assert "SECRET-TOKEN" not in stored.body
         assert "[Link entfernt]" in stored.body
-        assert stored.headers == "password-reset"
+        assert stored.template_key == "password-reset"
         assert "SECRET-TOKEN" in self._sent_html(mock_send)
 
     def test_stored_verification_mail_has_no_link(

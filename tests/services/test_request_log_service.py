@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.database import engine
 from app.db.models.client_user_agent import ClientUserAgent
-from app.db.models.request_log import RequestLog
+from app.db.models.request_log import HTTP_METHODS, RequestLog
 from app.services import request_log_service
 from app.services.request_log_service import (
     RequestLogNotFoundError,
@@ -162,6 +162,65 @@ class TestRecordRequest:
             "access_token": "__removed__",
             "token_type": "bearer",
         }
+
+    @pytest.mark.parametrize("method", HTTP_METHODS)
+    def test_logs_every_standard_http_method(self, db_session: Session, method: str):
+        request_path = _unique("/method")
+
+        request_log_service.record_request(
+            db_session,
+            client_ip="127.0.0.1",
+            client_ips=[],
+            user_id=None,
+            user_agent_string=None,
+            request_method=method,
+            request_path=request_path,
+            request_input={},
+            response_status=200,
+            response_content=None,
+            memory_usage=1,
+        )
+
+        row = db_session.execute(
+            select(RequestLog).where(RequestLog.request_path == request_path)
+        ).scalar_one()
+        assert row.request_method == method
+
+    @pytest.mark.parametrize("method", ["PROPFIND", "get", "BREW", ""])
+    def test_does_not_log_a_method_outside_the_standard(
+        self, db_session: Session, method: str
+    ):
+        request_path = _unique("/probe")
+
+        request_log_service.record_request(
+            db_session,
+            client_ip="127.0.0.1",
+            client_ips=[],
+            user_id=None,
+            user_agent_string="probe-agent/1.0",
+            request_method=method,
+            request_path=request_path,
+            request_input={},
+            response_status=405,
+            response_content=None,
+            memory_usage=1,
+        )
+
+        assert (
+            db_session.execute(
+                select(RequestLog).where(RequestLog.request_path == request_path)
+            ).first()
+            is None
+        )
+        # Nothing of the request is stored, not even its user agent.
+        assert (
+            db_session.execute(
+                select(ClientUserAgent).where(
+                    ClientUserAgent.string == "probe-agent/1.0"
+                )
+            ).first()
+            is None
+        )
 
     def test_dedupes_client_user_agent_by_exact_string(self, db_session: Session):
         for _ in range(2):

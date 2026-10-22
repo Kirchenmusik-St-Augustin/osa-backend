@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.db.models.sent_email import SentEmail
 from app.schemas.artist import ArtistRequest
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
 from app.schemas.fee import FeeRequest
 from app.schemas.pagination import MAX_PAGE_OFFSET, MAX_PAGE_SIZE
 from app.services import artist_service, coreelement_service, fee_service
+from tests.sent_emails import sent_email
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,7 +64,7 @@ def _seed_sent_emails(db: Session, _make_user: Callable[..., User]) -> None:
     for minute in range(3):
         moment = datetime(2031, 2, 15, 10, minute, tzinfo=UTC)
         db.add(
-            SentEmail(
+            sent_email(
                 mail_from="noreply@example.test",
                 to=f"{_unique('empfaenger')}@example.test",
                 subject=_unique("Betreff"),

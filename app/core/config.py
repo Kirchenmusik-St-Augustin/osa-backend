@@ -27,7 +27,7 @@ normal RuntimeError instead of exiting the process.
 import sys
 import uuid
 from functools import lru_cache
-from typing import NoReturn
+from typing import Literal, NoReturn
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, model_validator
@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     # No endpoint accepts uploads, so 1 MiB is far above any legitimate request.
     max_request_body_bytes: int = Field(
         default=1_048_576, ge=1, validation_alias="MAX_REQUEST_BODY_BYTES"
+    )
+    # SameSite attribute of the refresh cookie. The frontend and /api share one
+    # site in every deployment, where "strict" keeps the browser from attaching
+    # the cookie to any cross-site request; only a frontend and an API on
+    # different registrable domains need "none" (the origin check on /refresh
+    # stays as the second layer either way).
+    refresh_cookie_samesite: Literal["strict", "lax", "none"] = Field(
+        default="strict", validation_alias="REFRESH_COOKIE_SAMESITE"
     )
     # bcrypt work factor for new password hashes (stored hashes keep their
     # own). Production never hashes below 12, whatever is configured (see

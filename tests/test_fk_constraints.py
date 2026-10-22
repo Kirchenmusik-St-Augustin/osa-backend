@@ -290,9 +290,7 @@ class TestCascadeForeignKeys:
     ):
         user = make_user()
         user_id = user.id
-        db_session.add(
-            PersonalAccessToken(user_id=user_id, name="session", token=_unique("token"))
-        )
+        db_session.add(PersonalAccessToken(user_id=user_id, jti=_unique("jti")))
         db_session.flush()
 
         db_session.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})

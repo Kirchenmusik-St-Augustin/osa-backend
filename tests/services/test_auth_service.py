@@ -357,7 +357,7 @@ def test_create_user_session_persists_token_and_lastlogin(db_session, make_user)
     assert refresh_secret
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     token_row = result.scalar_one()
     assert token_row.user_id == created.id
@@ -448,7 +448,7 @@ def test_refresh_session_rejects_idle_timeout(db_session, make_user):
     )
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     token_row = result.scalar_one()
     token_row.last_used_at = datetime.now(UTC) - timedelta(hours=999)
@@ -465,7 +465,7 @@ def test_refresh_session_rejects_absolute_lifetime_exceeded(db_session, make_use
     )
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     token_row = result.scalar_one()
     token_row.created_at = datetime.now(UTC) - timedelta(days=999)
@@ -508,7 +508,7 @@ def test_logout_user_deletes_session_and_sets_lastlogout(db_session, make_user):
     auth_service.logout_user(db_session, access_token)
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     assert result.scalar_one_or_none() is None
 
@@ -1044,33 +1044,6 @@ def test_execute_password_reset_ignores_a_soft_deleted_account(db_session, make_
 
     db_session.refresh(user)
     assert user.auth_password == original_hash
-
-
-def test_execute_password_reset_rejects_a_token_without_creation_time(
-    db_session, make_user
-):
-    user = make_user()
-    token = auth_service.request_password_reset(db_session, user.email)
-    row = db_session.execute(
-        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
-    ).scalar_one()
-    row.created_at = None
-    db_session.commit()
-    original_hash = user.auth_password
-
-    with pytest.raises(ValueError, match="ungültig"):
-        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
-
-    db_session.refresh(user)
-    assert user.auth_password == original_hash
-    assert (
-        db_session.execute(
-            select(PasswordResetToken).where(
-                PasswordResetToken.email == user.email.lower()
-            )
-        ).scalar_one_or_none()
-        is None
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -57,7 +57,7 @@ def _revoke_other_sessions(
     a known current session every session is revoked."""
     stmt = delete(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
     if current_session_id is not None:
-        stmt = stmt.where(PersonalAccessToken.token != current_session_id)
+        stmt = stmt.where(PersonalAccessToken.jti != current_session_id)
     db.execute(stmt)
 
 

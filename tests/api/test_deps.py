@@ -201,7 +201,7 @@ def test_token_without_expiry_is_rejected(client, make_user, db_session):
         select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
     ).scalar_one()
     token_without_exp = jwt.encode(
-        {"sub": user.email, "jti": session_row.token},
+        {"sub": user.email, "jti": session_row.jti},
         SECRET_KEY,
         algorithm=ALGORITHM,
     )
@@ -227,7 +227,7 @@ def _claims_of_a_live_session(client, make_user, db_session) -> dict[str, object
     ).scalar_one()
     return {
         "sub": user.email,
-        "jti": session_row.token,
+        "jti": session_row.jti,
         "exp": datetime.now(UTC) + timedelta(minutes=5),
     }
 
@@ -293,7 +293,7 @@ def test_session_of_another_user_does_not_authenticate_the_subject(
         select(PersonalAccessToken).where(PersonalAccessToken.user_id == user_a.id)
     ).scalar_one()
     forged_token, _jti = create_access_token(
-        subject=user_b.email, jti_override=session_a.token
+        subject=user_b.email, jti_override=session_a.jti
     )
 
     response = client.post(

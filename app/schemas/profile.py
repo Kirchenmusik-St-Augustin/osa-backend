@@ -7,7 +7,7 @@ from pydantic import (
 
 from app.schemas.base import PersonName, StrictInputModel
 from app.schemas.validators import (
-    PHONE_PATTERN,
+    PhoneNumber,
     lowercase_email,
     validate_confirmation,
     validate_password_policy,
@@ -26,7 +26,7 @@ class ProfileUpdateRequest(StrictInputModel):
     givenname: PersonName
     surname: PersonName
     email: EmailStr = Field(max_length=190)
-    phone: str
+    phone: PhoneNumber
     change_password: bool
     password: str | None = Field(default=None, validate_default=True)
     password_confirmation: str | None = Field(default=None, validate_default=True)
@@ -36,14 +36,6 @@ class ProfileUpdateRequest(StrictInputModel):
     @classmethod
     def _lowercase_email(cls, value: str) -> str:
         return lowercase_email(value) or value
-
-    @field_validator("phone")
-    @classmethod
-    def _validate_phone(cls, value: str) -> str:
-        if not PHONE_PATTERN.fullmatch(value):
-            msg = "Das Rufnummern-Format ist ungültig."
-            raise ValueError(msg)
-        return value
 
     @field_validator("password")
     @classmethod

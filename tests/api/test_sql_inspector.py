@@ -1,5 +1,5 @@
 from app.db.models.password_reset_token import PasswordResetToken
-from app.db.models.sent_email import SentEmail
+from tests.sent_emails import sent_email
 
 
 def _auth_headers_for(
@@ -168,13 +168,15 @@ class TestCredentialMasking:
         db_session.add(
             PasswordResetToken(email="mask@example.test", token="reset-hash-secret")
         )
-        db_session.add(SentEmail(subject="Mask probe", body="https://x.test/?t=secret"))
+        db_session.add(
+            sent_email(subject="Mask probe", body="https://x.test/?t=secret")
+        )
         db_session.commit()
         headers = _auth_headers_for(client, admin)
 
         masked_columns = {
             "users": ["auth_password", "auth_remember_token"],
-            "personal_access_tokens": ["token", "abilities"],
+            "personal_access_tokens": ["jti", "refresh_token_hash"],
             "password_reset_tokens": ["token"],
             "sent_emails": ["body"],
         }

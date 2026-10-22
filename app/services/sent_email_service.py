@@ -56,7 +56,7 @@ def get(db: Session, sent_email_id: uuid.UUID) -> SentEmailShowOutput:
     email = db.execute(
         select(SentEmail).where(SentEmail.id == sent_email_id)
     ).scalar_one_or_none()
-    if email is None or email.created_at is None:
+    if email is None:
         raise SentEmailNotFoundError
     return SentEmailShowOutput.model_validate(
         {

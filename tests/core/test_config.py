@@ -375,3 +375,37 @@ def test_numeric_setting_accepts_its_upper_bound(
     monkeypatch.setenv(variable, value)
 
     assert getattr(Settings(), attribute) == int(value)
+
+
+def test_refresh_cookie_samesite_defaults_to_strict(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.delenv("REFRESH_COOKIE_SAMESITE", raising=False)
+
+    assert Settings().refresh_cookie_samesite == "strict"
+
+
+@pytest.mark.parametrize("value", ["strict", "lax", "none"])
+def test_refresh_cookie_samesite_accepts_the_three_attributes(
+    monkeypatch: pytest.MonkeyPatch, value: str
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("REFRESH_COOKIE_SAMESITE", value)
+
+    assert Settings().refresh_cookie_samesite == value
+
+
+@pytest.mark.parametrize("value", ["sometimes", "None ", "Strict"])
+def test_refresh_cookie_samesite_refuses_anything_else(
+    monkeypatch: pytest.MonkeyPatch, value: str
+):
+    monkeypatch.setenv("APP_ENVIRONMENT", "test")
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+    monkeypatch.setenv("REFRESH_COOKIE_SAMESITE", value)
+
+    with pytest.raises((SystemExit, ValidationError)):
+        Settings()

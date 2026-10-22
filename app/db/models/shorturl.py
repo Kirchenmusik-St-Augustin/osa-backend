@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, func
+from sqlalchemy import DateTime, FetchedValue, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -24,9 +24,9 @@ class Shorturl(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     path: Mapped[str] = mapped_column(unique=True)
     target: Mapped[str] = mapped_column()
-    counter: Mapped[int] = mapped_column(default=0)
+    counter: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     latestcall_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

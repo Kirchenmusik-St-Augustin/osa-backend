@@ -33,7 +33,7 @@ class Role(Base):
     label: Mapped[str] = mapped_column(unique=True)
     description: Mapped[str | None]
     order: Mapped[int] = mapped_column("sort_order", default=0)
-    created_at: Mapped[datetime | None] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(

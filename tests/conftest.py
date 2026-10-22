@@ -308,8 +308,8 @@ job_run_service.SessionLocal = _job_session_factory
 def client():
     # Origin header default matches CORS_ORIGINS above -- a real browser
     # always sends one on POST requests, and /auth/refresh's origin check
-    # (see app/api/router_includes/auth.py) now depends on it since the
-    # refresh cookie moved to samesite="none". Tests that specifically
+    # (see app/api/router_includes/auth.py) is its second layer behind the
+    # SameSite attribute of the refresh cookie. Tests that specifically
     # exercise a missing/untrusted origin override this per-request.
     with TestClient(
         app,

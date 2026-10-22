@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 from jinja2 import Environment, FileSystemLoader, Template
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import get_settings, require_setting
@@ -70,12 +70,6 @@ def _format_notification_timestamp(now: datetime) -> str:
     return f"{now.day}. {now.month}. {now.year}, {now.strftime('%H:%M')}"
 
 
-def _count_recipients(value: str | None) -> int:
-    if not value:
-        return 0
-    return len([part for part in value.split(",") if part.strip()])
-
-
 @dataclass(frozen=True)
 class MailKillSwitchStatus:
     """Frontend-facing kill-switch status -- see get_kill_switch_status().
@@ -108,11 +102,11 @@ def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
         window_start = datetime.now(UTC) - timedelta(
             days=settings.mail_kill_switch_period_days
         )
-        rows = db.execute(
-            select(SentEmail.to, SentEmail.cc, SentEmail.bcc).where(
+        total_recipients = db.execute(
+            select(func.coalesce(func.sum(SentEmail.recipient_count), 0)).where(
                 SentEmail.created_at >= window_start
             )
-        ).all()
+        ).scalar_one()
     except SQLAlchemyError:
         logger.exception("Failed to evaluate mail kill switch; treating as active.")
         return MailKillSwitchStatus(
@@ -121,12 +115,6 @@ def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
             threshold=settings.mail_kill_switch_threshold,
             sent=settings.mail_kill_switch_threshold,
         )
-    total_recipients = sum(
-        _count_recipients(row.to)
-        + _count_recipients(row.cc)
-        + _count_recipients(row.bcc)
-        for row in rows
-    )
     return MailKillSwitchStatus(
         active=total_recipients >= settings.mail_kill_switch_threshold,
         period_days=settings.mail_kill_switch_period_days,
@@ -215,7 +203,7 @@ def _log_sent_email(
                     bcc=to_str if use_bcc else None,
                     subject=subject,
                     body=html_body,
-                    headers=template_key,
+                    template_key=template_key,
                     mailer="smtp",
                 )
             )

@@ -67,7 +67,7 @@ def _build_login_response(
         value=build_refresh_cookie_value(session_id, refresh_secret),
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite=get_settings().refresh_cookie_samesite,
         path=COOKIE_PATH,
         max_age=COOKIE_MAX_AGE,
     )
@@ -75,15 +75,15 @@ def _build_login_response(
 
 
 def _ensure_trusted_origin(request: Request) -> None:
-    """CSRF defense for /refresh: samesite="none" on the refresh-token
-    cookie above (required so a future frontend/backend domain split keeps
-    working) means the browser now attaches that cookie to a cross-site
-    request too, not just requests from our own frontend. /refresh is the
-    one endpoint that acts purely on that cookie, no Authorization header
-    required (unlike /logout, see get_current_user), so it's the one
-    actually exposed to that. A browser always sends an Origin header on a
-    POST, so a missing/untrusted one means this request didn't originate
-    from a page we serve."""
+    """CSRF defense for /refresh, second layer behind the SameSite attribute of
+    the refresh-token cookie above. With REFRESH_COOKIE_SAMESITE=none (needed
+    when the frontend and the API live on different registrable domains) the
+    browser attaches the cookie to a cross-site request too, not just
+    requests from our own frontend. /refresh is the one endpoint that acts
+    purely on that cookie, no Authorization header required (unlike /logout,
+    see get_current_user), so it's the one actually exposed to that. A
+    browser always sends an Origin header on a POST, so a missing/untrusted
+    one means this request didn't originate from a page we serve."""
     origin = request.headers.get("origin")
     if origin not in get_settings().cors_origins_list:
         raise HTTPException(

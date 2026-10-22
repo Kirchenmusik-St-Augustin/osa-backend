@@ -131,6 +131,13 @@ render, and `require_setting()` (see `app/core/config.py`) only raises if
 `/auth/google/callback`/`/auth/google/link` are somehow called anyway,
 never at boot.
 
+Two Tier 2 variables change security behaviour: `BCRYPT_ROUNDS` (work factor
+of new password hashes, default 12; production never hashes below 12, the test
+suite sets 4) and `REFRESH_COOKIE_SAMESITE` (`strict` by default, also
+`lax` or `none`; use `none` only when the frontend and the API are served from
+different registrable domains, the origin check on `/auth/refresh` applies
+either way).
+
 ## Scheduler
 
 Background jobs run in a dedicated arq worker container
@@ -149,7 +156,7 @@ can never drift apart.
 | `purge_stale_booking_requests` | hourly | all | Deletes stale open booking requests for past performances. |
 | `notify_upcoming_booking_status` | daily 05:00 | `production` only | Sends combined booking-status change mails. |
 | `purge_expired_password_reset_tokens` | weekly, Sun 02:00 | `production` only | Sweeps abandoned password-reset tokens. |
-| `purge_old_request_logs` | daily 23:00 | `production` only | Deletes request-log rows older than 40 days. |
+| `purge_old_request_logs` | daily 23:00 | `production` only | Deletes request-log rows older than 40 days and the user agents no log refers to, auth logs and sent mails older than a year, and sessions past their lifetime or idle for too long. |
 | `backup_koofr` | daily, `BACKUP_HOUR`:`BACKUP_MINUTE` (default 03:00, `APP_TIMEZONE`) | `production` only (+ `BACKUP_ENABLED`) | `pg_dump` snapshot → Koofr WebDAV upload, then deletes backups older than `KOOFR_BACKUP_RETENTION_DAYS`. |
 | `downsync` | daily, one hour after `backup_koofr` (`BACKUP_HOUR + 1`:`BACKUP_MINUTE`) | non-`production` only | Restores this stage's local database from the latest production backup. |
 
@@ -369,6 +376,13 @@ vorhanden: der Button im Frontend rendert nicht, und `require_setting()`
 `/auth/google/callback`/`/auth/google/link` trotzdem irgendwie aufgerufen
 werden — nie beim Boot.
 
+Zwei Variablen der Stufe 2 ändern das Sicherheitsverhalten: `BCRYPT_ROUNDS`
+(Work-Faktor neuer Passwort-Hashes, Default 12; Production hasht nie unter
+12, die Testsuite setzt 4) und `REFRESH_COOKIE_SAMESITE` (Default `strict`,
+außerdem `lax` oder `none`; `none` nur, wenn Frontend und API auf
+verschiedenen registrierbaren Domains liegen, die Origin-Prüfung auf
+`/auth/refresh` gilt in jedem Fall).
+
 ## Scheduler
 
 Hintergrund-Jobs laufen in einem dedizierten arq-Worker-Container
@@ -387,7 +401,7 @@ definiert, geteilt von der tatsächlichen arq-Registrierung
 | `purge_stale_booking_requests` | stündlich | alle | Löscht veraltete offene Buchungsanfragen zu vergangenen Aufführungen. |
 | `notify_upcoming_booking_status` | täglich 05:00 | nur `production` | Versendet gebündelte Buchungsstatus-Änderungsmails. |
 | `purge_expired_password_reset_tokens` | wöchentlich, So 02:00 | nur `production` | Räumt verwaiste Passwort-Reset-Tokens auf. |
-| `purge_old_request_logs` | täglich 23:00 | nur `production` | Löscht Request-Log-Zeilen älter als 40 Tage. |
+| `purge_old_request_logs` | täglich 23:00 | nur `production` | Löscht Request-Log-Zeilen älter als 40 Tage und die User-Agents, auf die kein Log mehr verweist, Auth-Logs und gesendete Mails älter als ein Jahr sowie Sessions, die ihre Lebensdauer überschritten haben oder zu lange ungenutzt waren. |
 | `backup_koofr` | täglich, `BACKUP_HOUR`:`BACKUP_MINUTE` (Default 03:00, `APP_TIMEZONE`) | nur `production` (+ `BACKUP_ENABLED`) | `pg_dump`-Snapshot → Koofr-WebDAV-Upload, löscht danach Backups älter als `KOOFR_BACKUP_RETENTION_DAYS`. |
 | `downsync` | täglich, eine Stunde nach `backup_koofr` (`BACKUP_HOUR + 1`:`BACKUP_MINUTE`) | nur außerhalb `production` | Ersetzt die lokale Datenbank dieser Stage durch das letzte Production-Backup. |
 

@@ -62,43 +62,6 @@ _NAIVE_TIMESTAMP_EXCEPTIONS = frozenset(
     {"performance_rehearsals.schedule", "performances.schedule"}
 )
 
-# Tables whose created_at predates the NOT NULL rule. The set may only shrink:
-# a new table has to declare the column NOT NULL, and a table that gets fixed
-# has to leave this list.
-_NULLABLE_CREATED_AT_EXCEPTIONS = frozenset(
-    {
-        "artists",
-        "booking_logs",
-        "booking_requests",
-        "bookings",
-        "choirjobs",
-        "client_user_agents",
-        "fees",
-        "instruments",
-        "job_runs",
-        "locations",
-        "ordinariumwork_positions",
-        "ordinariumworks",
-        "password_reset_tokens",
-        "performance_positions",
-        "performance_proprium",
-        "performance_rehearsals",
-        "performances",
-        "personal_access_tokens",
-        "propriumelements",
-        "propriumworks",
-        "request_logs",
-        "roles",
-        "scores",
-        "sent_emails",
-        "shorturls",
-        "user_positions",
-        "user_roles",
-        "users",
-        "voices",
-    }
-)
-
 
 def _fetch(statement: TextClause) -> frozenset[str]:
     with engine.connect() as connection:
@@ -113,12 +76,8 @@ def test_the_naive_timestamp_exceptions_are_all_still_in_use():
     assert _NAIVE_TIMESTAMP_EXCEPTIONS - _fetch(_NAIVE_TIMESTAMPS) == frozenset()
 
 
-def test_no_new_table_has_a_nullable_created_at():
-    assert _fetch(_NULLABLE_CREATED_AT) - _NULLABLE_CREATED_AT_EXCEPTIONS == frozenset()
-
-
-def test_the_nullable_created_at_exceptions_are_all_still_in_use():
-    assert _NULLABLE_CREATED_AT_EXCEPTIONS - _fetch(_NULLABLE_CREATED_AT) == frozenset()
+def test_no_table_has_a_nullable_created_at():
+    assert _fetch(_NULLABLE_CREATED_AT) == frozenset()
 
 
 def test_every_table_has_a_single_column_uuid_primary_key():

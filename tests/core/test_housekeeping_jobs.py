@@ -12,6 +12,7 @@ from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.request_log import RequestLog
 from app.db.models.sent_email import SentEmail
 from app.services import housekeeping_jobs
+from tests.sent_emails import sent_email
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -239,7 +240,7 @@ class TestPurgeOldAuthLogs:
 
 
 def _make_sent_email(db_session: Session, *, age_days: int) -> uuid.UUID:
-    mail = SentEmail(
+    mail = sent_email(
         to=f"{_unique('rcpt')}@example.com",
         subject="subject",
         body="body",
@@ -302,8 +303,7 @@ def _make_session(
     now = datetime.now(UTC)
     session = PersonalAccessToken(
         user_id=user_id,
-        name="session",
-        token=_unique("jti"),
+        jti=_unique("jti"),
         created_at=now - created_ago,
         last_used_at=None if last_used_ago is None else now - last_used_ago,
     )

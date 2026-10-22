@@ -553,7 +553,7 @@ class TestUpdateUser:
 
     def _session_ids(self, db_session: Session, user) -> set[str]:
         return {
-            row.token
+            row.jti
             for row in db_session.query(PersonalAccessToken)
             .filter(PersonalAccessToken.user_id == user.id)
             .all()

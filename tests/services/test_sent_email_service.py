@@ -4,14 +4,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.db.models.sent_email import SentEmail
 from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.services import sent_email_service
 from app.services.sent_email_service import SentEmailNotFoundError
+from tests.sent_emails import sent_email
 from tests.sql_capture import recorded_statements
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from app.db.models.sent_email import SentEmail
 
 
 _ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
@@ -30,7 +32,7 @@ def _make_sent_email(
     subject: str | None = None,
     mailer: str | None = "smtp",
 ) -> SentEmail:
-    email = SentEmail(
+    email = sent_email(
         mail_from="noreply@example.test",
         to=to or f"{_unique('empfaenger')}@example.test",
         subject=subject or _unique("Betreff"),
