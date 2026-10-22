@@ -30,8 +30,6 @@ raises "cannot run inside a transaction block" without autocommit_block().)
 
 from typing import Sequence
 
-import sqlalchemy as sa
-
 from alembic import op
 
 # revision identifiers, used by Alembic.

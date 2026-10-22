@@ -1222,10 +1222,9 @@ def _build_canceled_notification(
 def cancel_auth_user_booking(
     db: Session, performance_id: uuid.UUID, user_id: uuid.UUID
 ) -> None:
-    """Port of cancelAuthUserBooking() -- rebuilds the remaining cast list
-    for the user's (former) position (without them) and re-runs it through
-    _save_cast_item, which automatically promotes the next standby entry
-    and logs accordingly."""
+    """Rebuilds the remaining cast list for the user's (former) position
+    (without them) and re-runs it through _save_cast_item, which
+    automatically promotes the next standby entry and logs accordingly."""
     booking = db.execute(
         select(Booking).where(
             Booking.performance_id == performance_id, Booking.user_id == user_id

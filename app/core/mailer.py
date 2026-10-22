@@ -27,6 +27,7 @@ from app.core.config import get_settings, require_setting
 from app.core.datetime_utils import local_now
 from app.db.database import SessionLocal
 from app.db.models.sent_email import SentEmail
+from app.schemas.performance import BookingStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -403,6 +404,16 @@ class BookingCanceledMailEntry:
     previous_status: int
     position_name: str
 
+    @property
+    def previous_status_label(self) -> str:
+        labels: dict[int, str] = {
+            BookingStatus.STANDBY: "Standby",
+            BookingStatus.BOOKED: "Gebucht",
+        }
+        return labels.get(
+            self.previous_status, f"[unbekannter Status: {self.previous_status}]"
+        )
+
 
 def send_booked_or_standby_canceled_email(
     to_emails: list[str], canceling_user_name: str, entry: BookingCanceledMailEntry
@@ -417,7 +428,11 @@ def send_booked_or_standby_canceled_email(
         "booked_or_standby_canceled.html",
         "booked-or-standby-canceled",
         canceling_user_name=canceling_user_name,
-        entry={**asdict(entry), "schedule": _format_short_datetime(entry.schedule)},
+        entry={
+            **asdict(entry),
+            "schedule": _format_short_datetime(entry.schedule),
+            "previous_status_label": entry.previous_status_label,
+        },
     )
 
 

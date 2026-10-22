@@ -387,6 +387,27 @@ class TestSendBookingStatusEmail:
         assert "nicht gebucht" in row.body
 
 
+class TestBookingCanceledMailEntryLabel:
+    @staticmethod
+    def _entry(previous_status: int) -> mailer.BookingCanceledMailEntry:
+        return mailer.BookingCanceledMailEntry(
+            ordinariumwork_artist_name="HAYDN Joseph",
+            ordinariumwork_name="Nelsonmesse",
+            schedule=datetime(2026, 9, 1, 10, 0, tzinfo=UTC),
+            location_name="Stephansdom",
+            location_address=None,
+            previous_status=previous_status,
+            position_name="Violine 1",
+        )
+
+    def test_names_standby_and_booked(self):
+        assert self._entry(3).previous_status_label == "Standby"
+        assert self._entry(4).previous_status_label == "Gebucht"
+
+    def test_marks_any_other_status_as_unknown(self):
+        assert self._entry(1).previous_status_label == "[unbekannter Status: 1]"
+
+
 class TestSendBookedOrStandbyCanceledEmail:
     def test_sends_to_all_disponent_addresses(
         self, db_session, monkeypatch: pytest.MonkeyPatch

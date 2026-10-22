@@ -1,13 +1,10 @@
-"""Shared primary-key column factory for the UUIDv7 migration -- every
-one of this schema's ~29 integer-PK tables gets converted to this exact
-same declaration (`id: Mapped[uuid.UUID] = uuid_pk()`), so a single
-factory function is what guarantees none of them ends up with a
-different default by a transcription slip.
+"""Shared primary-key column factory: every table's `id` is declared as
+`id: Mapped[uuid.UUID] = uuid_pk()`, so a single place guarantees that no
+table ends up with a different default.
 
-Generation is server-side, via Postgres 18's native `uuidv7()` (no
-extension required) -- the same "database manages its own defaults"
-convention already used for `created_at`/`updated_at` (see
-app.db.models.coreelement_mixin), not a Python-side UUID library."""
+Generation is server-side via PostgreSQL 18's native `uuidv7()` (time-ordered,
+no extension required), the same "the database manages its own defaults"
+convention as `created_at`/`updated_at`, not a Python-side UUID library."""
 
 from typing import TYPE_CHECKING
 

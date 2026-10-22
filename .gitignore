@@ -28,11 +28,19 @@ Thumbs.db
 
 # Test / Coverage artifacts
 .coverage
+.coverage.*
 coverage.xml
 .cache/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.pyright/
+
+# Packaging output
+build/
+dist/
+*.egg-info/
 
 # pip / local installs
 .local/

@@ -100,8 +100,8 @@ class Settings(BaseSettings):
     # change, not a code change.
     app_timezone: str = Field(default="Europe/Vienna", validation_alias="APP_TIMEZONE")
     # Bare hostname of the dedicated short-URL redirect subdomain. A real
-    # setting (not a literal) so dev ("go.hochamt.at.dev.schimpl.cc") vs.
-    # prod ("go.hochamt.at") is a config difference only -- see
+    # setting (not a literal) so a development hostname vs. the production
+    # "go.hochamt.at" is a config difference only -- see
     # app.services.shorturl_service and the dedicated go.-domain Caddy vhost
     # that actually routes traffic there.
     shorturl_domain: str = Field(

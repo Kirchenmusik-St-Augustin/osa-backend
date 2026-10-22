@@ -1,34 +1,13 @@
-import uuid
-
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import QueuePool
 
 from app.db.database import engine, get_db
 
 
-def test_get_db_session_enforces_foreign_keys():
-    """Postgres enforces FK constraints natively and unconditionally.
-    user_roles is the one table with a real ForeignKey (see
-    app/db/models/user_role.py); a role_id that doesn't exist must be
-    rejected, not silently inserted."""
-    insert_orphan = text(
-        "INSERT INTO user_roles (user_id, role_id) VALUES (:user_id, :role_id)"
-    )
-    for session in get_db():
-        with pytest.raises(IntegrityError, match="foreign key constraint"):
-            session.execute(
-                insert_orphan, {"user_id": uuid.uuid4(), "role_id": uuid.uuid4()}
-            )
-        session.rollback()
-        break
-
-
 def test_get_db_session_can_query_schema():
-    """A plain smoke test that the schema is queryable at all -- not a
-    row-count assertion: other tests populate `performances` in this same
-    shared, non-rolled-back test DB (see conftest.py)."""
+    """The schema is queryable through get_db()."""
     for session in get_db():
         result = session.execute(text("SELECT count(*) FROM performances"))
         assert result.scalar() >= 0

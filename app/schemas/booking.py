@@ -19,10 +19,6 @@ from app.schemas.performance import (
     PerformanceSetupOutput,
 )
 
-# Field names are snake_case throughout. `for` (the field name of a
-# booking-status "for" position) is a reserved Python keyword, renamed to
-# `position`.
-
 
 class CastMemberInput(StrictInputModel):
     id: LenientUuid

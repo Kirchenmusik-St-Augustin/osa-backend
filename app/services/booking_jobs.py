@@ -67,12 +67,6 @@ def _latest_unnotified_entries(
     Performance ids -- a NULL performance_id can never satisfy that
     membership test, so the guard below is a type-narrowing measure, not a
     behavior change."""
-    # Naive datetime.min, deliberately without tzinfo -- our DateTime
-    # columns round-trip every value as naive regardless of how it was
-    # written (see booking_service._popular_for_position for the same
-    # reasoning).
-    epoch = datetime.min  # noqa: DTZ901
-
     by_performance_user: dict[tuple[uuid.UUID, uuid.UUID], list[BookingLog]] = {}
     for log in logs:
         if log.performance_id is None or log.user_id is None:
@@ -83,7 +77,7 @@ def _latest_unnotified_entries(
 
     result: dict[tuple[uuid.UUID, uuid.UUID], BookingLog] = {}
     for key, entries in by_performance_user.items():
-        ordered = sorted(entries, key=lambda entry: entry.created_at or epoch)
+        ordered = sorted(entries, key=lambda entry: entry.created_at)
         latest = ordered[-1]
         if latest.notified_at is not None:
             continue
@@ -91,9 +85,7 @@ def _latest_unnotified_entries(
             entry for entry in ordered if entry.notified_at is not None
         ]
         if previously_notified:
-            last_notified = max(
-                previously_notified, key=lambda entry: entry.created_at or epoch
-            )
+            last_notified = max(previously_notified, key=lambda entry: entry.created_at)
             if last_notified.booking_type != latest.booking_type:
                 result[key] = latest
         elif latest.booking_type == "book":

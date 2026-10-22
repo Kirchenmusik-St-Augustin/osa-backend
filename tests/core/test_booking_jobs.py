@@ -271,6 +271,68 @@ class TestLatestUnnotifiedEntries:
 
         assert result[(performance_id, user.id)] is latest_unbook
 
+    def test_the_order_of_the_given_entries_does_not_matter(
+        self, db_session: Session, make_user
+    ):
+        performance_id = _make_performance(db_session)
+        user = make_user()
+        base = datetime.now(UTC)
+        notified_book = _make_log(
+            db_session,
+            performance_id=performance_id,
+            user_id=user.id,
+            booking_type="book",
+            notified_at=base,
+            created_at=base,
+        )
+        latest_unbook = _make_log(
+            db_session,
+            performance_id=performance_id,
+            user_id=user.id,
+            booking_type="unbook",
+            created_at=base + timedelta(minutes=5),
+        )
+
+        result = booking_jobs._latest_unnotified_entries([latest_unbook, notified_book])
+
+        assert result[(performance_id, user.id)] is latest_unbook
+
+    def test_compares_with_the_most_recent_notification_not_the_first_one(
+        self, db_session: Session, make_user
+    ):
+        performance_id = _make_performance(db_session)
+        user = make_user()
+        base = datetime.now(UTC)
+        first_notified_book = _make_log(
+            db_session,
+            performance_id=performance_id,
+            user_id=user.id,
+            booking_type="book",
+            notified_at=base,
+            created_at=base,
+        )
+        second_notified_unbook = _make_log(
+            db_session,
+            performance_id=performance_id,
+            user_id=user.id,
+            booking_type="unbook",
+            notified_at=base + timedelta(minutes=5),
+            created_at=base + timedelta(minutes=5),
+        )
+        latest_unbook = _make_log(
+            db_session,
+            performance_id=performance_id,
+            user_id=user.id,
+            booking_type="unbook",
+            created_at=base + timedelta(minutes=10),
+        )
+
+        result = booking_jobs._latest_unnotified_entries(
+            [latest_unbook, first_notified_book, second_notified_unbook]
+        )
+
+        assert (performance_id, user.id) not in result
+
     def test_same_status_since_last_notification_is_not_notify_worthy(
         self, db_session: Session, make_user
     ):

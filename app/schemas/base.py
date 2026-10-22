@@ -11,8 +11,8 @@ from pydantic import (
 
 
 class StrictInputModel(BaseModel):
-    """Base for every Auth-domain request body -- the project requires
-    extra="forbid", strict=True for all input models."""
+    """Base of every request body: unknown fields are rejected and values are
+    never coerced to the declared type (a string is not accepted for an int)."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -21,22 +22,15 @@ if TYPE_CHECKING:
     from starlette.types import Receive, Scope, Send
 
 
-@pytest.fixture(autouse=True)
-def _clear_request_logs(db_session: Session):
-    yield
-    db_session.query(RequestLog).delete()
-    db_session.commit()
-
-
 def test_writes_a_row_for_a_regular_request(client, db_session: Session):
     response = client.get("/nonexistent-path-for-logging-test")
     assert response.status_code == 404
 
-    row = (
-        db_session.query(RequestLog)
-        .filter(RequestLog.request_path == "/nonexistent-path-for-logging-test")
-        .one()
-    )
+    row = db_session.execute(
+        select(RequestLog).where(
+            RequestLog.request_path == "/nonexistent-path-for-logging-test"
+        )
+    ).scalar_one()
     assert row.request_method == "GET"
     assert row.response_status == 404
 
@@ -45,7 +39,11 @@ def test_skips_the_liveness_check(client, db_session: Session):
     response = client.get("/")
     assert response.status_code == 200
 
-    count = db_session.query(RequestLog).filter(RequestLog.request_path == "/").count()
+    count = db_session.scalar(
+        select(func.count())
+        .select_from(RequestLog)
+        .where(RequestLog.request_path == "/")
+    )
     assert count == 0
 
 
@@ -62,9 +60,12 @@ def test_redacts_password_and_access_token_end_to_end(
     assert "access_token" in response.json()  # the real, unredacted client response
 
     row = (
-        db_session.query(RequestLog)
-        .filter(RequestLog.request_path == "/auth/login")
-        .order_by(RequestLog.id.desc())
+        db_session.execute(
+            select(RequestLog)
+            .where(RequestLog.request_path == "/auth/login")
+            .order_by(RequestLog.id.desc())
+        )
+        .scalars()
         .first()
     )
     assert row is not None
@@ -140,10 +141,10 @@ def test_does_not_write_a_log_row_when_the_skip_header_is_set(db_session: Sessio
     with TestClient(_make_skip_header_app()) as isolated_client:
         isolated_client.get("/skip-me")
 
-    count = (
-        db_session.query(RequestLog)
-        .filter(RequestLog.request_path == "/skip-me")
-        .count()
+    count = db_session.scalar(
+        select(func.count())
+        .select_from(RequestLog)
+        .where(RequestLog.request_path == "/skip-me")
     )
     assert count == 0
 
@@ -219,11 +220,9 @@ def test_an_oversized_request_body_is_stored_as_a_marker(client, db_session: Ses
 
     client.post("/auth/login", json={"filler": oversized})
 
-    row = (
-        db_session.query(RequestLog)
-        .filter(RequestLog.request_path == "/auth/login")
-        .one()
-    )
+    row = db_session.execute(
+        select(RequestLog).where(RequestLog.request_path == "/auth/login")
+    ).scalar_one()
     assert row.request_input == {"truncated": True}
 
 
@@ -240,7 +239,9 @@ def test_an_oversized_response_body_is_stored_as_a_marker(db_session: Session):
         response = isolated_client.get("/large")
 
     assert response.json() == {"filler": oversized}
-    row = db_session.query(RequestLog).filter(RequestLog.request_path == "/large").one()
+    row = db_session.execute(
+        select(RequestLog).where(RequestLog.request_path == "/large")
+    ).scalar_one()
     assert row.response_content == {"truncated": True}
 
 
@@ -251,11 +252,9 @@ def test_multipart_bodies_are_not_parsed_for_the_log(client, db_session: Session
         files={"upload": ("notes.txt", b"file content")},
     )
 
-    row = (
-        db_session.query(RequestLog)
-        .filter(RequestLog.request_path == "/auth/login")
-        .one()
-    )
+    row = db_session.execute(
+        select(RequestLog).where(RequestLog.request_path == "/auth/login")
+    ).scalar_one()
     assert row.request_input == {}
 
 

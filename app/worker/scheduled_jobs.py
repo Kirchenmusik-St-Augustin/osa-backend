@@ -1,12 +1,8 @@
-"""Thin async wrappers around the existing (unchanged) synchronous cron
-job bodies, registered as arq CronJobs in app.worker.settings.WorkerSettings.
-Each job body itself stays exactly as it already was (own SessionLocal(),
-own exception handling) -- only this wrapper is new, and it exists purely
-to (a) satisfy arq's requirement that a cron_jobs= entry be a coroutine
-function, and (b) run the actual (blocking, synchronous DB) job body via a
-thread instead of directly on the worker's event loop, so one slow job
-(e.g. downsync's WebDAV download) never blocks arq from picking up any
-other concurrently-due job in the same worker process.
+"""Async wrappers that run the synchronous cron job bodies in a worker thread,
+registered as arq CronJobs in app.worker.settings.WorkerSettings. arq requires
+a coroutine function for every cron entry, and the bodies do blocking database
+and network work that must not run on the worker's event loop, where one slow
+job (for example downsync's WebDAV download) would delay every other due job.
 """
 
 import traceback

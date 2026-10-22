@@ -91,11 +91,10 @@ app.include_router(api_router)  # every domain router, see app/api/router.py
 # Public, unauthenticated redirect service for the dedicated go.-subdomain
 # (see app.api.router_includes.go's docstring). Mounted directly on `app`
 # under its own "/go" prefix -- NOT nested under api_router, since it has
-# no relation to "/api" at all. This prefix is unreachable through the
-# main app domain's Caddy route (which only forwards "/api/*" to this
-# container); it is only reached via the go.-domain's own Caddy vhost,
-# which rewrites every request to prepend "/go" before proxying to this
-# same backend port -- the mirror image of the "/api" prefix-stripping
-# already used for the main domain. Same process, same port, no second
-# container (consistent with the in-process scheduler precedent).
+# no relation to "/api" at all. The go.-domain's Caddy vhost rewrites every
+# request to prepend "/go" before proxying to this same backend port -- the
+# mirror image of the "/api" prefix-stripping used for the main domain. Through
+# the main domain it is reachable as "/api/go/<path>" too (the main vhost
+# forwards all of "/api/*"); that is the same public redirect, so it is
+# harmless. Same process, same port, no second container.
 app.include_router(go_router, prefix="/go")

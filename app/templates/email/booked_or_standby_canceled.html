@@ -18,16 +18,7 @@
   </tr>
   <tr>
     <td><strong>Bisheriger Status:</strong></td>
-    <td>
-      {% if entry.previous_status == 3 %}
-      Standby
-      {% elif entry.previous_status == 4 %}
-      Gebucht
-      {% else %}
-      [unbekannter Status: {{ entry.previous_status }}]
-      {% endif %}
-      für {{ entry.position_name }}
-    </td>
+    <td>{{ entry.previous_status_label }} für {{ entry.position_name }}</td>
   </tr>
 </table>
 {% endblock %}
