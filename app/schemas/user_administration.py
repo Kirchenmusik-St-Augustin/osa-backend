@@ -5,11 +5,6 @@ from pydantic import BaseModel
 from app.core.datetime_utils import UtcDatetime
 
 
-class UserAdministrationSearchResultOutput(BaseModel):
-    id: uuid.UUID
-    label: str
-
-
 class UserAdministrationDeletedEntryOutput(BaseModel):
     """One soft-deleted user in the initial list -- deliberately thinner
     than the search result (no `label`, a plain `email`)."""

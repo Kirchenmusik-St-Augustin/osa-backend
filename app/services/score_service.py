@@ -4,14 +4,10 @@ from sqlalchemy import func, select
 
 from app.core.human_names import label_for_name, normalize_givenname, normalize_surname
 from app.db.models.score import Score
-from app.schemas.score import (
-    ScoreFieldConfig,
-    ScoreRequest,
-    ScoreResponse,
-    ScoreSearchResult,
-)
+from app.schemas.base import IdLabelOutput
+from app.schemas.score import ScoreFieldConfig, ScoreRequest, ScoreResponse
+from app.schemas.score_fields import SCORE_FIELDS
 from app.services.errors import NotFoundError
-from app.services.score_fields import SCORE_FIELDS
 
 if TYPE_CHECKING:
     import uuid
@@ -19,7 +15,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from app.services.score_fields import ScoreFieldSpec
+    from app.schemas.score_fields import ScoreFieldSpec
 
 _SEARCH_RESULT_LIMIT = 50
 
@@ -116,7 +112,7 @@ def _get_or_404(db: Session, score_id: uuid.UUID) -> Score:
     return score
 
 
-def search_scores(db: Session, query: str) -> list[ScoreSearchResult]:
+def search_scores(db: Session, query: str) -> list[IdLabelOutput]:
     """Filtered in the database (not in memory). Every whitespace-separated
     word in `query` must appear somewhere in "surname givenname werk teil".
     `coalesce()` on every nullable column -- SQL `||` yields NULL if any
@@ -144,7 +140,7 @@ def search_scores(db: Session, query: str) -> list[ScoreSearchResult]:
     )
     scores = db.execute(stmt).scalars().all()
     return [
-        ScoreSearchResult(id=score.id, label=label)
+        IdLabelOutput(id=score.id, label=label)
         for score, label in zip(scores, _disambiguated_labels(scores), strict=True)
     ]
 

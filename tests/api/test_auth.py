@@ -999,7 +999,7 @@ def test_oauth2_disconnect_rejects_binding_owned_by_another_user(
 
 
 def test_oauth2_disconnect_requires_authentication(client):
-    response = client.delete("/auth/oauth2/1")
+    response = client.delete(f"/auth/oauth2/{uuid.uuid4()}")
 
     assert response.status_code == 401
 

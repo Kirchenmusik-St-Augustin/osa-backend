@@ -1,14 +1,12 @@
 from pydantic import (
-    EmailStr,
     Field,
     ValidationInfo,
     field_validator,
 )
 
-from app.schemas.base import PersonName, StrictInputModel
+from app.schemas.base import NormalizedEmail, PersonName, StrictInputModel
 from app.schemas.validators import (
     PhoneNumber,
-    lowercase_email,
     validate_confirmation,
     validate_password_policy,
 )
@@ -25,17 +23,12 @@ class ProfileUpdateRequest(StrictInputModel):
 
     givenname: PersonName
     surname: PersonName
-    email: EmailStr = Field(max_length=190)
+    email: NormalizedEmail
     phone: PhoneNumber
     change_password: bool
     password: str | None = Field(default=None, validate_default=True)
     password_confirmation: str | None = Field(default=None, validate_default=True)
     auth_password: str = Field(min_length=1, max_length=128)
-
-    @field_validator("email")
-    @classmethod
-    def _lowercase_email(cls, value: str) -> str:
-        return lowercase_email(value) or value
 
     @field_validator("password")
     @classmethod

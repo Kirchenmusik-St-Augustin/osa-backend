@@ -18,6 +18,7 @@ from app.db.models.user import User
 from app.db.models.user_position import UserPosition
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
+from app.schemas.base import IdNameOutput
 from app.schemas.booking import (
     BillingExtracostOutput,
     BillingItemOutput,
@@ -35,7 +36,6 @@ from app.schemas.booking import (
     CastSetupItemInput,
     CastSetupItemOutput,
     MessageRecipientOutput,
-    NotBookedOutput,
     PerformanceBillingResponse,
     PerformanceCastPageResponse,
     PerformanceMessageToCastResponse,
@@ -57,7 +57,6 @@ from app.schemas.performance import (
     PerformancePositionOutput,
     PerformanceSetupOutput,
     PerformanceShowResponse,
-    PositionRefOutput,
 )
 from app.services import fee_service, ordinariumwork_service, performance_service
 from app.services.pagination import select_page
@@ -414,7 +413,7 @@ def user_booking_status_batch(
                     if booking.order < quantity
                     else BookingStatus.STANDBY
                 ),
-                position=PositionRefOutput(id=booking_key[1], name=name),
+                position=IdNameOutput(id=booking_key[1], name=name),
                 # updated_at is NULL until the row's first real UPDATE
                 # (the set_updated_at() trigger never fires on a row that
                 # was only ever inserted, never modified in place -- see
@@ -570,7 +569,7 @@ def _resolve_calendar_status(
                 if booking.order < quantity
                 else BookingStatus.STANDBY
             ),
-            position=PositionRefOutput(id=booking_key[1], name=name),
+            position=IdNameOutput(id=booking_key[1], name=name),
             # See user_booking_status_batch's identical fallback above --
             # updated_at is NULL on a row that was only ever inserted.
             at=booking.updated_at or booking.created_at,
@@ -659,7 +658,7 @@ def _get_cast_form_data(
     not_booked_user_ids = {request.user_id for request in not_booked_requests}
     active_users_by_id = _active_users_by_id(db, not_booked_user_ids)
     not_booked = [
-        NotBookedOutput(id=user_id, name=_display_name(active_users_by_id[user_id]))
+        IdNameOutput(id=user_id, name=_display_name(active_users_by_id[user_id]))
         for user_id in not_booked_user_ids
         if user_id in active_users_by_id
     ]

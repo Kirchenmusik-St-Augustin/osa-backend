@@ -15,7 +15,11 @@ from app.db.models.propriumelement import Propriumelement
 from app.db.models.role import Role
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
-from app.schemas.coreelement import CoreelementRequest, CoreelementType
+from app.schemas.coreelement import (
+    CoreelementRequest,
+    CoreelementResponse,
+    CoreelementType,
+)
 from app.services.errors import (
     DomainValidationError,
     FieldError,
@@ -108,6 +112,22 @@ class CoreelementTypeConfig:
     # (see create_coreelement/update_coreelement below), so it gets its
     # own config flag instead of a FieldSpec entry.
     has_active_field: bool = False
+
+
+def to_response(item: CoreelementModel) -> CoreelementResponse:
+    """The attributes that exist for one type only (label/description for a
+    role, address/color for a location, active for the archivable types) are
+    None for every other type."""
+    return CoreelementResponse(
+        id=item.id,
+        name=item.name,
+        order=item.order,
+        label=item.label if isinstance(item, Role) else None,
+        description=item.description if isinstance(item, Role) else None,
+        address=item.address if isinstance(item, Location) else None,
+        color=item.color if isinstance(item, Location) else None,
+        active=item.active if isinstance(item, _ActiveCoreelementModel) else None,
+    )
 
 
 def _role_has_dependent_users(db: Session, role: CoreelementModel) -> bool:

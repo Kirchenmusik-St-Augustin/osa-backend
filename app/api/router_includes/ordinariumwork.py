@@ -7,11 +7,11 @@ from sqlalchemy.orm import Session
 from app.api.auth_guards import AuthUser, require_permission
 from app.api.query_params import SearchTerm
 from app.db.database import get_db
+from app.schemas.base import IdLabelOutput
 from app.schemas.ordinariumwork import (
     OrdinariumworkAvailablePositionsOutput,
     OrdinariumworkRequest,
     OrdinariumworkResponse,
-    OrdinariumworkSearchResult,
     OrdinariumworkSetupOutput,
 )
 from app.services import ordinariumwork_service
@@ -26,7 +26,7 @@ def search_ordinariumworks(
     q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
-) -> list[OrdinariumworkSearchResult]:
+) -> list[IdLabelOutput]:
     return list(ordinariumwork_service.search_ordinariumworks(db, q))
 
 

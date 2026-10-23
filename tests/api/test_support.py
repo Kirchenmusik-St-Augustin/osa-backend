@@ -84,7 +84,7 @@ class TestPermissionGuard:
     def test_message_to_contactperson_requires_authentication(self, client):
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": 1, "message": "Hallo!"},
+            json={"recipient_id": str(uuid.uuid4()), "message": "Hallo!"},
         )
         assert response.status_code == 401
 
@@ -283,7 +283,7 @@ class TestSendMessageToContactperson:
         headers, _sender = _auth_headers(client, make_user)
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": 1, "message": "Hi"},
+            json={"recipient_id": str(uuid.uuid4()), "message": "Hi"},
             headers=headers,
         )
         assert response.status_code == 422
@@ -292,7 +292,11 @@ class TestSendMessageToContactperson:
         headers, _sender = _auth_headers(client, make_user)
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": 1, "message": "Hallo!", "extra": "nope"},
+            json={
+                "recipient_id": str(uuid.uuid4()),
+                "message": "Hallo!",
+                "extra": "nope",
+            },
             headers=headers,
         )
         assert response.status_code == 422

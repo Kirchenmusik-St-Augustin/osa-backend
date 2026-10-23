@@ -5,11 +5,8 @@ from sqlalchemy import func, select
 from app.db.models.artist import Artist
 from app.db.models.performance_proprium import PerformanceProprium
 from app.db.models.propriumwork import Propriumwork
-from app.schemas.propriumwork import (
-    PropriumworkRequest,
-    PropriumworkResponse,
-    PropriumworkSearchResult,
-)
+from app.schemas.base import IdLabelOutput
+from app.schemas.propriumwork import PropriumworkRequest, PropriumworkResponse
 from app.services.artist_service import label_for
 from app.services.errors import (
     DomainValidationError,
@@ -122,7 +119,7 @@ def _to_response(db: Session, propriumwork: Propriumwork) -> PropriumworkRespons
     )
 
 
-def search_propriumworks(db: Session, query: str) -> Sequence[PropriumworkSearchResult]:
+def search_propriumworks(db: Session, query: str) -> Sequence[IdLabelOutput]:
     """Filtered and sorted in the database (not in memory): every
     whitespace-separated word in `query` must appear in the work's name or
     its artist's name."""
@@ -142,7 +139,7 @@ def search_propriumworks(db: Session, query: str) -> Sequence[PropriumworkSearch
     )
     rows = db.execute(stmt).all()
     return [
-        PropriumworkSearchResult(
+        IdLabelOutput(
             id=propriumwork.id, label=f"{label_for(artist)}: {propriumwork.name}"
         )
         for propriumwork, artist in rows

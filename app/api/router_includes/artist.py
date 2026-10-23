@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from app.api.auth_guards import require_permission
 from app.api.query_params import PageDep, SearchTerm
 from app.db.database import get_db
-from app.schemas.artist import ArtistRequest, ArtistResponse, ArtistSearchResult
+from app.schemas.artist import ArtistRequest, ArtistResponse
+from app.schemas.base import IdLabelOutput
 from app.schemas.pagination import Page
 from app.services import artist_service
 
@@ -20,7 +21,7 @@ artist_router = APIRouter(dependencies=[Depends(require_permission("artistMainta
 def search_artists(
     q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
-) -> list[ArtistSearchResult]:
+) -> list[IdLabelOutput]:
     return [
         artist_service.to_search_result(artist)
         for artist in artist_service.search_artists(db, q)
@@ -39,7 +40,7 @@ def create_artist(
 def list_composer_artists(
     db: Annotated[Session, Depends(get_db)],
     page: PageDep,
-) -> Page[ArtistSearchResult]:
+) -> Page[IdLabelOutput]:
     paged = artist_service.list_composer_artists(db, page)
     return Page.of(paged.map(artist_service.to_search_result), page)
 

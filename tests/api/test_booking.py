@@ -30,7 +30,7 @@ def _auth_headers(
     return {"Authorization": f"Bearer {token}"}, user
 
 
-def _make_composer(client, headers) -> int:
+def _make_composer(client, headers) -> str:
     response = client.post(
         "/artists",
         json={
@@ -47,7 +47,7 @@ def _make_composer(client, headers) -> int:
     return response.json()["id"]
 
 
-def _make_ordinariumwork(client, headers, composer_id: int) -> int:
+def _make_ordinariumwork(client, headers, composer_id: str) -> str:
     response = client.post(
         "/ordinariumworks",
         json={
@@ -63,7 +63,7 @@ def _make_ordinariumwork(client, headers, composer_id: int) -> int:
     return response.json()["id"]
 
 
-def _make_location(client, make_user) -> int:
+def _make_location(client, make_user) -> str:
     admin_headers, _user = _auth_headers(client, make_user, administrator=True)
     response = client.post(
         "/coreelements/location",
@@ -73,7 +73,7 @@ def _make_location(client, make_user) -> int:
     return response.json()["id"]
 
 
-def _make_instrument(client, make_user) -> int:
+def _make_instrument(client, make_user) -> str:
     admin_headers, _user = _auth_headers(client, make_user, administrator=True)
     response = client.post(
         "/coreelements/instrument",
@@ -84,8 +84,8 @@ def _make_instrument(client, make_user) -> int:
 
 
 def _make_performance(
-    client, make_user, headers, *, instrument_id: int, quantity: int = 1
-) -> int:
+    client, make_user, headers, *, instrument_id: str, quantity: int = 1
+) -> str:
     composer_id = _make_composer(client, headers)
     work_id = _make_ordinariumwork(client, headers, composer_id)
     location_id = _make_location(client, make_user)
@@ -114,7 +114,7 @@ def _make_performance(
     return response.json()["id"]
 
 
-def _move_to_past(db_session: Session, performance_id: int) -> None:
+def _move_to_past(db_session: Session, performance_id: str) -> None:
     # Uses the test's own db_session (not an independent Session(engine))
     # so the mutation is visible to the SAME session client's requests are
     # routed through via conftest.py's override_get_db() -- a separate
@@ -122,34 +122,34 @@ def _move_to_past(db_session: Session, performance_id: int) -> None:
     # test's still-open outer transaction and never see this row at all
     # (or worse, deadlock against it, see the migration plan's M5 section).
     performance = db_session.execute(
-        select(Performance).where(Performance.id == performance_id)
+        select(Performance).where(Performance.id == uuid.UUID(performance_id))
     ).scalar_one()
     performance.schedule = datetime.now(UTC) - timedelta(days=1)
     db_session.commit()
 
 
-def _qualify(db_session: Session, user_id: int, instrument_id: int) -> None:
+def _qualify(db_session: Session, user_id: uuid.UUID, instrument_id: str) -> None:
     create_user_position(
         db_session,
         user_id=user_id,
         position_type="instruments",
-        position_id=instrument_id,
+        position_id=uuid.UUID(instrument_id),
     )
 
 
 class TestPermissionGuards:
     def test_cast_requires_authentication(self, client):
-        response = client.get("/performances/1/cast")
+        response = client.get(f"/performances/{uuid.uuid4()}/cast")
         assert response.status_code == 401
 
     def test_cast_rejects_non_disponent(self, client, make_user):
         headers, _ = _auth_headers(client, make_user, roles=["planner"])
-        response = client.get("/performances/1/cast", headers=headers)
+        response = client.get(f"/performances/{uuid.uuid4()}/cast", headers=headers)
         assert response.status_code == 403
 
     def test_billing_rejects_non_billing_role(self, client, make_user):
         headers, _ = _auth_headers(client, make_user, roles=["disponent"])
-        response = client.get("/performances/1/billing", headers=headers)
+        response = client.get(f"/performances/{uuid.uuid4()}/billing", headers=headers)
         assert response.status_code == 403
 
     def test_requests_and_bookings_accepts_planner(self, client, make_user):

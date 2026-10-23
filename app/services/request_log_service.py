@@ -9,12 +9,12 @@ from app.core.human_names import label_for_name
 from app.db.models.client_user_agent import ClientUserAgent
 from app.db.models.request_log import HTTP_METHODS, RequestLog
 from app.db.models.user import User
+from app.schemas.base import IdLabelOutput
 from app.schemas.request_log import (
     RequestLogDayGroupOutput,
     RequestLogEntryOutput,
     RequestLogShowOutput,
     RequestLogUserDetailOutput,
-    RequestLogUserSummaryOutput,
 )
 
 if TYPE_CHECKING:
@@ -226,9 +226,7 @@ def list_days_with_users_for_month(
         RequestLogDayGroupOutput(
             day=day,
             users=[
-                RequestLogUserSummaryOutput(
-                    id=user.id, label=_label_without_comma(user)
-                )
+                IdLabelOutput(id=user.id, label=_label_without_comma(user))
                 for user in sorted(
                     (
                         users_by_id[uid]

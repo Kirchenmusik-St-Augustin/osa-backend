@@ -7,14 +7,10 @@ from sqlalchemy.orm import Session
 from app.api.auth_guards import AuthUser, require_permission
 from app.api.query_params import PageDep, SearchTerm
 from app.db.database import get_db
+from app.schemas.base import IdLabelOutput
 from app.schemas.booking import PerformanceShortOutput
 from app.schemas.pagination import Page
-from app.schemas.user import (
-    UserFormOptionsOutput,
-    UserRequest,
-    UserResponse,
-    UserSearchResultOutput,
-)
+from app.schemas.user import UserFormOptionsOutput, UserRequest, UserResponse
 from app.services import booking_service, user_service
 
 user_router = APIRouter()
@@ -32,12 +28,9 @@ def search_users(
     q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
-) -> list[UserSearchResultOutput]:
+) -> list[IdLabelOutput]:
     users = user_service.search_users(db, q)
-    return [
-        UserSearchResultOutput(id=user.id, label=f"{user.surname}, {user.givenname}")
-        for user in users
-    ]
+    return [user_service.to_search_result(user) for user in users]
 
 
 @user_router.get("/form-options")

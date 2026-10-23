@@ -4,9 +4,11 @@ from sqlalchemy import select
 
 from app.db.models.user import User
 from app.db.models.user_position import UserPosition
+from app.schemas.base import IdNameOutput
 from app.schemas.coreelement import CoreelementType
-from app.schemas.performance import PositionRefOutput
+from app.schemas.pagination import PagedRows
 from app.schemas.userdirectory import (
+    DirectoryType,
     UserDirectoryAbilitiesOutput,
     UserDirectoryEntryOutput,
 )
@@ -18,7 +20,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import InstrumentedAttribute, Session
 
-    from app.schemas.pagination import PagedRows, PageParams
+    from app.schemas.pagination import PageParams
     from app.services.position_types import PositionType
 
 
@@ -48,9 +50,9 @@ def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
     user_service.get_form_options() does, roles excluded (see
     UserDirectoryAbilitiesOutput docstring)."""
 
-    def _refs(type_: CoreelementType) -> list[PositionRefOutput]:
+    def _refs(type_: CoreelementType) -> list[IdNameOutput]:
         return [
-            PositionRefOutput(id=item.id, name=item.name)
+            IdNameOutput(id=item.id, name=item.name)
             for item in coreelement_service.list_coreelements(db, type_)
         ]
 
@@ -95,3 +97,21 @@ def list_users_for_position(
         .order_by(User.surname, User.givenname, User.id)
     )
     return select_page(db, stmt, page)
+
+
+def list_entries(
+    db: Session,
+    directory_type: DirectoryType | None,
+    position_id: uuid.UUID | None,
+    page: PageParams,
+) -> PagedRows[UserDirectoryEntryOutput]:
+    """One page of the directory: everybody for no type or type=all, the
+    holders of one position for a position type together with its id, and
+    nobody for a position type without an id."""
+    if directory_type is None or directory_type == "all":
+        users = list_all_users(db, page)
+    elif position_id is not None:
+        users = list_users_for_position(db, directory_type, position_id, page)
+    else:
+        users = PagedRows[User](rows=[], total=0)
+    return users.map(to_entry)

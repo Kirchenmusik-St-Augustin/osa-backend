@@ -212,6 +212,19 @@ name to be typed; `--yes` skips that question for unattended use. See
 [`osa-deploy`'s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy) for the full disaster
 recovery runbook.
 
+## Reporting a vulnerability
+
+Please do not open a public issue for a security problem. Report it
+privately instead:
+
+- through GitHub's private vulnerability reporting: the "Security" tab of
+  this repository, then "Report a vulnerability", or
+- by e-mail to einteilung@hochamt.at.
+
+Please include the affected version or commit, the steps to reproduce and
+the impact you expect. We answer as soon as possible and keep you informed
+while the problem is fixed.
+
 ## Branching
 
 - `main` — protected, merge via PR only
@@ -458,6 +471,19 @@ das Skript die Ziel-Datenbank und das Backup und verlangt, dass der Name der
 Datenbank eingetippt wird; `--yes` überspringt diese Rückfrage für den
 unbeaufsichtigten Betrieb. Das vollständige Disaster-Recovery-Runbook steht in
 [`osa-deploy`s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy).
+
+## Sicherheitslücke melden
+
+Bitte kein öffentliches Issue für ein Sicherheitsproblem eröffnen, sondern
+es privat melden:
+
+- über die private Schwachstellenmeldung von GitHub: Reiter "Security"
+  dieses Repositorys, dann "Report a vulnerability", oder
+- per E-Mail an einteilung@hochamt.at.
+
+Bitte die betroffene Version oder den Commit, die Schritte zur
+Reproduktion und die erwartete Auswirkung angeben. Wir antworten so
+schnell wie möglich und halten dich über die Behebung auf dem Laufenden.
 
 ## Branching
 

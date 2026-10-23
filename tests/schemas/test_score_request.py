@@ -2,8 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.score import ScoreRequest
+from app.schemas.score_fields import SCORE_FIELDS
 from app.services import score_service
-from app.services.score_fields import SCORE_FIELDS
 
 _REQUIRED_TEXT = ["kasten", "boxnr", "werk"]
 _OPTIONAL_TEXT = [

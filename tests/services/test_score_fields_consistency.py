@@ -1,4 +1,4 @@
-"""The Score field registry (app.services.score_fields) is deliberately kept
+"""The Score field registry (app.schemas.score_fields) is deliberately kept
 as code, not as database rows (see ARCHITECTURE_DECISIONS.md). Its allowed
 values and field list therefore exist next to the Pydantic request model and
 the Postgres schema -- these tests pin all three representations together so
@@ -12,7 +12,7 @@ from sqlalchemy import Enum
 
 from app.db.models.score import Score
 from app.schemas.score import ScoreRequest
-from app.services.score_fields import SCORE_FIELDS
+from app.schemas.score_fields import SCORE_FIELDS
 
 _SELECT_FIELDS = [name for name, spec in SCORE_FIELDS.items() if spec.kind == "select"]
 

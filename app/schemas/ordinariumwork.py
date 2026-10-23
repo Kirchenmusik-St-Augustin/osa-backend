@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.base import (
     MAX_CATALOGUE_ENTRIES,
+    IdNameOutput,
     LenientUuid,
     OptionalText,
     StrictInputModel,
@@ -60,16 +61,6 @@ class OrdinariumworkSetupOutput(BaseModel):
     voices: list[OrdinariumworkPositionOutput]
 
 
-class OrdinariumworkSearchResult(BaseModel):
-    id: uuid.UUID
-    label: str
-
-
-class AvailablePositionOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class OrdinariumworkAvailablePositionsOutput(BaseModel):
-    instruments: list[AvailablePositionOutput]
-    voices: list[AvailablePositionOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]

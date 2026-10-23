@@ -1,16 +1,17 @@
 import uuid
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import (
     MAX_CATALOGUE_ENTRIES,
+    IdNameOutput,
     LenientUuid,
+    NormalizedEmail,
     PersonName,
     StrictInputModel,
 )
-from app.schemas.performance import PositionRefOutput
-from app.schemas.validators import OptionalPhoneNumber, lowercase_email
+from app.schemas.validators import OptionalPhoneNumber
 
 
 class RoleRefOutput(BaseModel):
@@ -25,19 +26,14 @@ class Oauth2BindingOutput(BaseModel):
     remote_name: str
 
 
-class UserSearchResultOutput(BaseModel):
-    id: uuid.UUID
-    label: str
-
-
 class UserFormOptionsOutput(BaseModel):
     """Catalog lists for the Instrument/Voice/Choirjob/Role picker widgets
     in the Create/Edit form -- reuses coreelement_service.list_coreelements()
     (see user_service.get_form_options()), independent of any one user."""
 
-    instruments: list[PositionRefOutput]
-    voices: list[PositionRefOutput]
-    choirjobs: list[PositionRefOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]
+    choirjobs: list[IdNameOutput]
     roles: list[RoleRefOutput]
 
 
@@ -51,7 +47,7 @@ class UserRequest(StrictInputModel):
 
     givenname: PersonName
     surname: PersonName
-    email: EmailStr | None = Field(default=None, max_length=190)
+    email: NormalizedEmail | None = None
     phone: OptionalPhoneNumber = None
     auth_locked: bool = False
     instruments: list[LenientUuid] = Field(
@@ -67,11 +63,6 @@ class UserRequest(StrictInputModel):
         default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
     )
     administrator: bool = False
-
-    @field_validator("email")
-    @classmethod
-    def _lowercase_email(cls, value: str | None) -> str | None:
-        return lowercase_email(value)
 
 
 class UserResponse(BaseModel):
@@ -89,7 +80,7 @@ class UserResponse(BaseModel):
     administrator: bool
     deletable: bool
     oauth2_bindings: list[Oauth2BindingOutput]
-    instruments: list[PositionRefOutput]
-    voices: list[PositionRefOutput]
-    choirjobs: list[PositionRefOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]
+    choirjobs: list[IdNameOutput]
     roles: list[RoleRefOutput]

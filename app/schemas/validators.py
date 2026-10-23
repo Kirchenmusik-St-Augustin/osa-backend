@@ -14,13 +14,6 @@ from app.schemas.base import BlankToNone
 PHONE_PATTERN = re.compile(r"\+?(?=(?:\D*\d){4})[0-9 /()-]{4,60}")
 
 
-def lowercase_email(value: str | None) -> str | None:
-    """Addresses are stored and compared in lower case (the database
-    enforces it with a CHECK constraint), so every input that writes one
-    normalises it first."""
-    return value.lower() if value else value
-
-
 PASSWORD_MIN_LENGTH = 10
 PASSWORD_MAX_LENGTH = 64
 # bcrypt hashes at most 72 bytes of input, and multi-byte characters count

@@ -7,12 +7,8 @@ from sqlalchemy.orm import Session
 from app.api.auth_guards import AuthUser, require_permission
 from app.api.query_params import SearchTerm
 from app.db.database import get_db
-from app.schemas.score import (
-    ScoreFieldConfig,
-    ScoreRequest,
-    ScoreResponse,
-    ScoreSearchResult,
-)
+from app.schemas.base import IdLabelOutput
+from app.schemas.score import ScoreFieldConfig, ScoreRequest, ScoreResponse
 from app.services import score_service
 
 score_router = APIRouter()
@@ -42,7 +38,7 @@ def search_scores(
     q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
-) -> list[ScoreSearchResult]:
+) -> list[IdLabelOutput]:
     return score_service.search_scores(db, q)
 
 

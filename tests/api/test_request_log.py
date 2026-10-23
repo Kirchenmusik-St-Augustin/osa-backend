@@ -22,7 +22,7 @@ def _auth_headers(client, make_user, *, administrator: bool = False) -> dict[str
 
 
 def _make_entry(
-    db_session: Session, *, user_id: int | None, created_at: datetime
+    db_session: Session, *, user_id: uuid.UUID | None, created_at: datetime
 ) -> RequestLog:
     entry = RequestLog(
         client_ip="127.0.0.1",
@@ -72,13 +72,13 @@ class TestPermissionGuard:
 
     def test_user_detail_requires_authentication(self, client):
         response = client.get(
-            "/administrator/request-logs/users/1",
+            f"/administrator/request-logs/users/{uuid.uuid4()}",
             params={"year": 2026, "month": 1, "day": 15},
         )
         assert response.status_code == 401
 
     def test_show_requires_authentication(self, client):
-        response = client.get("/administrator/request-logs/1")
+        response = client.get(f"/administrator/request-logs/{uuid.uuid4()}")
         assert response.status_code == 401
 
 
@@ -172,7 +172,7 @@ class TestCalendarDayValidation:
     def test_user_detail_rejects_a_nonexistent_calendar_date(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
         response = client.get(
-            "/administrator/request-logs/users/1",
+            f"/administrator/request-logs/users/{uuid.uuid4()}",
             params={"year": 2026, "month": 2, "day": 30},
             headers=headers,
         )
@@ -181,7 +181,7 @@ class TestCalendarDayValidation:
     def test_user_detail_rejects_an_out_of_range_year(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
         response = client.get(
-            "/administrator/request-logs/users/1",
+            f"/administrator/request-logs/users/{uuid.uuid4()}",
             params={"year": 0, "month": 1, "day": 1},
             headers=headers,
         )

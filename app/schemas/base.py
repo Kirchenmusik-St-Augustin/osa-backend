@@ -5,6 +5,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    EmailStr,
     Field,
     StringConstraints,
 )
@@ -30,6 +31,21 @@ class StrictInputModel(BaseModel):
 LenientUuid = Annotated[uuid.UUID, Field(strict=False)]
 
 
+class IdNameOutput(BaseModel):
+    """A reference to a catalogue entry or a person: the id and the name to
+    show for it."""
+
+    id: uuid.UUID
+    name: str
+
+
+class IdLabelOutput(BaseModel):
+    """One hit of a search: the id and the text to show for it."""
+
+    id: uuid.UUID
+    label: str
+
+
 def _blank_to_none(value: object) -> object:
     if isinstance(value, str) and not value.strip():
         return None
@@ -51,6 +67,20 @@ BlankToNone = BeforeValidator(_blank_to_none)
 OPTIONAL_TEXT_MAX_LENGTH = 2000
 OptionalText = Annotated[
     Annotated[str, Field(max_length=OPTIONAL_TEXT_MAX_LENGTH)] | None, BlankToNone
+]
+
+
+def _normalize_email(value: object) -> object:
+    return value.lower() if isinstance(value, str) else value
+
+
+# An e-mail address as it is stored and compared: lower case (the database
+# enforces it with a CHECK constraint; EmailStr itself removes surrounding
+# blanks, but only lower-cases the domain), and short enough to be saved from
+# the profile form later.
+EMAIL_MAX_LENGTH = 190
+NormalizedEmail = Annotated[
+    EmailStr, BeforeValidator(_normalize_email), Field(max_length=EMAIL_MAX_LENGTH)
 ]
 
 # A surname or given name: surrounding whitespace is removed before the length

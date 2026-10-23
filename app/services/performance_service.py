@@ -20,9 +20,9 @@ from app.db.models.performance_rehearsal import PerformanceRehearsal
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.propriumwork import Propriumwork
 from app.db.models.voice import Voice
+from app.schemas.base import IdNameOutput
 from app.schemas.coreelement import CoreelementType
 from app.schemas.performance import (
-    AvailablePositionOutput,
     PerformanceAvailableData,
     PerformanceCalendarItem,
     PerformanceFormData,
@@ -875,18 +875,12 @@ def get_available_data(db: Session) -> PerformanceAvailableData:
     )
 
     return PerformanceAvailableData(
-        conductors=[
-            AvailablePositionOutput(id=a.id, name=label_for(a)) for a in conductors
-        ],
-        instruments=[
-            AvailablePositionOutput(id=i.id, name=i.name) for i in instruments
-        ],
-        voices=[AvailablePositionOutput(id=v.id, name=v.name) for v in voices],
-        choirjobs=[AvailablePositionOutput(id=c.id, name=c.name) for c in choirjobs],
+        conductors=[IdNameOutput(id=a.id, name=label_for(a)) for a in conductors],
+        instruments=[IdNameOutput(id=i.id, name=i.name) for i in instruments],
+        voices=[IdNameOutput(id=v.id, name=v.name) for v in voices],
+        choirjobs=[IdNameOutput(id=c.id, name=c.name) for c in choirjobs],
         locations=[_location_output(location) for location in locations],
-        propriumelements=[
-            AvailablePositionOutput(id=p.id, name=p.name) for p in propriumelements
-        ],
+        propriumelements=[IdNameOutput(id=p.id, name=p.name) for p in propriumelements],
         default_location_id=default_location_id,
         default_conductor_id=default_conductor_id,
     )

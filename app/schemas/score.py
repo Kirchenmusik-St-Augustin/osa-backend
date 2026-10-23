@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import BlankToNone, OptionalText, StrictInputModel
-from app.services.score_fields import SCORE_FIELDS
+from app.schemas.score_fields import SCORE_FIELDS
 
 # Shared by all 12 "*art" (Original/Kopie/Original-Kopie) fields -- always
 # optional: the form's blank option is submitted as "" and normalized to
@@ -204,8 +204,3 @@ class ScoreResponse(BaseModel):
     created_at: UtcDatetime | None
     updated_at: UtcDatetime | None
     fields: dict[str, str | int | None]
-
-
-class ScoreSearchResult(BaseModel):
-    id: uuid.UUID
-    label: str

@@ -19,7 +19,7 @@ def _auth_headers(
     return {"Authorization": f"Bearer {token}"}
 
 
-def _make_artist(client, headers) -> int:
+def _make_artist(client, headers) -> str:
     response = client.post(
         "/artists",
         json={
@@ -133,7 +133,7 @@ class TestValidation:
             json={
                 "name": _unique(),
                 "description": None,
-                "artist_id": 999999,
+                "artist_id": str(uuid.uuid4()),
                 "duration": None,
                 "demanding": False,
             },

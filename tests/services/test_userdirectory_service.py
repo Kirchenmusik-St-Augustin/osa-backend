@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from app.db.models.choirjob import Choirjob
 from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.services import user_position_service, userdirectory_service
+from tests.sql_capture import recorded_statements
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -105,3 +106,95 @@ class TestListUsersForPosition:
             ).rows
             == []
         )
+
+
+class TestToEntry:
+    def test_verified_address_is_disclosed(self, make_user):
+        user = make_user(email="verified@example.test", verified=True)
+
+        entry = userdirectory_service.to_entry(user)
+
+        assert entry.has_email is True
+        assert entry.email == "verified@example.test"
+
+    def test_unverified_address_is_withheld(self, make_user):
+        user = make_user(email="unverified@example.test", verified=False)
+
+        entry = userdirectory_service.to_entry(user)
+
+        assert entry.has_email is False
+        assert entry.email is None
+
+
+class TestListEntries:
+    def test_without_a_type_lists_every_active_user(
+        self, db_session: Session, make_user
+    ):
+        user = make_user()
+
+        page = userdirectory_service.list_entries(db_session, None, None, _ALL_ROWS)
+
+        assert user.id in [entry.id for entry in page.rows]
+
+    def test_type_all_ignores_the_position_id(self, db_session: Session, make_user):
+        user = make_user()
+
+        page = userdirectory_service.list_entries(
+            db_session, "all", uuid.uuid4(), _ALL_ROWS
+        )
+
+        assert user.id in [entry.id for entry in page.rows]
+
+    def test_position_type_with_an_id_lists_only_its_holders(
+        self, db_session: Session, make_user
+    ):
+        choirjob = _make_choirjob(db_session)
+        holder, other = make_user(), make_user()
+        user_position_service.create_user_position(
+            db_session,
+            user_id=holder.id,
+            position_type="choirjobs",
+            position_id=choirjob.id,
+        )
+
+        page = userdirectory_service.list_entries(
+            db_session, "choirjobs", choirjob.id, _ALL_ROWS
+        )
+
+        assert [entry.id for entry in page.rows] == [holder.id]
+        assert page.total == 1
+        assert other.id not in [entry.id for entry in page.rows]
+
+    def test_position_type_without_an_id_lists_nobody(
+        self, db_session: Session, make_user
+    ):
+        # A holder of another position kind has no instrument id either, so a
+        # lookup by a missing id would wrongly match this user.
+        choirjob = _make_choirjob(db_session)
+        user_position_service.create_user_position(
+            db_session,
+            user_id=make_user().id,
+            position_type="choirjobs",
+            position_id=choirjob.id,
+        )
+
+        page = userdirectory_service.list_entries(
+            db_session, "instruments", None, _ALL_ROWS
+        )
+
+        assert list(page.rows) == []
+        assert page.total == 0
+
+    def test_statement_count_does_not_grow_with_the_number_of_users(
+        self, db_session: Session, make_user
+    ):
+        make_user()
+        with recorded_statements() as few:
+            userdirectory_service.list_entries(db_session, None, None, _ALL_ROWS)
+
+        for _ in range(5):
+            make_user()
+        with recorded_statements() as many:
+            userdirectory_service.list_entries(db_session, None, None, _ALL_ROWS)
+
+        assert len(many) == len(few)

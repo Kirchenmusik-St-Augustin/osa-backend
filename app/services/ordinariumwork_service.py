@@ -8,15 +8,14 @@ from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
 from app.db.models.performance import Performance
 from app.db.models.voice import Voice
+from app.schemas.base import IdLabelOutput, IdNameOutput
 from app.schemas.coreelement import CoreelementType
 from app.schemas.ordinariumwork import (
-    AvailablePositionOutput,
     OrdinariumworkAvailablePositionsOutput,
     OrdinariumworkPositionInput,
     OrdinariumworkPositionOutput,
     OrdinariumworkRequest,
     OrdinariumworkResponse,
-    OrdinariumworkSearchResult,
     OrdinariumworkSetupOutput,
 )
 from app.services.artist_service import label_for
@@ -240,9 +239,7 @@ def _to_response(db: Session, ordinariumwork: Ordinariumwork) -> OrdinariumworkR
     )
 
 
-def search_ordinariumworks(
-    db: Session, query: str
-) -> Sequence[OrdinariumworkSearchResult]:
+def search_ordinariumworks(db: Session, query: str) -> Sequence[IdLabelOutput]:
     """Filtered and sorted in the database (not in memory): every
     whitespace-separated word in `query` must appear in the work's name or
     its artist's name."""
@@ -262,7 +259,7 @@ def search_ordinariumworks(
     )
     rows = db.execute(stmt).all()
     return [
-        OrdinariumworkSearchResult(
+        IdLabelOutput(
             id=ordinariumwork.id, label=f"{label_for(artist)}: {ordinariumwork.name}"
         )
         for ordinariumwork, artist in rows
@@ -277,10 +274,8 @@ def get_available_positions(db: Session) -> OrdinariumworkAvailablePositionsOutp
     instruments = list_coreelements(db, CoreelementType.instrument, active_only=True)
     voices = list_coreelements(db, CoreelementType.voice, active_only=True)
     return OrdinariumworkAvailablePositionsOutput(
-        instruments=[
-            AvailablePositionOutput(id=item.id, name=item.name) for item in instruments
-        ],
-        voices=[AvailablePositionOutput(id=item.id, name=item.name) for item in voices],
+        instruments=[IdNameOutput(id=item.id, name=item.name) for item in instruments],
+        voices=[IdNameOutput(id=item.id, name=item.name) for item in voices],
     )
 
 

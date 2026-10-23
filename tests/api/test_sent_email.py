@@ -65,7 +65,7 @@ class TestPermissionGuard:
         assert response.status_code == 200
 
     def test_show_requires_authentication(self, client):
-        response = client.get("/administrator/sent-emails/1")
+        response = client.get(f"/administrator/sent-emails/{uuid.uuid4()}")
         assert response.status_code == 401
 
 

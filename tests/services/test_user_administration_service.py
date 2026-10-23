@@ -11,6 +11,7 @@ from app.db.models.user import User
 from app.db.models.user_role import UserRole
 from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.services import auth_service, user_administration_service
+from tests.sql_capture import recorded_statements
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -234,3 +235,43 @@ class TestPurgeUser:
     def test_unknown_id_raises_not_found(self, db_session: Session):
         with pytest.raises(user_administration_service.UserAdministrationNotFoundError):
             user_administration_service.purge_user(db_session, uuid.uuid4())
+
+
+class TestToSearchResult:
+    def test_label_is_surname_comma_givenname(self, make_user):
+        user = make_user()
+
+        result = user_administration_service.to_search_result(user)
+
+        assert result.id == user.id
+        assert result.label == f"{user.surname}, {user.givenname}"
+
+
+class TestToDeletedEntry:
+    def test_carries_name_and_address_without_a_label(self, make_user):
+        user = make_user(email="gone@example.test")
+
+        entry = user_administration_service.to_deleted_entry(user)
+
+        assert entry.id == user.id
+        assert entry.surname == user.surname
+        assert entry.givenname == user.givenname
+        assert entry.email == "gone@example.test"
+
+    def test_mapping_a_page_of_deleted_users_adds_no_statements(
+        self, db_session: Session, make_user
+    ):
+        for _ in range(4):
+            make_user().deleted_at = datetime.now(UTC)
+        db_session.commit()
+
+        with recorded_statements() as listing:
+            paged = user_administration_service.list_deleted_users(
+                db_session, _ALL_ROWS
+            )
+        with recorded_statements() as mapping:
+            paged.map(user_administration_service.to_deleted_entry)
+
+        assert len(paged.rows) >= 4
+        assert len(listing) <= 2
+        assert mapping == []

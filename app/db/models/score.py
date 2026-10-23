@@ -68,7 +68,7 @@ _COUNT_CHECKS: tuple[str, ...] = (
 # default `sa.Enum(SomeEnum)` sends each member's NAME to Postgres, not its
 # `.value`, unless `values_callable=...` is also supplied).
 # soinstr1art..soinstr4art deliberately do NOT use this type: despite the
-# "art" name, they are free-text fields (see app.services.score_fields) and
+# "art" name, they are free-text fields (see app.schemas.score_fields) and
 # stay plain varchar.
 _ART_ENUM = Enum("Original", "Kopie", "Original/Kopie", name="score_art")
 

@@ -7,7 +7,8 @@ from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumwork import Propriumwork
-from app.schemas.artist import ArtistResponse, ArtistSearchResult
+from app.schemas.artist import ArtistResponse
+from app.schemas.base import IdLabelOutput
 from app.services.errors import (
     DomainValidationError,
     FieldError,
@@ -67,8 +68,8 @@ def to_response(artist: Artist) -> ArtistResponse:
     )
 
 
-def to_search_result(artist: Artist) -> ArtistSearchResult:
-    return ArtistSearchResult(id=artist.id, label=label_for(artist))
+def to_search_result(artist: Artist) -> IdLabelOutput:
+    return IdLabelOutput(id=artist.id, label=label_for(artist))
 
 
 def _name_year_range_error(field: str, value: int | None) -> FieldError | None:

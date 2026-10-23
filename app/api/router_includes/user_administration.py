@@ -7,11 +7,11 @@ from sqlalchemy.orm import Session
 from app.api.auth_guards import AuthUser, require_permission
 from app.api.query_params import PageDep, SearchTerm
 from app.db.database import get_db
+from app.schemas.base import IdLabelOutput
 from app.schemas.pagination import Page
 from app.schemas.user_administration import (
     UserAdministrationActionResponse,
     UserAdministrationDeletedEntryOutput,
-    UserAdministrationSearchResultOutput,
 )
 from app.services import user_administration_service
 from app.services.user_administration_service import (
@@ -34,14 +34,9 @@ def search_users(
     q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _ADMINISTRATE],
-) -> list[UserAdministrationSearchResultOutput]:
+) -> list[IdLabelOutput]:
     users = user_administration_service.search_users_including_deleted(db, q)
-    return [
-        UserAdministrationSearchResultOutput(
-            id=user.id, label=f"{user.surname}, {user.givenname}"
-        )
-        for user in users
-    ]
+    return [user_administration_service.to_search_result(user) for user in users]
 
 
 @user_administration_router.get("/deleted")
@@ -51,17 +46,7 @@ def list_deleted_users(
     page: PageDep,
 ) -> Page[UserAdministrationDeletedEntryOutput]:
     paged = user_administration_service.list_deleted_users(db, page)
-    return Page.of(
-        paged.map(
-            lambda user: UserAdministrationDeletedEntryOutput(
-                id=user.id,
-                surname=user.surname,
-                givenname=user.givenname,
-                email=user.email,
-            )
-        ),
-        page,
-    )
+    return Page.of(paged.map(user_administration_service.to_deleted_entry), page)
 
 
 @user_administration_router.get("/{user_id}")

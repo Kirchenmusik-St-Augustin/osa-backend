@@ -1,9 +1,9 @@
 import uuid
 
-from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import PersonName, StrictInputModel
+from app.schemas.base import NormalizedEmail, PersonName, StrictInputModel
 from app.schemas.validators import (
     PhoneNumber,
     validate_confirmation,
@@ -14,7 +14,7 @@ from app.schemas.validators import (
 class RegisterRequest(StrictInputModel):
     surname: PersonName
     givenname: PersonName
-    email: EmailStr
+    email: NormalizedEmail
     phone: PhoneNumber
     password: str
     password_confirmation: str
@@ -35,11 +35,11 @@ class VerifyEmailRequest(StrictInputModel):
 
 
 class ForgotPasswordRequest(StrictInputModel):
-    email: EmailStr
+    email: NormalizedEmail
 
 
 class ResetPasswordRequest(StrictInputModel):
-    email: EmailStr
+    email: NormalizedEmail
     token: str = Field(min_length=1)
     password: str
     password_confirmation: str
@@ -61,7 +61,7 @@ class GoogleCallbackRequest(StrictInputModel):
 
 class GoogleLinkRequest(StrictInputModel):
     credential: str = Field(min_length=1)
-    email: EmailStr
+    email: NormalizedEmail
     password: str = Field(min_length=1, max_length=128)
 
 

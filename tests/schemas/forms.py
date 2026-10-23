@@ -3,7 +3,12 @@ number, for tests that vary one field at a time."""
 
 from typing import TYPE_CHECKING
 
-from app.schemas.auth import RegisterRequest
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    GoogleLinkRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+)
 from app.schemas.ordinariumwork import OrdinariumworkRequest
 from app.schemas.performance import PerformanceRequest
 from app.schemas.profile import ProfileUpdateRequest
@@ -47,6 +52,43 @@ def _profile(**fields: object) -> BaseModel:
 def _user(**fields: object) -> BaseModel:
     return UserRequest.model_validate({**_PERSON, **fields})
 
+
+def _forgot_password(**fields: object) -> BaseModel:
+    return ForgotPasswordRequest.model_validate({"email": _PERSON["email"], **fields})
+
+
+def _reset_password(**fields: object) -> BaseModel:
+    return ResetPasswordRequest.model_validate(
+        {
+            "email": _PERSON["email"],
+            "token": "token",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
+            **fields,
+        }
+    )
+
+
+def _google_link(**fields: object) -> BaseModel:
+    return GoogleLinkRequest.model_validate(
+        {
+            "credential": "credential",
+            "email": _PERSON["email"],
+            "password": "Passw0rd12",
+            **fields,
+        }
+    )
+
+
+# Every form that takes an e-mail address.
+EMAIL_FORMS: dict[str, Callable[..., BaseModel]] = {
+    "register": _register,
+    "profile": _profile,
+    "user": _user,
+    "forgot_password": _forgot_password,
+    "reset_password": _reset_password,
+    "google_link": _google_link,
+}
 
 PERSON_FORMS: dict[str, Callable[..., BaseModel]] = {
     "register": _register,

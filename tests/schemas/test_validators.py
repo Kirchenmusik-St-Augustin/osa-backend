@@ -1,7 +1,6 @@
 import pytest
 
 from app.schemas.validators import (
-    lowercase_email,
     password_policy_violations,
     validate_confirmation,
     validate_password_policy,
@@ -72,12 +71,3 @@ class TestValidateConfirmation:
     def test_missing_other_value_is_a_mismatch(self):
         with pytest.raises(ValueError, match="Passwort-Bestätigung"):
             validate_confirmation("Passw0rd1", None)
-
-
-class TestLowercaseEmail:
-    def test_lowercases_a_mixed_case_address(self):
-        assert lowercase_email("Anna.Muster@Example.AT") == "anna.muster@example.at"
-
-    @pytest.mark.parametrize("empty", [None, ""])
-    def test_keeps_a_missing_value_as_it_is(self, empty):
-        assert lowercase_email(empty) == empty

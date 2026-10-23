@@ -2,13 +2,18 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, exists, func, select
 
+from app.core.human_names import label_for_name
 from app.core.security import generate_random_password, get_password_hash
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.booking_request import BookingRequest
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
-from app.schemas.user_administration import UserAdministrationDetailOutput
+from app.schemas.base import IdLabelOutput
+from app.schemas.user_administration import (
+    UserAdministrationDeletedEntryOutput,
+    UserAdministrationDetailOutput,
+)
 from app.services.errors import GeneralValidationError
 from app.services.pagination import select_page
 
@@ -143,6 +148,16 @@ def is_purgeable(db: Session, user: User) -> bool:
     good; everything else on the account (roles, positions, tokens, OAuth2
     bindings) is cascaded away by the database."""
     return user.deleted_at is not None and not _has_history(db, user.id)
+
+
+def to_search_result(user: User) -> IdLabelOutput:
+    return IdLabelOutput(id=user.id, label=label_for_name(user.surname, user.givenname))
+
+
+def to_deleted_entry(user: User) -> UserAdministrationDeletedEntryOutput:
+    return UserAdministrationDeletedEntryOutput(
+        id=user.id, surname=user.surname, givenname=user.givenname, email=user.email
+    )
 
 
 def to_detail(db: Session, user: User) -> UserAdministrationDetailOutput:

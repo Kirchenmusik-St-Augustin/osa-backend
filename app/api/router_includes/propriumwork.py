@@ -7,11 +7,8 @@ from sqlalchemy.orm import Session
 from app.api.auth_guards import AuthUser, require_permission
 from app.api.query_params import SearchTerm
 from app.db.database import get_db
-from app.schemas.propriumwork import (
-    PropriumworkRequest,
-    PropriumworkResponse,
-    PropriumworkSearchResult,
-)
+from app.schemas.base import IdLabelOutput
+from app.schemas.propriumwork import PropriumworkRequest, PropriumworkResponse
 from app.services import propriumwork_service
 
 propriumwork_router = APIRouter()
@@ -24,7 +21,7 @@ def search_propriumworks(
     q: SearchTerm,
     db: Annotated[Session, Depends(get_db)],
     _current_user: Annotated[AuthUser, _MAINTAIN],
-) -> list[PropriumworkSearchResult]:
+) -> list[IdLabelOutput]:
     return list(propriumwork_service.search_propriumworks(db, q))
 
 

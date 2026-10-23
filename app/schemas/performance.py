@@ -10,6 +10,7 @@ from app.schemas.base import (
     MAX_CATALOGUE_ENTRIES,
     MAX_PROPRIUM_ENTRIES,
     MAX_REHEARSALS,
+    IdNameOutput,
     LenientUuid,
     OptionalText,
     StrictInputModel,
@@ -140,11 +141,6 @@ class PerformanceLocationOutput(BaseModel):
     address: str | None
 
 
-class PositionRefOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class BookingStatus(IntEnum):
     """The 6 states of a user's booking status for one performance. The
     integer value is the wire format."""
@@ -165,7 +161,7 @@ class BookingStatusOutput(BaseModel):
     circular."""
 
     status: BookingStatus
-    position: PositionRefOutput | None = None
+    position: IdNameOutput | None = None
     at: UtcDatetime | None = None
 
 
@@ -223,18 +219,13 @@ class PerformanceFormData(BaseModel):
     deletable: bool
 
 
-class AvailablePositionOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class PerformanceAvailableData(BaseModel):
-    conductors: list[AvailablePositionOutput]
-    instruments: list[AvailablePositionOutput]
-    voices: list[AvailablePositionOutput]
-    choirjobs: list[AvailablePositionOutput]
+    conductors: list[IdNameOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]
+    choirjobs: list[IdNameOutput]
     locations: list[PerformanceLocationOutput]
-    propriumelements: list[AvailablePositionOutput]
+    propriumelements: list[IdNameOutput]
     # Pre-resolved defaults for a NEW performance's Ort/Dirigent fields
     # (None if the configured default row was deleted or, for the
     # conductor, lost its conductor flag -- see get_available_data()).

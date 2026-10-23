@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from app.schemas.base import (
     MAX_CATALOGUE_ENTRIES,
     MAX_RECIPIENTS,
+    IdNameOutput,
     LenientUuid,
     MessageText,
     StrictInputModel,
@@ -77,14 +78,9 @@ class CastSectionOutput(BaseModel):
     choirjobs: list[CastSetupItemOutput]
 
 
-class NotBookedOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class CastFormData(BaseModel):
     cast: CastSectionOutput
-    not_booked: list[NotBookedOutput]
+    not_booked: list[IdNameOutput]
 
 
 class BookableUserOutput(BaseModel):

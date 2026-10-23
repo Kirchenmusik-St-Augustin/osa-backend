@@ -1,8 +1,12 @@
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel
 
-from app.schemas.performance import PositionRefOutput
+DirectoryType = Literal["all", "instruments", "voices", "choirjobs"]
+
+
+from app.schemas.base import IdNameOutput
 
 
 class UserDirectoryAbilitiesOutput(BaseModel):
@@ -10,9 +14,9 @@ class UserDirectoryAbilitiesOutput(BaseModel):
     UserFormOptionsOutput, roles are deliberately NOT included (only
     instruments/voices/choirjobs are filterable)."""
 
-    instruments: list[PositionRefOutput]
-    voices: list[PositionRefOutput]
-    choirjobs: list[PositionRefOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]
+    choirjobs: list[IdNameOutput]
 
 
 class UserDirectoryEntryOutput(BaseModel):

@@ -32,7 +32,7 @@ def _auth_headers(
     return {"Authorization": f"Bearer {token}"}
 
 
-def _make_composer(client, headers) -> int:
+def _make_composer(client, headers) -> str:
     response = client.post(
         "/artists",
         json={
@@ -49,7 +49,7 @@ def _make_composer(client, headers) -> int:
     return response.json()["id"]
 
 
-def _make_ordinariumwork(client, headers, composer_id: int) -> int:
+def _make_ordinariumwork(client, headers, composer_id: str) -> str:
     response = client.post(
         "/ordinariumworks",
         json={
@@ -65,7 +65,7 @@ def _make_ordinariumwork(client, headers, composer_id: int) -> int:
     return response.json()["id"]
 
 
-def _make_location(client, make_user) -> int:
+def _make_location(client, make_user) -> str:
     admin_headers = _auth_headers(client, make_user, administrator=True)
     response = client.post(
         "/coreelements/location",
@@ -75,7 +75,7 @@ def _make_location(client, make_user) -> int:
     return response.json()["id"]
 
 
-def _move_to_past(db_session: Session, performance_id: int) -> None:
+def _move_to_past(db_session: Session, performance_id: str) -> None:
     """There is no API path to move an existing performance's schedule
     into the past (updates are themselves schedule-validated) -- forcing
     it directly at the DB layer mirrors the equivalent service-level test.
@@ -86,14 +86,14 @@ def _move_to_past(db_session: Session, performance_id: int) -> None:
     session bound to its own connection would be isolated behind the
     test's still-open outer transaction and never see this row at all."""
     performance = db_session.execute(
-        select(Performance).where(Performance.id == performance_id)
+        select(Performance).where(Performance.id == uuid.UUID(performance_id))
     ).scalar_one()
     performance.schedule = datetime.now(UTC) - timedelta(days=1)
     db_session.commit()
 
 
 def _base_payload(
-    location_id: int, ordinariumwork_id: int, **overrides: object
+    location_id: str, ordinariumwork_id: str, **overrides: object
 ) -> dict:
     payload: dict[str, object] = {
         "schedule": (datetime.now(UTC) + timedelta(days=2)).strftime(
@@ -133,7 +133,9 @@ class TestPermissionGuard:
     def test_create_requires_performance_maintain(self, client, make_user):
         headers = _auth_headers(client, make_user, roles=[])
         response = client.post(
-            "/performances", json=_base_payload(1, 1), headers=headers
+            "/performances",
+            json=_base_payload(str(uuid.uuid4()), str(uuid.uuid4())),
+            headers=headers,
         )
         assert response.status_code == 403
 

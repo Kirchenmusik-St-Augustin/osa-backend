@@ -24,8 +24,3 @@ class ArtistResponse(BaseModel):
     deathyear: int | None
     composer: bool
     conductor: bool
-
-
-class ArtistSearchResult(BaseModel):
-    id: uuid.UUID
-    label: str

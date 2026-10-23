@@ -744,3 +744,13 @@ class TestDeleteUser:
         assert deleted.deleted_at is not None
         with pytest.raises(user_service.UserNotFoundError):
             user_service.get_user(db_session, user.id)
+
+
+class TestToSearchResult:
+    def test_label_is_surname_comma_givenname(self, make_user):
+        user = make_user()
+
+        result = user_service.to_search_result(user)
+
+        assert result.id == user.id
+        assert result.label == f"{user.surname}, {user.givenname}"

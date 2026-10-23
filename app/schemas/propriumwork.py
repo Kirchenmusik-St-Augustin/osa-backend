@@ -21,8 +21,3 @@ class PropriumworkResponse(BaseModel):
     artist_name: str
     duration: int | None
     demanding: bool
-
-
-class PropriumworkSearchResult(BaseModel):
-    id: uuid.UUID
-    label: str

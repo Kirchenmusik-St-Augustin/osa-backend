@@ -61,14 +61,16 @@ max-complexity = 8
 [tool.ruff.lint.flake8-type-checking]
 # Python 3.14's deferred annotation evaluation (PEP 649) makes the TC
 # rules assume it's always safe to hide an annotation-only import behind
-# `if TYPE_CHECKING:` -- but these three base classes all build their
+# `if TYPE_CHECKING:` -- but these base classes all build their
 # runtime behavior (SQLAlchemy's mapper configuration, Pydantic's
 # validator schema) by resolving every field's annotation to a real
 # object at class-definition time, deferred evaluation or not. Hiding a
 # field's type behind TYPE_CHECKING still breaks that resolution with a
-# NameError, just later than under eager evaluation.
+# NameError, just later than under eager evaluation. StrictInputModel is listed
+# because ruff does not follow a base class through its parent.
 runtime-evaluated-base-classes = [
     "app.db.database.Base", "pydantic.BaseModel", "pydantic_settings.BaseSettings",
+    "app.schemas.base.StrictInputModel",
 ]
 
 [tool.ruff.lint.per-file-ignores]

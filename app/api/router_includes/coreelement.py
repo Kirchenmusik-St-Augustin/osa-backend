@@ -14,7 +14,6 @@ from app.schemas.coreelement import (
 )
 from app.schemas.pagination import Page
 from app.services import coreelement_service
-from app.services.coreelement_service import CoreelementModel
 
 coreelement_router = APIRouter()
 
@@ -32,19 +31,6 @@ _PERMISSION_BY_TYPE: dict[CoreelementType, str] = {
 }
 
 
-def _to_response(item: CoreelementModel) -> CoreelementResponse:
-    return CoreelementResponse(
-        id=item.id,
-        name=item.name,
-        order=item.order,
-        label=getattr(item, "label", None),
-        description=getattr(item, "description", None),
-        address=getattr(item, "address", None),
-        color=getattr(item, "color", None),
-        active=getattr(item, "active", None),
-    )
-
-
 @coreelement_router.get("/{element_type}")
 def list_items(
     element_type: CoreelementType,
@@ -54,7 +40,7 @@ def list_items(
 ) -> Page[CoreelementResponse]:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     paged = coreelement_service.list_coreelements_page(db, element_type, page)
-    return Page.of(paged.map(_to_response), page)
+    return Page.of(paged.map(coreelement_service.to_response), page)
 
 
 @coreelement_router.post("/{element_type}", status_code=status.HTTP_201_CREATED)
@@ -66,7 +52,7 @@ def create_item(
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     item = coreelement_service.create_coreelement(db, element_type, data)
-    return _to_response(item)
+    return coreelement_service.to_response(item)
 
 
 @coreelement_router.put("/{element_type}/{element_id}")
@@ -79,7 +65,7 @@ def update_item(
 ) -> CoreelementResponse:
     ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     item = coreelement_service.update_coreelement(db, element_type, element_id, data)
-    return _to_response(item)
+    return coreelement_service.to_response(item)
 
 
 @coreelement_router.delete("/{element_type}/{element_id}")
@@ -106,4 +92,4 @@ def move_item(
     items = coreelement_service.move_coreelement(
         db, element_type, element_id, direction
     )
-    return [_to_response(item) for item in items]
+    return [coreelement_service.to_response(item) for item in items]

@@ -19,7 +19,7 @@ def _auth_headers(
     return {"Authorization": f"Bearer {token}"}
 
 
-def _make_artist(client, headers) -> int:
+def _make_artist(client, headers) -> str:
     response = client.post(
         "/artists",
         json={
@@ -36,7 +36,7 @@ def _make_artist(client, headers) -> int:
     return response.json()["id"]
 
 
-def _make_instrument(client, make_user) -> int:
+def _make_instrument(client, make_user) -> str:
     # instrumentMaintain requires the administrator flag, unlike
     # ordinariumworkMaintain (planner/disponent role) -- a separate admin
     # user creates the instrument fixture.

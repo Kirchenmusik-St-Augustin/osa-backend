@@ -337,7 +337,7 @@ def _make_performance_dependencies(
 
 
 def _performance_payload(
-    location_id: int, ordinariumwork_id: int, **overrides: object
+    location_id: str, ordinariumwork_id: str, **overrides: object
 ) -> dict:
     payload: dict[str, object] = {
         "schedule": (datetime.now(UTC) + timedelta(days=2)).strftime(

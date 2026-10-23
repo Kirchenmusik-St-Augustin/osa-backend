@@ -5,7 +5,7 @@
 **Status:** accepted, 2026-09-18
 
 Evaluated for a move into PostgreSQL tables: the score field registry
-(`app/services/score_fields.py`, 94 fields), the cron catalog
+(`app/schemas/score_fields.py`, 94 fields), the cron catalog
 (`app/worker/cron_config.py`, 6 jobs) and `INSTRUMENT_GRID` in the frontend's
 `ScoreFieldsComponent.vue`.
 

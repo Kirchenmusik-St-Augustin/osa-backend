@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.db.models.role import Role
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
+from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.services import coreelement_service
 from tests.sql_capture import recorded_statements
 
@@ -608,3 +609,97 @@ class TestActiveField:
         assert exc_info.value.errors == [
             ("active", "Dieses Feld ist für diesen Typ nicht zulässig.")
         ]
+
+
+class TestToResponse:
+    def test_role_carries_label_and_description_only(self, db_session: Session):
+        role = coreelement_service.create_coreelement(
+            db_session,
+            CoreelementType.role,
+            _request(
+                _unique("Rolle")[:16],
+                label=_unique("Label"),
+                description="Beschreibung der Rolle",
+            ),
+        )
+
+        response = coreelement_service.to_response(role)
+
+        assert response.id == role.id
+        assert response.name == role.name
+        assert response.order == role.order
+        assert response.label == role.label
+        assert response.description == "Beschreibung der Rolle"
+        assert response.address is None
+        assert response.color is None
+        assert response.active is None
+
+    def test_location_carries_address_and_color_only(self, db_session: Session):
+        location = coreelement_service.create_coreelement(
+            db_session,
+            CoreelementType.location,
+            _request(address="Hauptstraße 1", color="ff0000"),
+        )
+
+        response = coreelement_service.to_response(location)
+
+        assert response.address == "Hauptstraße 1"
+        assert response.color == "ff0000"
+        assert response.label is None
+        assert response.description is None
+        assert response.active is None
+
+    @pytest.mark.parametrize("active", [True, False])
+    @pytest.mark.parametrize(
+        "type_",
+        [CoreelementType.instrument, CoreelementType.voice, CoreelementType.choirjob],
+    )
+    def test_archivable_types_carry_the_active_flag(
+        self, db_session: Session, type_: CoreelementType, active: bool
+    ):
+        item = coreelement_service.create_coreelement(
+            db_session, type_, _request(active=active)
+        )
+
+        response = coreelement_service.to_response(item)
+
+        assert response.active is active
+        assert response.label is None
+        assert response.address is None
+
+    def test_propriumelement_has_none_of_the_optional_attributes(
+        self, db_session: Session
+    ):
+        item = coreelement_service.create_coreelement(
+            db_session, CoreelementType.propriumelement, _request()
+        )
+
+        response = coreelement_service.to_response(item)
+
+        assert (
+            response.label,
+            response.description,
+            response.address,
+            response.color,
+            response.active,
+        ) == (None, None, None, None, None)
+
+    def test_mapping_a_page_of_roles_adds_no_statements(self, db_session: Session):
+        for _ in range(3):
+            coreelement_service.create_coreelement(
+                db_session,
+                CoreelementType.role,
+                _request(
+                    _unique("Rolle")[:16],
+                    label=_unique("Label"),
+                    description="Beschreibung der Rolle",
+                ),
+            )
+        paged = coreelement_service.list_coreelements_page(
+            db_session, CoreelementType.role, PageParams(limit=MAX_PAGE_SIZE, offset=0)
+        )
+
+        with recorded_statements() as statements:
+            paged.map(coreelement_service.to_response)
+
+        assert statements == []
