@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING
 
 from app.db.models.choirjob import Choirjob
 from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
-from app.services import user_position_service, userdirectory_service
+from app.services import userdirectory_service
 from tests.sql_capture import recorded_statements
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -70,7 +71,7 @@ class TestListUsersForPosition:
     def test_matches_users_with_that_position(self, db_session: Session, make_user):
         choirjob = _make_choirjob(db_session)
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="choirjobs",
@@ -85,7 +86,7 @@ class TestListUsersForPosition:
     def test_excludes_soft_deleted_users(self, db_session: Session, make_user):
         choirjob = _make_choirjob(db_session)
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="choirjobs",
@@ -150,7 +151,7 @@ class TestListEntries:
     ):
         choirjob = _make_choirjob(db_session)
         holder, other = make_user(), make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=holder.id,
             position_type="choirjobs",
@@ -171,7 +172,7 @@ class TestListEntries:
         # A holder of another position kind has no instrument id either, so a
         # lookup by a missing id would wrongly match this user.
         choirjob = _make_choirjob(db_session)
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=make_user().id,
             position_type="choirjobs",

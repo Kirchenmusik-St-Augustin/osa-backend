@@ -20,6 +20,7 @@ from starlette.responses import Response
 
 from app.api.deps import try_decode_token
 from app.core.json_types import JsonObject, JsonValue
+from app.core.rate_limit import client_ip as resolved_client_ip
 from app.db.database import SessionLocal
 from app.db.models.user import User
 from app.services import request_log_service
@@ -82,9 +83,11 @@ def _try_parse_json(body: bytes) -> JsonValue:
 
 
 def _forwarded_ips(request: Request) -> list[str]:
-    # Full X-Forwarded-For chain, most recent proxy last -- Starlette has no
-    # built-in equivalent, so this is read directly off the header, falling
-    # back to the direct peer.
+    # Full X-Forwarded-For chain as sent by the client and the proxies, most
+    # recent proxy last: kept as a record only. The address the
+    # application acts on is app.core.rate_limit.client_ip(); the first chain
+    # element is supplied by the caller and can be anything. Without the
+    # header the chain is the direct peer alone.
     header = request.headers.get("x-forwarded-for")
     if not header:
         return [request.client.host] if request.client else []
@@ -180,12 +183,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # response with two Set-Cookie headers would lose one of them.
         rebuilt.raw_headers = list(response.raw_headers)
 
-        client_ips = _forwarded_ips(request)
         try:
             await run_in_threadpool(
                 _write_log_entry,
-                client_ip=client_ips[0] if client_ips else "",
-                client_ips=client_ips,
+                client_ip=resolved_client_ip(request),
+                client_ips=_forwarded_ips(request),
                 auth_header=request.headers.get("authorization"),
                 request_method=request.method,
                 request_path=request.url.path,

@@ -68,6 +68,7 @@ from app.services.position_types import (
     POSITION_MODELS,
     POSITION_TYPES,
     PositionType,
+    position_column,
     position_key,
     position_kwargs,
 )
@@ -77,22 +78,9 @@ from app.services.user_position_service import (
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import InstrumentedAttribute, Session
+    from sqlalchemy.orm import Session
 
     from app.schemas.pagination import PageParams
-
-# Booking's own WHERE-clause dispatch table: which FK column on Booking
-# corresponds to a given position_type -- the counterpart to
-# position_kwargs()/position_key() (construction/key-extraction) for the
-# query-filter use case, which needs the actual InstrumentedAttribute, not
-# just a column name string.
-_BOOKING_POSITION_COLUMNS: dict[
-    PositionType, InstrumentedAttribute[uuid.UUID | None]
-] = {
-    "instruments": Booking.instrument_id,
-    "voices": Booking.voice_id,
-    "choirjobs": Booking.choirjob_id,
-}
 
 # (user_id, fee) -- the internal exchange shape _save_cast_item's diff engine
 # works with, decoupled from the CastMemberInput/-Output Pydantic schemas
@@ -781,7 +769,7 @@ def _popular_for_position(
         .join(Performance, Performance.id == Booking.performance_id)
         .where(
             Booking.performance_id.in_(performance_ids),
-            _BOOKING_POSITION_COLUMNS[position_type] == position_id,
+            position_column(Booking, position_type) == position_id,
         )
     ).all()
     if not rows:
@@ -960,13 +948,13 @@ def _save_cast_item(
     """The append-only diff/log engine behind every cast mutation: compares
     the old and new cast of one position, logs each transition and
     recreates that position's bookings."""
-    position_column = _BOOKING_POSITION_COLUMNS[position_type]
+    booking_position_column = position_column(Booking, position_type)
     old_bookings = (
         db.execute(
             select(Booking)
             .where(
                 Booking.performance_id == performance_id,
-                position_column == position_id,
+                booking_position_column == position_id,
             )
             .order_by(Booking.order)
         )
@@ -981,7 +969,7 @@ def _save_cast_item(
         db.execute(
             delete(Booking).where(
                 Booking.performance_id == performance_id,
-                position_column == position_id,
+                booking_position_column == position_id,
             )
         )
 
@@ -1238,7 +1226,7 @@ def cancel_auth_user_booking(
             select(Booking)
             .where(
                 Booking.performance_id == performance_id,
-                _BOOKING_POSITION_COLUMNS[position_type] == position_id,
+                position_column(Booking, position_type) == position_id,
                 Booking.id != booking.id,
             )
             .order_by(Booking.order)

@@ -7,15 +7,14 @@ from sqlalchemy import (
     Computed,
     DateTime,
     Enum,
-    FetchedValue,
     Index,
     Numeric,
     Text,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 # Native Postgres ENUMs, plain string literals (no bound Python enum class
@@ -34,7 +33,7 @@ job_id_enum = Enum(
 job_run_status_enum = Enum("success", "failure", name="job_run_status")
 
 
-class JobRun(Base):
+class JobRun(TimestampColumns, Base):
     """One completed run of a scheduled cron job (app.worker.cron_config's
     six job ids -- on-demand mail tasks in app.worker.tasks are out of
     scope, they have no schedule to report a "last run" against).
@@ -55,10 +54,8 @@ class JobRun(Base):
 
     `duration_seconds` is a generated column rather than a Python-computed
     value -- this project's own rule against storing derivable values.
-    `created_at`/`updated_at` follow the standard project-wide audit-trail
-    pair even though a run row is never updated after insert (`created_at`
-    ends up near-identical to `finished_at` for that reason) -- no
-    exception carved out, consistent with every other non-junction table.
+    A run row is never updated after insert, so `created_at` ends up
+    near-identical to `finished_at` and `updated_at` stays NULL.
     """
 
     __tablename__ = "job_runs"
@@ -79,9 +76,3 @@ class JobRun(Base):
         Computed("EXTRACT(EPOCH FROM (finished_at - started_at))", persisted=True),
     )
     output: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

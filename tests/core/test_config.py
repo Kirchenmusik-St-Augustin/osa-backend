@@ -146,7 +146,8 @@ def test_valid_secret_key_and_tier2_defaults(monkeypatch: pytest.MonkeyPatch):
 
     settings = Settings()
 
-    assert settings.secret_key == "x" * 32
+    assert settings.secret_key is not None
+    assert settings.secret_key.get_secret_value() == "x" * 32
     assert settings.session_lifetime_minutes == 15
     assert settings.session_idle_timeout_minutes == 120
     assert settings.refresh_token_lifetime_days == 7
@@ -193,7 +194,8 @@ def test_koofr_backup_settings_can_be_overridden(monkeypatch: pytest.MonkeyPatch
     assert settings.backup_hour == 7
     assert settings.backup_minute == 15
     assert settings.koofr_user == "someone"
-    assert settings.koofr_password == "secret"
+    assert settings.koofr_password is not None
+    assert settings.koofr_password.get_secret_value() == "secret"
 
 
 def test_performance_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -314,7 +316,10 @@ def test_valkey_password_is_accepted_on_qa_and_production(
     monkeypatch.setenv("APP_ENVIRONMENT", environment)
     monkeypatch.setenv("VALKEY_PASSWORD", "s3cret")
 
-    assert Settings().valkey_password == "s3cret"
+    password = Settings().valkey_password
+
+    assert password is not None
+    assert password.get_secret_value() == "s3cret"
 
 
 @pytest.mark.parametrize("environment", ["development", "test"])
@@ -409,3 +414,88 @@ def test_refresh_cookie_samesite_refuses_anything_else(
 
     with pytest.raises((SystemExit, ValidationError)):
         Settings()
+
+
+def test_smtp_credentials_default_to_none(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    settings = Settings()
+
+    assert settings.smtp_user is None
+    assert settings.smtp_password is None
+
+
+def test_blank_smtp_credentials_count_as_unset(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("SMTP_USER", "")
+    monkeypatch.setenv("SMTP_PASSWORD", "")
+
+    settings = Settings()
+
+    assert settings.smtp_user is None
+    assert settings.smtp_password is None
+
+
+def test_the_word_null_is_an_ordinary_smtp_value(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("SMTP_USER", "null")
+    monkeypatch.setenv("SMTP_PASSWORD", "null")
+
+    settings = Settings()
+
+    assert settings.smtp_user == "null"
+    assert settings.smtp_password is not None
+    assert settings.smtp_password.get_secret_value() == "null"
+
+
+def test_credentials_are_not_printed_by_repr(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:db-secret@localhost/db")
+    monkeypatch.setenv("SECRET_KEY", "signing-secret-" + "x" * 32)
+    monkeypatch.setenv("SMTP_USER", "mailer")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-secret")
+    monkeypatch.setenv("VALKEY_PASSWORD", "valkey-secret")
+    monkeypatch.setenv("KOOFR_PASSWORD", "koofr-secret")
+
+    rendered = repr(Settings())
+
+    for secret in (
+        "db-secret",
+        "signing-secret",
+        "smtp-secret",
+        "valkey-secret",
+        "koofr-secret",
+    ):
+        assert secret not in rendered
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("SMTP_USER", "mailer"), ("SMTP_PASSWORD", "smtp-secret")],
+    ids=["only-user", "only-password"],
+)
+def test_a_single_smtp_credential_exits(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+    value: str,
+):
+    _base_env(monkeypatch)
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(SystemExit):
+        Settings()
+
+    assert "SMTP_USER and SMTP_PASSWORD" in capsys.readouterr().err
+
+
+def test_both_smtp_credentials_are_accepted(monkeypatch: pytest.MonkeyPatch):
+    _base_env(monkeypatch)
+    monkeypatch.setenv("SMTP_USER", "mailer")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-secret")
+
+    assert Settings().smtp_user == "mailer"

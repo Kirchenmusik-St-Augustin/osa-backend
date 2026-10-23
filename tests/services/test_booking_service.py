@@ -47,8 +47,9 @@ from app.services import (
     ordinariumwork_service,
     performance_service,
 )
-from app.services.user_position_service import create_user_position
+from app.services.position_types import POSITION_TYPES, position_key
 from tests.sql_capture import recorded_statements
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -2008,3 +2009,128 @@ class TestSendBookedOrStandbyCanceledIntegration:
 
         assert notification is None
         mock_send.assert_not_called()
+
+
+_POSITION_MAKERS = {
+    "instruments": _make_instrument,
+    "voices": _make_voice,
+    "choirjobs": _make_choirjob,
+}
+
+
+def _two_positions_with_one_performance(
+    db_session: Session, position_type: PositionType
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    first = _POSITION_MAKERS[position_type](db_session)
+    second = _POSITION_MAKERS[position_type](db_session)
+    performance_id = _make_performance(
+        db_session, **{position_type: {first.id: 1, second.id: 1}}
+    )
+    return performance_id, first.id, second.id
+
+
+def _booked_positions(
+    db_session: Session, performance_id: uuid.UUID
+) -> set[tuple[uuid.UUID, uuid.UUID]]:
+    bookings = (
+        db_session.execute(
+            select(Booking).where(Booking.performance_id == performance_id)
+        )
+        .scalars()
+        .all()
+    )
+    return {(booking.user_id, position_key(booking)[1]) for booking in bookings}
+
+
+@pytest.mark.parametrize("position_type", POSITION_TYPES)
+class TestEveryPositionType:
+    """The cast of one position never touches the cast of another position of
+    the same type, for instruments, voices and choirjobs alike."""
+
+    def test_saving_a_cast_replaces_only_the_bookings_of_its_own_position(
+        self, db_session: Session, make_user, position_type: PositionType
+    ):
+        performance_id, first_id, second_id = _two_positions_with_one_performance(
+            db_session, position_type
+        )
+        first_user, second_user, third_user = make_user(), make_user(), make_user()
+        for position_id, user in ((first_id, first_user), (second_id, second_user)):
+            booking_service._save_cast_item(
+                db_session,
+                performance_id,
+                position_type,
+                position_id,
+                new_cast=[(user.id, 80)],
+                old_quantity=None,
+            )
+
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            position_type,
+            first_id,
+            new_cast=[(third_user.id, 70)],
+            old_quantity=None,
+        )
+
+        assert _booked_positions(db_session, performance_id) == {
+            (third_user.id, first_id),
+            (second_user.id, second_id),
+        }
+
+    def test_a_cancelled_regular_is_replaced_by_the_standby_of_the_same_position(
+        self, db_session: Session, make_user, position_type: PositionType
+    ):
+        performance_id, first_id, second_id = _two_positions_with_one_performance(
+            db_session, position_type
+        )
+        regular, standby, other = make_user(), make_user(), make_user()
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            position_type,
+            first_id,
+            new_cast=[(regular.id, 80), (standby.id, 80)],
+            old_quantity=None,
+        )
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            position_type,
+            second_id,
+            new_cast=[(other.id, 90)],
+            old_quantity=None,
+        )
+
+        booking_service.cancel_auth_user_booking(db_session, performance_id, regular.id)
+
+        assert _booked_positions(db_session, performance_id) == {
+            (standby.id, first_id),
+            (other.id, second_id),
+        }
+
+
+@pytest.mark.parametrize("position_type", ["instruments", "voices"])
+def test_popular_bookers_count_only_the_bookings_of_the_asked_position(
+    db_session: Session, make_user, position_type: PositionType
+):
+    performance_id, first_id, second_id = _two_positions_with_one_performance(
+        db_session, position_type
+    )
+    first_user, second_user = make_user(), make_user()
+    for position_id, user in ((first_id, first_user), (second_id, second_user)):
+        booking_service._save_cast_item(
+            db_session,
+            performance_id,
+            position_type,
+            position_id,
+            new_cast=[(user.id, 80)],
+            old_quantity=None,
+        )
+
+    popular = booking_service._popular_for_position(
+        db_session, [performance_id], position_type, first_id
+    )
+
+    assert [entry.id for entry in popular.frequent] == [first_user.id]
+    assert [entry.id for entry in popular.recent] == [first_user.id]

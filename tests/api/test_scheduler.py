@@ -7,18 +7,10 @@ import pytest
 from app.db.models.job_run import JobRun
 from app.services import permission_service
 from app.services.backup_service import BackupError
+from tests.login import login_headers
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
-
-
-def _auth_headers(client, make_user, *, administrator: bool = False) -> dict[str, str]:
-    user = make_user(password="correct-password", administrator=administrator)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 class TestPermissionGuard:
@@ -27,12 +19,12 @@ class TestPermissionGuard:
         assert response.status_code == 401
 
     def test_list_jobs_rejects_non_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get("/administrator/scheduler/jobs", headers=headers)
         assert response.status_code == 403
 
     def test_list_jobs_allows_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get("/administrator/scheduler/jobs", headers=headers)
         assert response.status_code == 200
 
@@ -41,7 +33,7 @@ class TestPermissionGuard:
         assert response.status_code == 401
 
     def test_trigger_backup_rejects_non_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.post(
             "/administrator/scheduler/backup/trigger", headers=headers
         )
@@ -52,7 +44,7 @@ class TestPermissionGuard:
         assert response.status_code == 401
 
     def test_trigger_downsync_rejects_non_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.post(
             "/administrator/scheduler/downsync/trigger", headers=headers
         )
@@ -65,7 +57,7 @@ class TestTriggerNeedsItsOwnPermission:
 
     @pytest.fixture
     def view_only_headers(self, client, make_user, monkeypatch) -> dict[str, str]:
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         monkeypatch.setattr(
             permission_service,
             "PERMISSION_RULES",
@@ -108,7 +100,7 @@ class TestTriggerNeedsItsOwnPermission:
 def test_returns_registered_jobs_with_expected_shape(client, make_user):
     # purge_stale_booking_requests is active in every environment, so this
     # is always non-empty regardless of APP_ENVIRONMENT.
-    headers = _auth_headers(client, make_user, administrator=True)
+    headers = login_headers(client, make_user, administrator=True)
 
     response = client.get("/administrator/scheduler/jobs", headers=headers)
 
@@ -128,7 +120,7 @@ def test_returns_registered_jobs_with_expected_shape(client, make_user):
 
 
 def test_hides_production_only_jobs_outside_production(client, make_user):
-    headers = _auth_headers(client, make_user, administrator=True)
+    headers = login_headers(client, make_user, administrator=True)
 
     response = client.get("/administrator/scheduler/jobs", headers=headers)
 
@@ -143,10 +135,10 @@ def test_hides_production_only_jobs_outside_production(client, make_user):
 
 
 def test_shows_production_only_jobs_in_production(client, make_user, monkeypatch):
-    # Set the env BEFORE _auth_headers() triggers the first get_settings()
+    # Set the env BEFORE login_headers() triggers the first get_settings()
     # call in this test (see the same pattern in TestTriggerBackup below).
     monkeypatch.setenv("APP_ENVIRONMENT", "production")
-    headers = _auth_headers(client, make_user, administrator=True)
+    headers = login_headers(client, make_user, administrator=True)
 
     response = client.get("/administrator/scheduler/jobs", headers=headers)
 
@@ -163,12 +155,12 @@ class TestTriggerBackup:
     def test_returns_201_with_backup_name_and_triggered_at(
         self, client, make_user, monkeypatch
     ):
-        # Set the env BEFORE _auth_headers() triggers the first
+        # Set the env BEFORE login_headers() triggers the first
         # get_settings() call in this test (login itself doesn't depend on
         # app_environment, but get_settings() is lru_cache'd -- see
         # conftest.py's client fixture docstring).
         monkeypatch.setenv("APP_ENVIRONMENT", "production")
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         # Patched at the router's import site (app.api.router_includes.scheduler),
         # not app.services.backup_service -- `from ... import run_backup` copies
@@ -195,7 +187,7 @@ class TestTriggerBackup:
         self, client, make_user, monkeypatch
     ):
         monkeypatch.setenv("APP_ENVIRONMENT", "production")
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         with patch(
             "app.api.router_includes.scheduler.run_backup",
@@ -211,7 +203,7 @@ class TestTriggerBackup:
     def test_returns_409_outside_production_without_running_backup(
         self, client, make_user
     ):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         def unexpected_run_backup(**_kwargs: object) -> str:
             msg = "must never run a backup once blocked by the production gate"
@@ -230,7 +222,7 @@ class TestTriggerBackup:
 
 class TestTriggerDownsync:
     def test_returns_201_with_restored_backup_and_triggered_at(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         with (
             patch(
@@ -262,12 +254,12 @@ class TestTriggerDownsync:
     def test_returns_409_in_production_without_listing_backups(
         self, client, make_user, monkeypatch
     ):
-        # Set the env BEFORE _auth_headers() triggers the first
+        # Set the env BEFORE login_headers() triggers the first
         # get_settings() call in this test (login itself doesn't depend on
         # app_environment, but get_settings() is lru_cache'd -- see
         # conftest.py's client fixture docstring).
         monkeypatch.setenv("APP_ENVIRONMENT", "production")
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         def unexpected_list_backups(**_kwargs: object) -> list[str]:
             msg = "must never list backups once blocked by the production gate"
@@ -284,7 +276,7 @@ class TestTriggerDownsync:
         assert response.status_code == 409
 
     def test_returns_404_when_no_production_backup_exists(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         with patch("app.api.router_includes.scheduler.list_backups", return_value=[]):
             response = client.post(
@@ -294,7 +286,7 @@ class TestTriggerDownsync:
         assert response.status_code == 404
 
     def test_returns_500_with_detail_when_restore_fails(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         with (
             patch(
@@ -321,7 +313,7 @@ class TestNPlusOne:
         """get_latest_run_per_job() is one DISTINCT ON query, not one per
         job -- adding more job_runs rows across every job must not add
         more SQL statements to GET /jobs."""
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         with count_queries() as before_any_runs:
             response_before = client.get(

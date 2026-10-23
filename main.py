@@ -11,7 +11,7 @@ from app.api.middleware.body_limit import MaxBodySizeMiddleware
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.api.router import api_router
 from app.api.router_includes.go import go_router
-from app.api.system import system_router
+from app.api.system import liveness_router
 from app.core.arq_pool import close_arq_pool
 from app.core.config import get_settings
 from app.core.logging_config import setup_logging
@@ -86,7 +86,7 @@ app.add_middleware(
     MaxBodySizeMiddleware, max_body_bytes=settings.max_request_body_bytes
 )
 
-app.include_router(system_router)  # root-level health check, no prefix
+app.include_router(liveness_router)  # root-level health check, no prefix
 app.include_router(api_router)  # every domain router, see app/api/router.py
 # Public, unauthenticated redirect service for the dedicated go.-subdomain
 # (see app.api.router_includes.go's docstring). Mounted directly on `app`

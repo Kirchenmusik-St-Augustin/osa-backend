@@ -8,6 +8,7 @@ from app.db.models.choirjob import Choirjob
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from tests.login import login_headers
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -20,17 +21,12 @@ def _unique(base: str = "User") -> str:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None, administrator: bool = False
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password",
+    return login_headers(
+        client,
+        make_user,
         roles=roles if roles is not None else ["disponent"],
         administrator=administrator,
     )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _make_choirjob(db_session: Session) -> Choirjob:

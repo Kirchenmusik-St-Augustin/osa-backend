@@ -1,10 +1,4 @@
-def _auth_headers(client, make_user, **user_options) -> dict[str, str]:
-    user = make_user(password="correct-password", **user_options)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+from tests.login import login_headers
 
 
 class TestPermissionGuard:
@@ -14,14 +8,14 @@ class TestPermissionGuard:
 
     def test_any_authenticated_user_may_call_it(self, client, make_user):
         # No permission gate beyond being logged in.
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get("/statistics", headers=headers)
         assert response.status_code == 200
 
 
 class TestGetStatistics:
     def test_returns_the_expected_shape(self, client, make_user):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get("/statistics", headers=headers)
 
         assert response.status_code == 200
@@ -39,7 +33,7 @@ class TestGetStatistics:
     def test_the_mail_block_is_shown_to_holders_of_sent_email_view(
         self, client, make_user
     ):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get("/statistics", headers=headers)
 
         body = response.json()
@@ -51,7 +45,7 @@ class TestGetStatistics:
         }
 
     def test_counts_are_non_negative_integers(self, client, make_user):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get("/statistics", headers=headers)
 
         body = response.json()
@@ -70,7 +64,7 @@ class TestMailBudgetVisibility:
     def test_a_member_does_not_see_the_mail_budget_but_still_the_counts(
         self, client, make_user
     ):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get("/statistics", headers=headers)
 
         body = response.json()

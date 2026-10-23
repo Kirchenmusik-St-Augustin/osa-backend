@@ -9,6 +9,7 @@ import pytest
 from app.db.models.artist import Artist
 from app.db.models.fee import Fee
 from app.db.models.shorturl import Shorturl
+from tests.login import login_headers
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,16 +61,6 @@ LIST_ENDPOINTS = [
 ]
 
 
-def _login_headers(client, make_user, *, roles: list[str], administrator: bool):
-    user = make_user(
-        password="correct-password", roles=roles, administrator=administrator
-    )
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
-
-
 @pytest.mark.parametrize(
     ("url", "params", "roles", "administrator", "seed"),
     LIST_ENDPOINTS,
@@ -86,9 +77,7 @@ def test_query_count_does_not_grow_with_the_number_of_rows(
     administrator: bool,
     seed: Callable[..., None],
 ) -> None:
-    headers = _login_headers(
-        client, make_user, roles=roles, administrator=administrator
-    )
+    headers = login_headers(client, make_user, roles=roles, administrator=administrator)
     for _ in range(2):
         seed(db_session, make_user)
     db_session.commit()

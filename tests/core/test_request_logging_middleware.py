@@ -276,3 +276,52 @@ def test_repeated_response_headers_survive_the_rebuilt_response():
 
     assert len(response.headers.get_list("set-cookie")) == 2
     assert response.json() == {"ok": True}
+
+
+def _request_with(forwarded_for: str | None, peer: tuple[str, int] | None) -> Request:
+    headers = [(b"x-forwarded-for", forwarded_for.encode())] if forwarded_for else []
+    return Request({"type": "http", "headers": headers, "client": peer})
+
+
+def test_the_logged_client_address_is_the_resolved_peer_not_the_first_forwarded_entry(
+    client, db_session: Session
+):
+    client.get(
+        "/forwarded-address-logging-test",
+        headers={"X-Forwarded-For": "198.51.100.5, 203.0.113.9"},
+    )
+
+    row = db_session.execute(
+        select(RequestLog).where(
+            RequestLog.request_path == "/forwarded-address-logging-test"
+        )
+    ).scalar_one()
+    assert row.client_ip == "testclient"
+    assert row.client_ips == ["198.51.100.5", "203.0.113.9"]
+
+
+def test_without_a_forwarded_header_the_peer_is_logged_alone(
+    client, db_session: Session
+):
+    client.get("/direct-address-logging-test")
+
+    row = db_session.execute(
+        select(RequestLog).where(
+            RequestLog.request_path == "/direct-address-logging-test"
+        )
+    ).scalar_one()
+    assert row.client_ip == "testclient"
+    assert row.client_ips == ["testclient"]
+
+
+def test_the_forwarded_chain_drops_blank_entries():
+    request = _request_with(" 198.51.100.5 , ,203.0.113.9", ("10.0.0.1", 4711))
+
+    assert request_logging._forwarded_ips(request) == [
+        "198.51.100.5",
+        "203.0.113.9",
+    ]
+
+
+def test_the_forwarded_chain_is_empty_without_header_and_peer():
+    assert request_logging._forwarded_ips(_request_with(None, None)) == []

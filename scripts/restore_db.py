@@ -43,7 +43,8 @@ def _confirm_restore(backup_name: str | None) -> None:
     """A restore wipes the schema: name the target and the source and require
     the database name to be typed, so a copied command line or a typo in the
     shell history cannot replace the wrong database."""
-    url = make_url(get_settings().database_url or "")
+    database_url = get_settings().database_url
+    url = make_url(database_url.get_secret_value() if database_url else "")
     database = url.database or ""
     host = url.host or "local socket"
     source = backup_name or "the latest production backup"

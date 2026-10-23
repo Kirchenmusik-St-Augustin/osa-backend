@@ -30,7 +30,7 @@ from functools import lru_cache
 from typing import Literal, NoReturn
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _VALID_ENVIRONMENTS = frozenset({"development", "test", "qa", "production"})
@@ -61,8 +61,13 @@ class Settings(BaseSettings):
         default=None, validation_alias="APP_ENVIRONMENT"
     )
     cors_origins: str | None = Field(default=None, validation_alias="CORS_ORIGINS")
-    database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
-    secret_key: str | None = Field(default=None, validation_alias="SECRET_KEY")
+    # Credentials are SecretStr so that repr(), logging or an error report that
+    # includes the settings object never prints them; read the value with
+    # get_secret_value() at the single place that needs it.
+    database_url: SecretStr | None = Field(
+        default=None, validation_alias="DATABASE_URL"
+    )
+    secret_key: SecretStr | None = Field(default=None, validation_alias="SECRET_KEY")
 
     # Tier 2 -- optional with defaults, no boot-time validation.
     # No endpoint accepts uploads, so 1 MiB is far above any legitimate request.
@@ -129,10 +134,13 @@ class Settings(BaseSettings):
     smtp_from_name: str = Field(
         default="Kirchenmusik St. Augustin", validation_alias="SMTP_FROM_NAME"
     )
-    # "null" (not "") mirrors the historical env convention: an explicit
-    # sentinel meaning "no SMTP auth", checked via `.lower() != "null"`.
-    smtp_user: str = Field(default="null", validation_alias="SMTP_USER")
-    smtp_password: str = Field(default="null", validation_alias="SMTP_PASSWORD")
+    # Unset (or blank, see env_ignore_empty) means the SMTP server needs no
+    # authentication; the mailer logs in only when both values are present, and
+    # _validate_values refuses a configuration that sets just one of them.
+    smtp_user: str | None = Field(default=None, validation_alias="SMTP_USER")
+    smtp_password: SecretStr | None = Field(
+        default=None, validation_alias="SMTP_PASSWORD"
+    )
     mail_disponent: str = Field(
         default="einteilung@hochamt.at", validation_alias="MAIL_DISPONENT"
     )
@@ -183,7 +191,7 @@ class Settings(BaseSettings):
     valkey_port: int = Field(
         default=6379, ge=1, le=65535, validation_alias="VALKEY_PORT"
     )
-    valkey_password: str | None = Field(
+    valkey_password: SecretStr | None = Field(
         default=None, validation_alias="VALKEY_PASSWORD"
     )
     valkey_database: int = Field(default=0, validation_alias="VALKEY_DATABASE")
@@ -202,7 +210,9 @@ class Settings(BaseSettings):
         default=None, validation_alias="FRONTEND_RESET_PASSWORD_URL"
     )
     koofr_user: str | None = Field(default=None, validation_alias="KOOFR_USER")
-    koofr_password: str | None = Field(default=None, validation_alias="KOOFR_PASSWORD")
+    koofr_password: SecretStr | None = Field(
+        default=None, validation_alias="KOOFR_PASSWORD"
+    )
 
     @model_validator(mode="after")
     def _validate_tier1(self) -> Settings:
@@ -217,9 +227,10 @@ class Settings(BaseSettings):
             _fail("DATABASE_URL is not set.")
         if not self.secret_key:
             _fail("SECRET_KEY is not set.")
-        if len(self.secret_key) < 32:
+        secret_key = self.secret_key.get_secret_value()
+        if len(secret_key) < 32:
             _fail("SECRET_KEY must be at least 32 characters long.")
-        if _TEMPLATE_PLACEHOLDER_MARKER in self.secret_key.lower():
+        if _TEMPLATE_PLACEHOLDER_MARKER in secret_key.lower():
             _fail("SECRET_KEY still contains the template placeholder.")
         return self
 
@@ -239,6 +250,11 @@ class Settings(BaseSettings):
             and not self.valkey_password
         ):
             _fail("VALKEY_PASSWORD is required on qa and production.")
+        if (self.smtp_user is None) != (self.smtp_password is None):
+            _fail(
+                "SMTP_USER and SMTP_PASSWORD must be set together or both left "
+                "unset: a single one would silently send without authentication."
+            )
         return self
 
     @property

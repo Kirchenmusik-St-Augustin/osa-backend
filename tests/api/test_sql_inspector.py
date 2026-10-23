@@ -1,23 +1,6 @@
 from app.db.models.password_reset_token import PasswordResetToken
+from tests.login import login_as, login_headers
 from tests.sent_emails import sent_email
-
-
-def _auth_headers_for(
-    client, user, password: str = "correct-password"
-) -> dict[str, str]:
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": password}
-    )
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
-
-
-def _auth_headers(client, make_user, *, administrator: bool = False) -> dict[str, str]:
-    user = make_user(password="correct-password", administrator=administrator)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 class TestPermissionGuard:
@@ -26,12 +9,12 @@ class TestPermissionGuard:
         assert response.status_code == 401
 
     def test_list_tables_rejects_non_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get("/administrator/sql-inspector/tables", headers=headers)
         assert response.status_code == 403
 
     def test_list_tables_allows_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get("/administrator/sql-inspector/tables", headers=headers)
         assert response.status_code == 200
 
@@ -40,7 +23,7 @@ class TestPermissionGuard:
         assert response.status_code == 401
 
     def test_table_data_rejects_non_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get(
             "/administrator/sql-inspector/tables/users", headers=headers
         )
@@ -49,7 +32,7 @@ class TestPermissionGuard:
 
 class TestListTables:
     def test_returns_known_table_names(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get("/administrator/sql-inspector/tables", headers=headers)
 
@@ -59,7 +42,7 @@ class TestListTables:
 
 class TestTableData:
     def test_unknown_table_returns_404(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get(
             "/administrator/sql-inspector/tables/not_a_real_table", headers=headers
@@ -68,7 +51,7 @@ class TestTableData:
         assert response.status_code == 404
 
     def test_known_table_returns_expected_shape(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get(
             "/administrator/sql-inspector/tables/users", headers=headers
@@ -84,7 +67,7 @@ class TestTableData:
         )
 
     def test_pagination_query_params_are_respected(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get(
             "/administrator/sql-inspector/tables/users",
@@ -98,7 +81,7 @@ class TestTableData:
         assert body["page_size"] == 5
 
     def test_page_below_one_is_rejected(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get(
             "/administrator/sql-inspector/tables/users",
@@ -109,7 +92,7 @@ class TestTableData:
         assert response.status_code == 422
 
     def test_page_above_the_upper_bound_is_rejected(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get(
             "/administrator/sql-inspector/tables/users",
@@ -120,7 +103,7 @@ class TestTableData:
         assert response.status_code == 422
 
     def test_the_last_allowed_page_answers_with_no_rows(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get(
             "/administrator/sql-inspector/tables/users",
@@ -132,7 +115,7 @@ class TestTableData:
         assert response.json()["rows"] == []
 
     def test_page_size_above_upper_bound_is_rejected(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
 
         response = client.get(
             "/administrator/sql-inspector/tables/users",
@@ -172,7 +155,7 @@ class TestCredentialMasking:
             sent_email(subject="Mask probe", body="https://x.test/?t=secret")
         )
         db_session.commit()
-        headers = _auth_headers_for(client, admin)
+        headers = login_as(client, admin)
 
         masked_columns = {
             "users": ["auth_password", "auth_remember_token"],
@@ -194,7 +177,7 @@ class TestCredentialMasking:
         admin = make_user(
             password="correct-password", administrator=True, email="plain@example.test"
         )
-        headers = _auth_headers_for(client, admin)
+        headers = login_as(client, admin)
 
         data = self._rows(client, headers, "users")
 
@@ -202,7 +185,7 @@ class TestCredentialMasking:
 
     def test_empty_credential_values_stay_empty(self, client, make_user):
         admin = make_user(password="correct-password", administrator=True)
-        headers = _auth_headers_for(client, admin)
+        headers = login_as(client, admin)
 
         data = self._rows(client, headers, "users")
 

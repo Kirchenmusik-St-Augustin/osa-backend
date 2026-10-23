@@ -1,6 +1,8 @@
 import uuid
 from typing import TYPE_CHECKING
 
+from tests.login import login_as, login_with_credentials
+
 if TYPE_CHECKING:
     import pytest
 
@@ -14,11 +16,7 @@ def _auth_headers(
 ) -> tuple[dict[str, str], str]:
     email = f"{_unique('user').lower()}@example.com"
     user = make_user(email=email, password=password)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": password}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}, email
+    return login_as(client, user, password), email
 
 
 def _payload(
@@ -265,17 +263,11 @@ class TestUpdateProfile:
 
 
 class TestPasswordChangeEndsOtherSessions:
-    def _login(self, client, email: str, password: str) -> dict[str, str]:
-        response = client.post(
-            "/auth/login", data={"username": email, "password": password}
-        )
-        return {"Authorization": f"Bearer {response.json()['access_token']}"}
-
     def test_other_login_is_logged_out_and_the_caller_stays_logged_in(
         self, client, make_user
     ):
         headers, email = _auth_headers(client, make_user)
-        other_headers = self._login(client, email, "Passwort123")
+        other_headers = login_with_credentials(client, email, "Passwort123")
         assert client.get("/profile", headers=other_headers).status_code == 200
 
         response = client.put(
@@ -295,7 +287,7 @@ class TestPasswordChangeEndsOtherSessions:
 
     def test_other_login_stays_when_only_the_phone_changes(self, client, make_user):
         headers, email = _auth_headers(client, make_user)
-        other_headers = self._login(client, email, "Passwort123")
+        other_headers = login_with_credentials(client, email, "Passwort123")
 
         response = client.put(
             "/profile",

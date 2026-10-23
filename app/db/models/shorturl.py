@@ -1,23 +1,21 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, func, text
+from sqlalchemy import DateTime, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class Shorturl(Base):
+class Shorturl(TimestampColumns, Base):
     """A standalone redirect-link lookup table, resolved both by the authenticated
     management UI (`/shorturls`, role `shorturls`) and by the public,
     unauthenticated `go.`-subdomain redirect service (see
     app/api/router_includes/go.py) -- no FK from or to any other table.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python. `latestcall_at` is TIMESTAMPTZ too but stays Python-managed."""
+    `latestcall_at` is TIMESTAMPTZ and stays Python-managed."""
 
     __tablename__ = "shorturls"
 
@@ -26,9 +24,3 @@ class Shorturl(Base):
     target: Mapped[str] = mapped_column()
     counter: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     latestcall_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

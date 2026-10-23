@@ -1,12 +1,12 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, FetchedValue, ForeignKey, Index, func
+from sqlalchemy import Enum, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.json_types import JsonObject, JsonValue
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 # The nine methods of RFC 9110. A request with any other method is answered
@@ -25,7 +25,7 @@ HTTP_METHODS = (
 http_method_enum = Enum(*HTTP_METHODS, name="http_method")
 
 
-class RequestLog(Base):
+class RequestLog(TimestampColumns, Base):
     """Audit-trail entry for every non-excluded request, written by
     `app.api.middleware.request_logging.RequestLoggingMiddleware`.
     `client_ips`/`request_input`/`response_content` are native JSONB
@@ -33,11 +33,7 @@ class RequestLog(Base):
     service layer works with plain Python objects (list/dict/etc.) end to
     end. `client_user_agent_id`/`user_id` are nullable, ON DELETE SET NULL
     foreign keys: an anonymous or since-deleted client/user never blocks or
-    removes this table's own audit trail entries. `created_at`/
-    `updated_at` are TIMESTAMPTZ: `created_at` is populated by the
-    database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python."""
+    removes this table's own audit trail entries."""
 
     __tablename__ = "request_logs"
     __table_args__ = (
@@ -61,9 +57,3 @@ class RequestLog(Base):
     response_status: Mapped[int]
     response_content: Mapped[JsonValue | None] = mapped_column(JSONB())
     memory_usage: Mapped[int]
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

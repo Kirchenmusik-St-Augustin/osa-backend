@@ -1,10 +1,10 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, FetchedValue, func
+from sqlalchemy import CheckConstraint, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 # Every numeric column below is either a physical count (how many
@@ -104,7 +104,7 @@ _SPARTE_ENUM = Enum(
 )
 
 
-class Score(Base):
+class Score(TimestampColumns, Base):
     """A physical sheet-music archive card catalog (NOT a digital/PDF
     archive: no file storage anywhere in this domain), one row per work.
     The field config (see app.services.score_service.SCORE_FIELDS, the
@@ -117,11 +117,6 @@ class Score(Base):
     `inhalt`/`sparte`/the 12 `*art` columns are native Postgres ENUMs --
     `Mapped[str]` keeps every string comparison/lookup on these columns
     working.
-
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python.
 
     Deliberately still a single flat table, not normalized into child
     tables for the holdings groups (part1/part2/klausz1/klausz2/
@@ -258,10 +253,3 @@ class Score(Base):
     # -- Remarks --
     bemerkung: Mapped[str | None] = mapped_column()
     zusatznoten: Mapped[str | None] = mapped_column()
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

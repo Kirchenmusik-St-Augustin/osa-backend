@@ -1,30 +1,24 @@
 import uuid
-from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, FetchedValue, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 if TYPE_CHECKING:
     from app.db.models.user import User
 
 
-class Role(Base):
+class Role(TimestampColumns, Base):
     """Application role. The `order` column is `sort_order` at the DB level
     (Postgres always requires `order` to be double-quoted as an
     identifier); the Python attribute/ORM-facing name stays `order` via
     mapped_column's explicit column-name argument (same alias pattern as
     SentEmail.mail_from, see sent_email.py). Five rows exist in practice:
     planner, disponent, billing, scores, shorturls -- `administrator` is a
-    separate boolean flag on `users`, not a role row.
-
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python."""
+    separate boolean flag on `users`, not a role row."""
 
     __tablename__ = "roles"
 
@@ -33,12 +27,6 @@ class Role(Base):
     label: Mapped[str] = mapped_column(unique=True)
     description: Mapped[str | None]
     order: Mapped[int] = mapped_column("sort_order", default=0)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )
 
     # Back-reference to User.roles: the "Meine Ansprechpersonen" page loads all
     # roles together with their assigned users in one N+1-safe

@@ -185,7 +185,9 @@ def run_backup(*, manual: bool = False) -> str:
     failure -- nothing is left behind on Koofr on failure, the upload is
     the last step.
     """
-    database_url = require_setting(get_settings().database_url, "DATABASE_URL")
+    database_url = require_setting(
+        get_settings().database_url, "DATABASE_URL"
+    ).get_secret_value()
     _require_postgres(database_url)
 
     if get_settings().app_environment != "production":
@@ -250,7 +252,9 @@ def _koofr_auth() -> tuple[str, str]:
     try:
         return (
             require_setting(settings.koofr_user, "KOOFR_USER"),
-            require_setting(settings.koofr_password, "KOOFR_PASSWORD"),
+            require_setting(
+                settings.koofr_password, "KOOFR_PASSWORD"
+            ).get_secret_value(),
         )
     except RuntimeError as exc:
         # Normalizes require_setting()'s RuntimeError into BackupError so
@@ -624,7 +628,9 @@ def run_restore(*, backup_name: str | None = None, force: bool = False) -> str:
     of those on next use anyway, but disposing the whole pool immediately
     is simpler than waiting for that to happen one connection at a time.
     """
-    database_url = require_setting(get_settings().database_url, "DATABASE_URL")
+    database_url = require_setting(
+        get_settings().database_url, "DATABASE_URL"
+    ).get_secret_value()
     _require_postgres(database_url)
 
     if get_settings().app_environment == "production" and not force:

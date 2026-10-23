@@ -1,14 +1,15 @@
 from collections.abc import Generator
-from typing import cast
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from app.core.config import get_settings
+from app.core.config import get_settings, require_setting
 
 # Settings._validate_tier1 already exits the process if database_url is
-# unset, so by the time get_settings() returns, it is guaranteed non-None.
-SQLALCHEMY_DATABASE_URL = cast("str", get_settings().database_url)
+# unset; require_setting() only narrows the type for the checker.
+SQLALCHEMY_DATABASE_URL = require_setting(
+    get_settings().database_url, "DATABASE_URL"
+).get_secret_value()
 
 # Synchronous SQLAlchemy (Session, no AsyncSession/asyncpg/greenlet):
 # osa-backend is a low-concurrency internal scheduling tool (rarely more

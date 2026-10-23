@@ -2,6 +2,8 @@ import uuid
 
 import pytest
 
+from tests.login import login_headers
+
 
 def _unique(base: str = "Fee") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
@@ -10,15 +12,9 @@ def _unique(base: str = "Fee") -> str:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password", roles=roles if roles is not None else ["disponent"]
+    return login_headers(
+        client, make_user, roles=roles if roles is not None else ["disponent"]
     )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 _MISSING_ID = "00000000-0000-7000-8000-000000000000"

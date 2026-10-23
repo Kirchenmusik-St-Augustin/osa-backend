@@ -1,25 +1,23 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, FetchedValue, func
+from sqlalchemy import CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class ClientUserAgent(Base):
+class ClientUserAgent(TimestampColumns, Base):
     """A dedup table for raw User-Agent header strings, referenced by
     `request_logs.client_user_agent_id`. `string` is UNIQUE:
     request_log_service's get-or-create against this table runs on every
     HTTP request, and the constraint is what makes the IntegrityError-based
     race handling there actually correct rather than just optimistic.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- this table has no update
-    path in practice (rows are only ever inserted, via
-    get-or-create), so `updated_at` stays NULL for the lifetime of a row."""
+    This table has no update path in practice (rows are only ever inserted,
+    via get-or-create), so `updated_at` stays NULL for the lifetime of a
+    row."""
 
     __tablename__ = "client_user_agents"
     # Mirrors request_log_service._MAX_USER_AGENT_LENGTH, so no other writer
@@ -32,9 +30,3 @@ class ClientUserAgent(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     string: Mapped[str] = mapped_column(unique=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

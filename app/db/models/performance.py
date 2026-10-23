@@ -4,19 +4,18 @@ from datetime import datetime
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
-    FetchedValue,
     ForeignKey,
     Index,
-    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class Performance(Base):
+class Performance(TimestampColumns, Base):
     """A scheduled performance, with these DB-level guarantees:
     - `performances_schedule_index` on `schedule` -- filtered/sorted on in
       performance_service.py, booking_jobs.py, booking_service.py, and
@@ -41,10 +40,7 @@ class Performance(Base):
     placeholder billing rates used only to price still-unfilled slots in
     the Abrechnung.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python. `schedule` deliberately stays a naive TIMESTAMP: it's
+    `schedule` deliberately stays a naive TIMESTAMP: it's
     user-entered local wall-clock time in Settings.app_timezone, not a UTC
     instant (see app.core.datetime_utils module docstring)."""
 
@@ -93,9 +89,3 @@ class Performance(Base):
     )
     extracost_amount: Mapped[int | None]
     extracost_description: Mapped[str | None]
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

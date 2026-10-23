@@ -1,6 +1,8 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from tests.login import login_headers
+
 
 def _unique(base: str = "Element") -> str:
     """Every test gets its own collision-free name -- tests/conftest.py's
@@ -13,15 +15,7 @@ def _unique(base: str = "Element") -> str:
 def _auth_headers(
     client, make_user, *, administrator: bool = True, roles: list[str] | None = None
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password", administrator=administrator, roles=roles
-    )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    return login_headers(client, make_user, administrator=administrator, roles=roles)
 
 
 class TestPermissionGuard:
@@ -295,6 +289,42 @@ class TestDeleteInUseViaOrdinariumworkPosition:
 
         delete_response = client.delete(
             f"/coreelements/instrument/{instrument_id}", headers=headers
+        )
+
+        assert delete_response.status_code == 422
+        assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
+
+    def test_voice_delete_blocked_while_referenced_by_ordinariumwork(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        voice_response = client.post(
+            "/coreelements/voice",
+            json={"name": _unique("Alt")},
+            headers=headers,
+        )
+        voice_id = voice_response.json()["id"]
+        planner_headers, artist_id, _ordinariumwork_id = _make_performance_dependencies(
+            client, make_user
+        )
+        client.post(
+            "/ordinariumworks",
+            json={
+                "name": _unique("Werk"),
+                "description": None,
+                "artist_id": artist_id,
+                "duration": None,
+                "demanding": False,
+                "setup": {
+                    "instruments": [],
+                    "voices": [{"id": voice_id, "quantity": 1}],
+                },
+            },
+            headers=planner_headers,
+        )
+
+        delete_response = client.delete(
+            f"/coreelements/voice/{voice_id}", headers=headers
         )
 
         assert delete_response.status_code == 422

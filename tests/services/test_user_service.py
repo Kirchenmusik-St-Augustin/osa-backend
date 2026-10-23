@@ -19,7 +19,8 @@ from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.voice import Voice
 from app.schemas.user import UserRequest
-from app.services import auth_service, user_position_service, user_service
+from app.services import auth_service, user_service
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -222,13 +223,13 @@ class TestGetUser:
         second.order = 0
         db_session.commit()
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
             position_id=first.id,
         )
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
@@ -247,7 +248,7 @@ class TestGetUser:
         already-assigned user's position vanish or break."""
         instrument = _make_instrument(db_session)
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
@@ -297,7 +298,7 @@ class TestDeletable:
         # Instrument/Voice/Choirjob qualifications never block delete.
         instrument = _make_instrument(db_session)
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",

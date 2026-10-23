@@ -6,6 +6,7 @@ from app.db.models.user_position import UserPosition
 from app.services.position_types import (
     POSITION_TYPES,
     PositionType,
+    position_column,
     position_key,
     position_kwargs,
 )
@@ -13,15 +14,7 @@ from app.services.position_types import (
 if TYPE_CHECKING:
     import uuid
 
-    from sqlalchemy.orm import InstrumentedAttribute, Session
-
-# UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
-# identical _BOOKING_POSITION_COLUMNS for the full rationale.
-_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[uuid.UUID | None]] = {
-    "instruments": UserPosition.instrument_id,
-    "voices": UserPosition.voice_id,
-    "choirjobs": UserPosition.choirjob_id,
-}
+    from sqlalchemy.orm import Session
 
 
 def get_position_ids_for_user(
@@ -53,11 +46,9 @@ def get_qualified_user_ids_batch(
     for position_type, position_ids in keys.items():
         if not position_ids:
             continue
-        position_column = _USER_POSITION_COLUMNS[position_type]
+        column = position_column(UserPosition, position_type)
         rows = db.execute(
-            select(position_column, UserPosition.user_id).where(
-                position_column.in_(position_ids)
-            )
+            select(column, UserPosition.user_id).where(column.in_(position_ids))
         ).all()
         for position_id, user_id in rows:
             # position_id is statically `uuid.UUID | None` (it's the same
@@ -81,23 +72,6 @@ def is_bookable(
         user_position_ids[position_type] & performance_position_ids[position_type]
         for position_type in POSITION_TYPES
     )
-
-
-def create_user_position(
-    db: Session,
-    *,
-    user_id: uuid.UUID,
-    position_type: PositionType,
-    position_id: uuid.UUID,
-) -> UserPosition:
-    """Seeding helper for tests and fixtures -- there is deliberately no
-    router endpoint for this."""
-    user_position = UserPosition(
-        user_id=user_id, **position_kwargs(position_type, position_id)
-    )
-    db.add(user_position)
-    db.commit()
-    return user_position
 
 
 def sync_user_positions(

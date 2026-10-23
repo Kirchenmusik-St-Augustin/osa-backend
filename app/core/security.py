@@ -4,21 +4,20 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import bcrypt
 import jwt
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from app.core.config import get_settings
+from app.core.config import get_settings, require_setting
 
 logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 
-# Settings._validate_tier1 already exits the process if secret_key is unset,
-# so by the time get_settings() returns, it is guaranteed non-None.
-SECRET_KEY = cast("str", _settings.secret_key)
+# Settings._validate_tier1 already exits the process if secret_key is unset;
+# require_setting() only narrows the type for the checker.
+SECRET_KEY = require_setting(_settings.secret_key, "SECRET_KEY").get_secret_value()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = _settings.session_lifetime_minutes
 SESSION_IDLE_TIMEOUT_MINUTES = _settings.session_idle_timeout_minutes

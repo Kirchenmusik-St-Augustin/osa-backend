@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.db.models.request_log import RequestLog
+from tests.login import login_headers
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -10,15 +11,6 @@ if TYPE_CHECKING:
 
 def _unique(base: str = "Log") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
-
-
-def _auth_headers(client, make_user, *, administrator: bool = False) -> dict[str, str]:
-    user = make_user(password="correct-password", administrator=administrator)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _make_entry(
@@ -53,7 +45,7 @@ class TestPermissionGuard:
     def test_list_users_rejects_disponent_without_administrator_flag(
         self, client, make_user
     ):
-        headers = _auth_headers(client, make_user)
+        headers = login_headers(client, make_user)
         response = client.get(
             "/administrator/request-logs",
             params={"year": 2026, "month": 1},
@@ -62,7 +54,7 @@ class TestPermissionGuard:
         assert response.status_code == 403
 
     def test_list_users_allows_administrator(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get(
             "/administrator/request-logs",
             params={"year": 2026, "month": 1},
@@ -86,7 +78,7 @@ class TestUserFlow:
     def test_lists_days_with_users_active_in_the_requested_month(
         self, client, make_user, db_session: Session
     ):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         target = make_user()
         _make_entry(
             db_session,
@@ -108,7 +100,7 @@ class TestUserFlow:
     def test_user_detail_returns_entries_for_that_user_and_day(
         self, client, make_user, db_session: Session
     ):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         target = make_user()
         entry = _make_entry(
             db_session,
@@ -134,7 +126,7 @@ class TestUserFlow:
         assert [item["id"] for item in body["entries"]] == [str(entry.id)]
 
     def test_user_detail_returns_404_for_unknown_user(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get(
             f"/administrator/request-logs/users/{uuid.uuid4()}",
             params={"year": 2026, "month": 1, "day": 15},
@@ -143,14 +135,14 @@ class TestUserFlow:
         assert response.status_code == 404
 
     def test_show_returns_404_for_unknown_id(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get(
             f"/administrator/request-logs/{uuid.uuid4()}", headers=headers
         )
         assert response.status_code == 404
 
     def test_show_returns_full_detail(self, client, make_user, db_session: Session):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         target = make_user()
         entry = _make_entry(
             db_session,
@@ -170,7 +162,7 @@ class TestUserFlow:
 
 class TestCalendarDayValidation:
     def test_user_detail_rejects_a_nonexistent_calendar_date(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get(
             f"/administrator/request-logs/users/{uuid.uuid4()}",
             params={"year": 2026, "month": 2, "day": 30},
@@ -179,7 +171,7 @@ class TestCalendarDayValidation:
         assert response.status_code == 422
 
     def test_user_detail_rejects_an_out_of_range_year(self, client, make_user):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         response = client.get(
             f"/administrator/request-logs/users/{uuid.uuid4()}",
             params={"year": 0, "month": 1, "day": 1},
@@ -192,7 +184,7 @@ class TestNPlusOne:
     def test_list_days_query_count_does_not_scale_with_day_or_user_count(
         self, client, make_user, db_session: Session, count_queries
     ):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         for day in (5, 6, 7):
             _make_entry(
                 db_session,
@@ -229,7 +221,7 @@ class TestNPlusOne:
     def test_user_detail_query_count_does_not_scale_with_entry_count(
         self, client, make_user, db_session: Session, count_queries
     ):
-        headers = _auth_headers(client, make_user, administrator=True)
+        headers = login_headers(client, make_user, administrator=True)
         target = make_user()
         for _ in range(3):
             _make_entry(

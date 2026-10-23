@@ -37,3 +37,26 @@ def test_require_permission_rejects_user_without_permission(make_user):
 
     assert exc_info.value.status_code == 403
     assert "userMaintain" in exc_info.value.detail
+
+
+def test_a_guarded_route_refuses_an_unverified_administrator(client, make_user):
+    user = make_user(password="correct-password", administrator=True, verified=False)
+    login = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    response = client.get("/userdirectory", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "E-Mail-Adresse nicht verifiziert."
+
+
+def test_a_guarded_route_admits_a_verified_administrator(client, make_user):
+    user = make_user(password="correct-password", administrator=True)
+    login = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    assert client.get("/userdirectory", headers=headers).status_code == 200

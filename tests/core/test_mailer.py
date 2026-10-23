@@ -1,9 +1,11 @@
 import ssl
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from jinja2 import Template
+from pydantic import SecretStr
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core import mailer
@@ -302,12 +304,13 @@ def test_send_message_refuses_to_send_when_starttls_unavailable(
     mock_server.sendmail.assert_not_called()
 
 
-def test_send_message_skips_login_when_user_is_null_sentinel(
+def test_send_message_skips_login_without_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
     monkeypatch.setenv("SMTP_PORT", "587")
-    monkeypatch.setenv("SMTP_USER", "null")
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
 
     with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
         mock_server = mock_smtp.return_value.__enter__.return_value
@@ -315,6 +318,77 @@ def test_send_message_skips_login_when_user_is_null_sentinel(
         mailer._send_message(MagicMock(), ["a@example.test"])
 
     mock_server.login.assert_not_called()
+    mock_server.sendmail.assert_called_once()
+
+
+def test_send_message_skips_login_over_ssl_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    with patch("app.core.mailer.smtplib.SMTP_SSL") as mock_ssl:
+        mock_server = mock_ssl.return_value.__enter__.return_value
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    mock_server.login.assert_not_called()
+    mock_server.sendmail.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("user", "password"),
+    [("user", None), (None, SecretStr("secret"))],
+    ids=["only-user", "only-password"],
+)
+def test_login_is_skipped_when_only_one_credential_is_set(
+    monkeypatch: pytest.MonkeyPatch, user: str | None, password: SecretStr | None
+):
+    # Settings refuse such a pair at boot; the helper still must never log in
+    # with half a credential.
+    monkeypatch.setattr(
+        mailer,
+        "get_settings",
+        lambda: SimpleNamespace(smtp_user=user, smtp_password=password),
+    )
+    server = MagicMock()
+
+    mailer._login_if_configured(server)
+
+    server.login.assert_not_called()
+
+
+def test_send_message_logs_in_with_the_word_null_as_a_real_credential(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USER", "null")
+    monkeypatch.setenv("SMTP_PASSWORD", "null")
+
+    with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
+        mock_server = mock_smtp.return_value.__enter__.return_value
+        mock_server.has_extn.return_value = True
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    mock_server.login.assert_called_once_with("null", "null")
+
+
+def test_send_message_logs_in_after_starttls(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "secret")
+
+    with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
+        mock_server = mock_smtp.return_value.__enter__.return_value
+        mock_server.has_extn.return_value = True
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    mock_server.login.assert_called_once_with("user", "secret")
+    method_names = [call[0] for call in mock_server.method_calls]
+    assert method_names.index("starttls") < method_names.index("login")
 
 
 def test_send_message_requires_smtp_host_and_port(monkeypatch: pytest.MonkeyPatch):

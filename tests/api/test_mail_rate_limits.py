@@ -8,16 +8,10 @@ import pytest
 from starlette.requests import Request
 
 from app.api.rate_limiting import MAIL_ACTION_LIMIT, user_or_client_key
+from tests.login import login_as
 
 _PASSWORD = "correct-password"
 _ALLOWED_PER_WINDOW = int(MAIL_ACTION_LIMIT.split("/")[0])
-
-
-def _login(client, user) -> dict[str, str]:
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": _PASSWORD}
-    )
-    return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
 def _contactperson_message(client, user, headers: dict[str, str]):
@@ -72,13 +66,15 @@ def _account(make_user, roles: list[str]):
 def test_the_quota_is_counted_per_account(client, make_user, send, roles):
     sender = _account(make_user, roles)
     other_sender = _account(make_user, roles)
-    sender_headers = _login(client, sender)
+    sender_headers = login_as(client, sender, _PASSWORD)
 
     statuses = [
         send(client, sender, sender_headers).status_code
         for _ in range(_ALLOWED_PER_WINDOW + 1)
     ]
-    other_status = send(client, other_sender, _login(client, other_sender)).status_code
+    other_status = send(
+        client, other_sender, login_as(client, other_sender, _PASSWORD)
+    ).status_code
 
     assert 429 not in statuses[:_ALLOWED_PER_WINDOW]
     assert statuses[_ALLOWED_PER_WINDOW] == 429
@@ -87,7 +83,7 @@ def test_the_quota_is_counted_per_account(client, make_user, send, roles):
 
 def test_all_mail_actions_of_an_account_share_one_quota(client, make_user):
     sender = _account(make_user, ["disponent"])
-    headers = _login(client, sender)
+    headers = login_as(client, sender, _PASSWORD)
     half = _ALLOWED_PER_WINDOW // 2
 
     for _ in range(half):
@@ -100,7 +96,7 @@ def test_all_mail_actions_of_an_account_share_one_quota(client, make_user):
 
 def test_the_limit_follows_the_account_across_addresses(client, make_user):
     sender = _account(make_user, [])
-    headers = _login(client, sender)
+    headers = login_as(client, sender, _PASSWORD)
     for _ in range(_ALLOWED_PER_WINDOW):
         _contactperson_message(client, sender, headers)
 
@@ -122,7 +118,7 @@ def _request_with(authorization: str | None) -> Request:
 
 def test_key_is_the_account_named_by_a_valid_bearer_token(client, make_user):
     user = make_user(password=_PASSWORD)
-    token = _login(client, user)["Authorization"]
+    token = login_as(client, user, _PASSWORD)["Authorization"]
 
     assert user_or_client_key(_request_with(token)) == f"user:{user.email}"
 

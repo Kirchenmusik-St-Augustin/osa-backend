@@ -31,6 +31,13 @@ def test_build_redis_settings_uses_configured_values(monkeypatch: pytest.MonkeyP
     assert settings.database == 2
 
 
+def test_build_redis_settings_without_password(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("VALKEY_PASSWORD", raising=False)
+    get_settings.cache_clear()
+
+    assert build_redis_settings().password is None
+
+
 def test_get_arq_pool_returns_the_same_instance_on_repeated_calls():
     fake_pool = AsyncMock()
     with patch.object(

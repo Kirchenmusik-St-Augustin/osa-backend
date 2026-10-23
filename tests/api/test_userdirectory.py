@@ -3,7 +3,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.db.models.choirjob import Choirjob
-from app.services import user_position_service
+from tests.login import login_headers
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -16,17 +17,12 @@ def _unique(base: str = "Directory") -> str:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None, administrator: bool = False
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password",
+    return login_headers(
+        client,
+        make_user,
         roles=roles if roles is not None else ["disponent"],
         administrator=administrator,
     )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _make_choirjob(db_session: Session) -> Choirjob:
@@ -101,7 +97,7 @@ class TestListUsers:
         matching.surname = marker
         db_session.commit()
 
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=matching.id,
             position_type="choirjobs",

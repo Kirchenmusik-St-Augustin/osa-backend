@@ -5,15 +5,14 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
-    FetchedValue,
     ForeignKey,
     Index,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 from app.db.models.position_columns_mixin import PositionColumns
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 # Native Postgres ENUM for this table's own booking_type column (see
@@ -26,7 +25,7 @@ from app.db.uuid_pk import uuid_pk
 booking_type_enum = Enum("book", "unbook", name="booking_type")
 
 
-class BookingLog(PositionColumns, Base):
+class BookingLog(TimestampColumns, PositionColumns, Base):
     """One append-only row per book/unbook transition -- deliberately NO
     unique index, duplicates are the expected shape (every promote/demote/
     cast-change produces a new row).
@@ -41,12 +40,9 @@ class BookingLog(PositionColumns, Base):
       Booking.fee at write time).
     - `booking_type` is a native Postgres ENUM; `Mapped[str]` keeps every
       existing string comparison working.
-    - `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated
-      by the database's own DEFAULT now(), `updated_at` by the shared
-      set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-      Python. `notified_at` is TIMESTAMPTZ too but stays Python-managed:
-      it is set by the scheduled `notify_upcoming_booking_status` job once
-      a user has been emailed about this transition (see booking_jobs.py).
+    - `notified_at` is TIMESTAMPTZ and stays Python-managed: it is set by
+      the scheduled `notify_upcoming_booking_status` job once a user has
+      been emailed about this transition (see booking_jobs.py).
 
     `performance_id`/`user_id` are nullable, ON DELETE SET NULL foreign
     keys: a deleted Performance or User does not remove or block deletion
@@ -95,9 +91,3 @@ class BookingLog(PositionColumns, Base):
     booking_type: Mapped[str] = mapped_column(booking_type_enum)
     fee: Mapped[int]
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

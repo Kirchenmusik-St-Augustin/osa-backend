@@ -1,10 +1,10 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import Computed, DateTime, Enum, FetchedValue, Index, func
+from sqlalchemy import Computed, Enum, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 # Only "smtp" is written today; the other transports are kept because rows
@@ -27,17 +27,12 @@ _RECIPIENT_COUNT_EXPRESSION = " + ".join(
 )
 
 
-class SentEmail(Base):
+class SentEmail(TimestampColumns, Base):
     """Log of every mail sent (or suppressed). `mail_from` maps to the
     actual `from` column (a reserved Python keyword) via mapped_column's
     explicit column-name argument. `template_key` is the key of the template
     the mailer rendered (e.g. "password-reset"); rows from earlier years still
-    hold the raw header text of their mail there.
-
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python."""
+    hold the raw header text of their mail there."""
 
     __tablename__ = "sent_emails"
     __table_args__ = (Index("sent_emails_created_at_index", "created_at"),)
@@ -56,10 +51,4 @@ class SentEmail(Base):
     # Python.
     recipient_count: Mapped[int] = mapped_column(
         Computed(_RECIPIENT_COUNT_EXPRESSION, persisted=True)
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
     )

@@ -2,6 +2,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from pydantic import SecretStr
 
 from app.services.backup_service import BackupError
 from scripts import restore_db
@@ -106,7 +107,7 @@ class TestTypedConfirmation:
             restore_db,
             "get_settings",
             lambda: SimpleNamespace(
-                database_url="postgresql://u:p@db.example:5432/osa_live"
+                database_url=SecretStr("postgresql://u:p@db.example:5432/osa_live")
             ),
         )
 

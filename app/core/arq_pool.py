@@ -33,10 +33,11 @@ def build_redis_settings() -> RedisSettings:
     dedicated worker container) -- both must resolve to the same Valkey
     instance, so the connection parameters live in exactly one place."""
     settings = get_settings()
+    password = settings.valkey_password
     return RedisSettings(
         host=settings.valkey_host,
         port=settings.valkey_port,
-        password=settings.valkey_password,
+        password=password.get_secret_value() if password else None,
         database=settings.valkey_database,
     )
 

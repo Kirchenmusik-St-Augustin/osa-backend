@@ -24,7 +24,9 @@ if config.config_file_name is not None:
 # URL-encoded credentials.
 config.set_main_option(
     "sqlalchemy.url",
-    require_setting(get_settings().database_url, "DATABASE_URL").replace("%", "%%"),
+    require_setting(get_settings().database_url, "DATABASE_URL")
+    .get_secret_value()
+    .replace("%", "%%"),
 )
 
 target_metadata = Base.metadata

@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -130,7 +131,7 @@ def _get_verified_user(
     return user
 
 
-def get_current_session_id(token: str = Depends(oauth2_scheme)) -> str:
+def get_current_session_id(token: Annotated[str, Depends(oauth2_scheme)]) -> str:
     """The server-side session (JWT `jti`) the request was made with, for
     operations that must treat the caller's own session differently from all
     others (for example a password change)."""
@@ -139,8 +140,8 @@ def get_current_session_id(token: str = Depends(oauth2_scheme)) -> str:
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> User:
     """Dependency that decodes+verifies the JWT, checks the revocable
     server-side session, enforces the idle timeout, and returns the User --

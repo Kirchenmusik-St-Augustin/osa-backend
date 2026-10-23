@@ -14,11 +14,12 @@ from app.schemas.userdirectory import (
 )
 from app.services import coreelement_service
 from app.services.pagination import select_page
+from app.services.position_types import position_column
 
 if TYPE_CHECKING:
     import uuid
 
-    from sqlalchemy.orm import InstrumentedAttribute, Session
+    from sqlalchemy.orm import Session
 
     from app.schemas.pagination import PageParams
     from app.services.position_types import PositionType
@@ -34,15 +35,6 @@ def to_entry(user: User) -> UserDirectoryEntryOutput:
         email=user.email if has_email else None,
         phone=user.phone,
     )
-
-
-# UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
-# identical _BOOKING_POSITION_COLUMNS for the full rationale.
-_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[uuid.UUID | None]] = {
-    "instruments": UserPosition.instrument_id,
-    "voices": UserPosition.voice_id,
-    "choirjobs": UserPosition.choirjob_id,
-}
 
 
 def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
@@ -91,7 +83,7 @@ def list_users_for_position(
         select(User)
         .join(UserPosition, UserPosition.user_id == User.id)
         .where(
-            _USER_POSITION_COLUMNS[position_type] == position_id,
+            position_column(UserPosition, position_type) == position_id,
             User.deleted_at.is_(None),
         )
         .order_by(User.surname, User.givenname, User.id)

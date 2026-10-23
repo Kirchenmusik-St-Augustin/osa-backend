@@ -1,5 +1,7 @@
 import uuid
 
+from tests.login import login_headers
+
 
 def _unique(base: str = "Name") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
@@ -8,15 +10,9 @@ def _unique(base: str = "Name") -> str:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password", roles=roles if roles is not None else ["planner"]
+    return login_headers(
+        client, make_user, roles=roles if roles is not None else ["planner"]
     )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _make_artist(client, headers) -> str:

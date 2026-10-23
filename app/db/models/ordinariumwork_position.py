@@ -1,22 +1,19 @@
 import uuid
-from datetime import datetime
 
 from sqlalchemy import (
     CheckConstraint,
-    DateTime,
-    FetchedValue,
     ForeignKey,
     Index,
     UniqueConstraint,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class OrdinariumworkPosition(Base):
+class OrdinariumworkPosition(TimestampColumns, Base):
     """Pivot row: which Instrument/Voice an Ordinariumwork needs, and in
     what quantity (e.g. "2x Violine, 4x Sopran"). Deliberately restricted
     to instruments/voices ONLY (no choirjobs): `instrument_id`/`voice_id`
@@ -28,10 +25,7 @@ class OrdinariumworkPosition(Base):
     create/update ("setup" payload), never directly (see
     ordinariumwork_service.py).
 
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python. `ordinariumwork_id` is an ON DELETE CASCADE foreign key:
+    `ordinariumwork_id` is an ON DELETE CASCADE foreign key:
     ordinariumwork_service.delete_ordinariumwork() already deletes this
     table's own rows before deleting their Ordinariumwork, CASCADE moves
     that cleanup to the database."""
@@ -68,9 +62,3 @@ class OrdinariumworkPosition(Base):
         ForeignKey("voices.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     quantity: Mapped[int]
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

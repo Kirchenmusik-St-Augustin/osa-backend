@@ -8,6 +8,7 @@ from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from tests.login import DEFAULT_PASSWORD, login_as
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -20,14 +21,10 @@ def _unique(base: str) -> str:
 
 
 def _auth_headers(
-    client, make_user, *, password: str = "correct-password"
+    client, make_user, *, password: str = DEFAULT_PASSWORD
 ) -> tuple[dict[str, str], User]:
     user = make_user(password=password)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": password}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}, user
+    return login_as(client, user, password), user
 
 
 def _make_instrument(db_session: Session) -> Instrument:

@@ -132,6 +132,15 @@ def _build_from_header() -> tuple[str, str]:
     )
 
 
+def _login_if_configured(server: smtplib.SMTP) -> None:
+    """Authenticate only when both credentials are configured; a relay that
+    needs no authentication is configured by leaving them unset."""
+    settings = get_settings()
+    if settings.smtp_user is None or settings.smtp_password is None:
+        return
+    server.login(settings.smtp_user, settings.smtp_password.get_secret_value())
+
+
 def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
     settings = get_settings()
     smtp_host = require_setting(settings.smtp_host, "SMTP_HOST")
@@ -146,8 +155,7 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
         with smtplib.SMTP_SSL(
             smtp_host, smtp_port, timeout=_SMTP_TIMEOUT_SECONDS, context=tls_context
         ) as server:
-            if settings.smtp_user.lower() != "null":
-                server.login(settings.smtp_user, settings.smtp_password)
+            _login_if_configured(server)
             server.sendmail(from_email, recipients, msg.as_string())
     else:
         with smtplib.SMTP(
@@ -163,8 +171,7 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
                 raise RuntimeError(msg_text)
             server.starttls(context=tls_context)
             server.ehlo()
-            if settings.smtp_user.lower() != "null":
-                server.login(settings.smtp_user, settings.smtp_password)
+            _login_if_configured(server)
             server.sendmail(from_email, recipients, msg.as_string())
 
 

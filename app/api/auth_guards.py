@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 
@@ -26,7 +27,9 @@ def ensure_permission(user: User, required_permission: str) -> None:
         )
 
 
-def get_verified_user(current_user: User = Depends(get_current_user)) -> User:
+def get_verified_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
     """Requires a verified email on every route except auth's own endpoints
     (login/refresh/logout/me/verify-email/resend-verification-email).
     Deliberately a separate dependency from get_current_user (not merged
@@ -41,10 +44,10 @@ def get_verified_user(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-def require_permission(required_permission: str) -> Callable[..., User]:
+def require_permission(required_permission: str) -> Callable[[User], User]:
     """Usage: Depends(require_permission("userMaintain"))"""
 
-    def _guard(current_user: User = Depends(get_verified_user)) -> User:
+    def _guard(current_user: Annotated[User, Depends(get_verified_user)]) -> User:
         ensure_permission(current_user, required_permission)
         return current_user
 

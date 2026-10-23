@@ -1,6 +1,7 @@
 import uuid
 
 from app.services import score_service
+from tests.login import login_headers
 
 
 def _unique(base: str = "Werk") -> str:
@@ -21,14 +22,9 @@ def _payload(**overrides: object) -> dict[str, object]:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password", roles=roles if roles is not None else ["scores"]
+    return login_headers(
+        client, make_user, roles=roles if roles is not None else ["scores"]
     )
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 class TestPermissionGuard:

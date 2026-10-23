@@ -5,10 +5,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.db.models.performance import Performance
-from app.services.user_position_service import create_user_position
+from tests.login import DEFAULT_PASSWORD, login_as
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from app.db.models.user import User
 
 
 def _unique(base: str = "Name") -> str:
@@ -17,17 +20,11 @@ def _unique(base: str = "Name") -> str:
 
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None, administrator: bool = False
-) -> dict[str, str]:
+) -> tuple[dict[str, str], User]:
     user = make_user(
-        password="correct-password",
-        roles=roles if roles is not None else ["disponent"],
-        administrator=administrator,
+        password=DEFAULT_PASSWORD, roles=roles, administrator=administrator
     )
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}, user
+    return login_as(client, user), user
 
 
 def _make_composer(client, headers) -> str:

@@ -28,36 +28,20 @@ from app.services.errors import (
 )
 from app.services.pagination import select_page
 from app.services.permission_service import PERMISSION_ROLE_NAMES
+from app.services.position_types import position_column
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable, Sequence
 
     from sqlalchemy import Select
-    from sqlalchemy.orm import InstrumentedAttribute, Session
+    from sqlalchemy.orm import Session
 
     from app.schemas.pagination import PagedRows, PageParams
     from app.services.position_types import PositionType
 
 CoreelementModel = Instrument | Voice | Choirjob | Location | Propriumelement | Role
 
-# Which of PerformancePosition's three FK columns / OrdinariumworkPosition's
-# two FK columns corresponds to a given position_type -- OrdinariumworkPosition
-# structurally has no choirjob_id column at all (see its own model docstring),
-# so it is a 2-entry table, not 3.
-_PERFORMANCE_POSITION_COLUMNS: dict[
-    PositionType, InstrumentedAttribute[uuid.UUID | None]
-] = {
-    "instruments": PerformancePosition.instrument_id,
-    "voices": PerformancePosition.voice_id,
-    "choirjobs": PerformancePosition.choirjob_id,
-}
-_ORDINARIUMWORK_POSITION_COLUMNS: dict[
-    Literal["instruments", "voices"], InstrumentedAttribute[uuid.UUID | None]
-] = {
-    "instruments": OrdinariumworkPosition.instrument_id,
-    "voices": OrdinariumworkPosition.voice_id,
-}
 # The subset of CoreelementModel that actually has an `active` column --
 # narrows config.model back down wherever has_active_field guards the
 # access at runtime (Location/Propriumelement/Role don't have this
@@ -156,12 +140,14 @@ def _make_position_dependency_check(
             ordinariumwork_count = db.execute(
                 select(func.count())
                 .select_from(OrdinariumworkPosition)
-                .where(_ORDINARIUMWORK_POSITION_COLUMNS[position_type] == item.id)
+                .where(
+                    position_column(OrdinariumworkPosition, position_type) == item.id
+                )
             ).scalar_one()
         performance_count = db.execute(
             select(func.count())
             .select_from(PerformancePosition)
-            .where(_PERFORMANCE_POSITION_COLUMNS[position_type] == item.id)
+            .where(position_column(PerformancePosition, position_type) == item.id)
         ).scalar_one()
         return ordinariumwork_count > 0 or performance_count > 0
 

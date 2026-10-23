@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, FetchedValue, Index, func, text
+from sqlalchemy import DateTime, Enum, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.json_types import JsonObject
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 # The first six events are written by the application (see AuthEvent in
@@ -27,7 +28,7 @@ auth_event_enum = Enum(
 )
 
 
-class AuthLog(Base):
+class AuthLog(TimestampColumns, Base):
     """Write-only audit trail, keyed by `email` string rather than `user_id`
     (a log entry must survive even if the referenced user is later
     deleted). `payload` is a native JSONB column -- the service layer works
@@ -41,11 +42,9 @@ class AuthLog(Base):
     here at all).
 
     `fired_at` is TIMESTAMPTZ and stays Python-managed via
-    datetime.now(UTC): it names the moment of the event, while
-    `created_at`/`updated_at` (TIMESTAMPTZ, database DEFAULT now() and the
-    shared set_updated_at() BEFORE UPDATE trigger, never assigned from
-    Python) are the timestamp pair every table carries. Rows are never updated,
-    so `updated_at` stays NULL."""
+    datetime.now(UTC): it names the moment of the event, while `created_at`
+    is the row's own insertion time. Rows are never updated, so `updated_at`
+    stays NULL."""
 
     __tablename__ = "auth_logs"
     __table_args__ = (
@@ -64,9 +63,3 @@ class AuthLog(Base):
     user_agent: Mapped[str | None]
     email: Mapped[str | None]
     payload: Mapped[JsonObject | None] = mapped_column(JSONB())
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

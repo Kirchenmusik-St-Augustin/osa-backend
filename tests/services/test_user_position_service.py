@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.services import user_position_service
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -25,19 +26,19 @@ class TestGetPositionIdsForUser:
             make_instrument().id,
             make_voice().id,
         )
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
             position_id=instrument_a,
         )
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
             position_id=instrument_b,
         )
-        user_position_service.create_user_position(
+        create_user_position(
             db_session, user_id=user.id, position_type="voices", position_id=voice
         )
         result = user_position_service.get_position_ids_for_user(db_session, user.id)
@@ -53,19 +54,19 @@ class TestGetQualifiedUserIdsBatch:
         first = make_user()
         second = make_user()
         instrument_id, voice_id = make_instrument().id, make_voice().id
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=first.id,
             position_type="instruments",
             position_id=instrument_id,
         )
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=second.id,
             position_type="instruments",
             position_id=instrument_id,
         )
-        user_position_service.create_user_position(
+        create_user_position(
             db_session, user_id=first.id, position_type="voices", position_id=voice_id
         )
 
@@ -93,7 +94,7 @@ class TestGetQualifiedUserIdsBatch:
         user = make_user()
         ids = {make_instrument().id, make_instrument().id, make_instrument().id}
         for position_id in ids:
-            user_position_service.create_user_position(
+            create_user_position(
                 db_session,
                 user_id=user.id,
                 position_type="instruments",
