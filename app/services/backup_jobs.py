@@ -1,6 +1,6 @@
 """Scheduled Koofr backup job, registered in
 app.worker.settings.WorkerSettings (see app.worker.cron_config for the
-shared timing catalog).
+shared timing catalog), plus its operator-triggered counterpart.
 
 Unlike housekeeping_jobs.py/booking_jobs.py (which deliberately let
 exceptions propagate to arq's own Worker.run_job(), which already
@@ -70,3 +70,25 @@ def job_backup_koofr() -> None:
     if deleted:
         logger.info("Cleaned up %d expired Koofr backup(s).", len(deleted))
     record_job_run(_JOB_ID, started_at, status="success", output=output)
+
+
+def job_manual_backup_koofr() -> None:
+    """Operator-triggered backup (scheduler page): the same backup as the
+    nightly job, tagged "-manual" in its file name and without the retention
+    cleanup. Its outcome replaces the last run of `backup_koofr`."""
+    started_at = datetime.now(UTC)
+
+    try:
+        backup_name = run_backup(manual=True)
+    except BackupError as exc:
+        logger.exception("Manual Koofr backup failed.")
+        record_job_run(_JOB_ID, started_at, status="failure", output=str(exc))
+        return
+
+    logger.info("Manual Koofr backup succeeded: %s", backup_name)
+    record_job_run(
+        _JOB_ID,
+        started_at,
+        status="success",
+        output=f"Manual backup {backup_name} created.",
+    )

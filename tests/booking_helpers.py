@@ -1,6 +1,6 @@
 import itertools
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -32,15 +32,8 @@ if TYPE_CHECKING:
 _schedule_counter = itertools.count(2)
 
 
-_id_counter = itertools.count(700_000)
-
-
 def unique(base: str = "Name") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
-
-
-def unique_id() -> int:
-    return next(_id_counter)
 
 
 def unique_schedule() -> datetime:
@@ -50,28 +43,24 @@ def unique_schedule() -> datetime:
 
 
 def create_location(db_session: Session) -> Location:
-    now = datetime.now(UTC)
     location = Location(
         name=unique("Location"),
         order=0,
         address="Adresse 1",
         color="000000",
-        created_at=now,
-        updated_at=now,
     )
     db_session.add(location)
     db_session.commit()
     return location
 
 
-def create_ordinariumwork(db_session: Session, composer_id: int) -> Ordinariumwork:
-    now = datetime.now(UTC)
+def create_ordinariumwork(
+    db_session: Session, composer_id: uuid.UUID
+) -> Ordinariumwork:
     work = Ordinariumwork(
         name=unique("Werk"),
         artist_id=composer_id,
         demanding=False,
-        created_at=now,
-        updated_at=now,
     )
     db_session.add(work)
     db_session.commit()
@@ -79,28 +68,21 @@ def create_ordinariumwork(db_session: Session, composer_id: int) -> Ordinariumwo
 
 
 def create_instrument(db_session: Session) -> Instrument:
-    now = datetime.now(UTC)
-    instrument = Instrument(
-        name=unique("Instrument"), order=0, created_at=now, updated_at=now
-    )
+    instrument = Instrument(name=unique("Instrument"), order=0)
     db_session.add(instrument)
     db_session.commit()
     return instrument
 
 
 def create_voice(db_session: Session, *, order: int = 0) -> Voice:
-    now = datetime.now(UTC)
-    voice = Voice(name=unique("Voice"), order=order, created_at=now, updated_at=now)
+    voice = Voice(name=unique("Voice"), order=order)
     db_session.add(voice)
     db_session.commit()
     return voice
 
 
 def create_choirjob(db_session: Session) -> Choirjob:
-    now = datetime.now(UTC)
-    choirjob = Choirjob(
-        name=unique("Choirjob"), order=0, created_at=now, updated_at=now
-    )
+    choirjob = Choirjob(name=unique("Choirjob"), order=0)
     db_session.add(choirjob)
     db_session.commit()
     return choirjob
@@ -109,13 +91,13 @@ def create_choirjob(db_session: Session) -> Choirjob:
 def create_performance(
     db_session: Session,
     *,
-    instruments: dict[int, int] | None = None,
-    voices: dict[int, int] | None = None,
-    choirjobs: dict[int, int] | None = None,
+    instruments: dict[uuid.UUID, int] | None = None,
+    voices: dict[uuid.UUID, int] | None = None,
+    choirjobs: dict[uuid.UUID, int] | None = None,
     schedule: datetime | None = None,
     extracost_amount: int | None = None,
     extracost_description: str | None = None,
-) -> int:
+) -> uuid.UUID:
     composer = artist_service.create_artist(
         db_session,
         ArtistRequest(surname=unique("Composer"), givenname="Given", composer=True),
@@ -155,13 +137,13 @@ def create_performance(
     return performance.id
 
 
-def get_performance(db_session: Session, performance_id: int) -> Performance:
+def get_performance(db_session: Session, performance_id: uuid.UUID) -> Performance:
     return db_session.execute(
         select(Performance).where(Performance.id == performance_id)
     ).scalar_one()
 
 
-def move_to_past(db_session: Session, performance_id: int) -> None:
+def move_to_past(db_session: Session, performance_id: uuid.UUID) -> None:
     performance = get_performance(db_session, performance_id)
     performance.schedule = local_now() - timedelta(days=1)
     db_session.commit()
@@ -176,22 +158,19 @@ _POSITION_COLUMN_NAMES = {
 
 def create_booking(
     db_session: Session,
-    performance_id: int,
-    user_id: int,
+    performance_id: uuid.UUID,
+    user_id: uuid.UUID,
     position_type: str,
-    position_id: int,
+    position_id: uuid.UUID,
     *,
     fee: int = 80,
     order: int = 0,
 ) -> Booking:
-    now = datetime.now(UTC)
     booking = Booking(
         performance_id=performance_id,
         user_id=user_id,
         fee=fee,
         order=order,
-        created_at=now,
-        updated_at=now,
         **{_POSITION_COLUMN_NAMES[position_type]: position_id},
     )
     db_session.add(booking)
@@ -201,18 +180,15 @@ def create_booking(
 
 def create_booking_request(
     db_session: Session,
-    performance_id: int,
-    user_id: int,
+    performance_id: uuid.UUID,
+    user_id: uuid.UUID,
     *,
     notbooked_at: datetime | None = None,
 ) -> BookingRequest:
-    now = datetime.now(UTC)
     request = BookingRequest(
         performance_id=performance_id,
         user_id=user_id,
         notbooked_at=notbooked_at,
-        created_at=now,
-        updated_at=now,
     )
     db_session.add(request)
     db_session.commit()
@@ -232,7 +208,7 @@ def create_named_user(db_session: Session, *, surname: str, givenname: str) -> U
 
 
 def qualify(
-    db_session: Session, user_id: int, position_type: str, position_id: int
+    db_session: Session, user_id: uuid.UUID, position_type: str, position_id: uuid.UUID
 ) -> None:
     create_user_position(
         db_session,

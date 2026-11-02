@@ -10,7 +10,23 @@ def test_functions_is_non_empty():
     # arq's Worker.__init__ raises RuntimeError at startup if this were
     # ever empty (see WorkerSettings' own docstring) -- a smoke test
     # against silently losing every on-demand job registration.
-    assert len(WorkerSettings.functions) == 7
+    assert len(WorkerSettings.functions) == 9
+
+
+def test_on_demand_functions_register_both_manual_triggers():
+    names = {function.__name__ for function in WorkerSettings.functions}
+
+    assert {"manual_backup_task", "manual_downsync_task"} <= names
+
+
+def test_no_on_demand_function_shares_its_name_with_a_cron_coroutine():
+    # arq keeps one entry per function name and lets a cron job replace an
+    # on-demand function of the same name, so a clash would silently turn the
+    # on-demand job into the scheduled one on the stages that schedule it.
+    on_demand = {function.__name__ for function in WorkerSettings.functions}
+    scheduled = {coroutine.__name__ for coroutine in _JOB_COROUTINES.values()}
+
+    assert on_demand.isdisjoint(scheduled)
 
 
 def test_cron_jobs_is_non_empty_under_the_test_suite_s_default_environment():

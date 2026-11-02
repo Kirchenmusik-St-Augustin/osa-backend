@@ -22,6 +22,8 @@ from app.worker.cron_config import CronSchedule, build_cron_catalog
 from app.worker.scheduled_jobs import (
     backup_koofr_task,
     downsync_task,
+    manual_backup_task,
+    manual_downsync_task,
     notify_upcoming_booking_status_task,
     purge_expired_password_reset_tokens_task,
     purge_old_request_logs_task,
@@ -101,6 +103,8 @@ class WorkerSettings:
         send_password_reset_email_task,
         send_booked_or_standby_canceled_email_task,
         send_user_message_email_task,
+        manual_backup_task,
+        manual_downsync_task,
     ]
     cron_jobs: ClassVar[list[CronJob]] = [
         _build_cron_job(schedule) for schedule in _active_schedules

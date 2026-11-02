@@ -183,10 +183,13 @@ run of one of this worker's own cron jobs, `[triggered]` for any job
 fired on demand via `enqueue_job()` (registration/verification/
 password-reset/notification mails). The manual "Trigger backup now" /
 "Trigger downsync now" admin actions (`POST
-/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) call
-`run_backup()`/`run_restore()` directly and synchronously, bypassing
-`enqueue_job()` entirely — they never go through arq at all, so they
-never appear in the `arq.worker` log, tagged or not.
+/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) only
+queue a job for the worker and answer `202 Accepted`; the web process
+never runs `pg_dump`/`pg_restore` itself. They are queued under the id of
+the scheduled job (`backup_koofr`, `downsync`), so a trigger is dropped
+while that job is still queued or running, and the outcome appears as the
+job's last run on the scheduler page and as a `[triggered]` line in the
+`arq.worker` log.
 
 ## Scripts
 
@@ -443,10 +446,14 @@ eigenen Cron-Jobs dieses Workers, `[triggered]` für jeden on-demand per
 `enqueue_job()` ausgelösten Job (Registrierungs-/Verifizierungs-/
 Passwort-Reset-/Benachrichtigungsmails). Die manuellen Admin-Aktionen
 „Backup jetzt auslösen“ / „Downsync jetzt auslösen“ (`POST
-/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) rufen
-`run_backup()`/`run_restore()` direkt und synchron auf, ohne
-`enqueue_job()` — sie laufen komplett an arq vorbei und erscheinen daher
-nie im `arq.worker`-Log, weder getaggt noch ungetaggt.
+/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) stellen
+nur einen Job für den Worker in die Warteschlange und antworten mit
+`202 Accepted`; der Web-Prozess führt `pg_dump`/`pg_restore` nie selbst
+aus. Sie laufen unter der ID des geplanten Jobs (`backup_koofr`,
+`downsync`), ein Auslöser wird also verworfen, solange dieser Job noch in
+der Warteschlange liegt oder läuft; das Ergebnis erscheint als letzter
+Lauf des Jobs auf der Scheduler-Seite und als `[triggered]`-Zeile im
+`arq.worker`-Log.
 
 ## Skripte
 

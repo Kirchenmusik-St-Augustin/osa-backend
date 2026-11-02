@@ -2,7 +2,6 @@ from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy import func, select
 
-from app.db.models.artist import Artist
 from app.db.models.instrument import Instrument
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.ordinariumwork_position import OrdinariumworkPosition
@@ -18,13 +17,18 @@ from app.schemas.ordinariumwork import (
     OrdinariumworkResponse,
     OrdinariumworkSetupOutput,
 )
-from app.services.artist_service import label_for
 from app.services.coreelement_service import list_coreelements
 from app.services.errors import (
     DomainValidationError,
     FieldError,
     GeneralValidationError,
     NotFoundError,
+)
+from app.services.work_common import (
+    WorkKind,
+    search_works,
+    validate_work_fields,
+    work_response,
 )
 
 if TYPE_CHECKING:
@@ -33,14 +37,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-_NAME_MIN_LENGTH = 3
-_NAME_MAX_LENGTH = 60
-_DURATION_MIN = 1
-_DURATION_MAX = 999
-_SEARCH_RESULT_LIMIT = 20
-_NAME_LENGTH_ERROR = (
-    f"Muss zwischen {_NAME_MIN_LENGTH} und {_NAME_MAX_LENGTH} Zeichen lang sein."
-)
+_WORK_KIND = WorkKind(model=Ordinariumwork, response_type=OrdinariumworkResponse)
 
 # Ordinariumwork positions are restricted to these two types
 # (OrdinariumworkPosition structurally excludes 'choirjobs' -- it has no
@@ -142,42 +139,14 @@ def _validate_positions(
 def _validate(
     db: Session, data: OrdinariumworkRequest, exclude_id: uuid.UUID | None
 ) -> list[FieldError]:
-    errors: list[FieldError] = []
-
-    if not _NAME_MIN_LENGTH <= len(data.name) <= _NAME_MAX_LENGTH:
-        errors.append(FieldError("name", _NAME_LENGTH_ERROR))
-
-    if (
-        db.execute(
-            select(Artist.id).where(Artist.id == data.artist_id)
-        ).scalar_one_or_none()
-        is None
-    ):
-        errors.append(FieldError("artist_id", "Komponist/in wurde nicht gefunden."))
-
-    if (
-        data.duration is not None
-        and not _DURATION_MIN <= data.duration <= _DURATION_MAX
-    ):
-        errors.append(
-            FieldError(
-                "duration", f"Muss zwischen {_DURATION_MIN} und {_DURATION_MAX} liegen."
-            )
-        )
-
-    stmt = select(Ordinariumwork.id).where(
-        func.lower(Ordinariumwork.name) == data.name.lower(),
-        Ordinariumwork.artist_id == data.artist_id,
+    errors = validate_work_fields(
+        db,
+        _WORK_KIND,
+        name=data.name,
+        artist_id=data.artist_id,
+        duration=data.duration,
+        exclude_id=exclude_id,
     )
-    if exclude_id is not None:
-        stmt = stmt.where(Ordinariumwork.id != exclude_id)
-    if db.execute(stmt).scalar_one_or_none() is not None:
-        errors.append(
-            FieldError(
-                "name", "Dieses Werk ist für diesen Komponisten bereits erfasst."
-            )
-        )
-
     errors.extend(_validate_positions(db, data.setup.instruments, "instruments"))
     errors.extend(_validate_positions(db, data.setup.voices, "voices"))
 
@@ -225,45 +194,11 @@ def _sync_positions(
 
 
 def _to_response(db: Session, ordinariumwork: Ordinariumwork) -> OrdinariumworkResponse:
-    artist = db.execute(
-        select(Artist).where(Artist.id == ordinariumwork.artist_id)
-    ).scalar_one_or_none()
-    return OrdinariumworkResponse(
-        id=ordinariumwork.id,
-        name=ordinariumwork.name,
-        description=ordinariumwork.description,
-        artist_id=ordinariumwork.artist_id,
-        artist_name=label_for(artist) if artist else "",
-        duration=ordinariumwork.duration,
-        demanding=ordinariumwork.demanding,
-    )
+    return work_response(db, _WORK_KIND, ordinariumwork)
 
 
 def search_ordinariumworks(db: Session, query: str) -> Sequence[IdLabelOutput]:
-    """Filtered and sorted in the database (not in memory): every
-    whitespace-separated word in `query` must appear in the work's name or
-    its artist's name."""
-    words = [word for word in query.lower().split() if word]
-    if not words:
-        return []
-
-    combined = func.lower(
-        Artist.surname + " " + Artist.givenname + " " + Ordinariumwork.name
-    )
-    stmt = (
-        select(Ordinariumwork, Artist)
-        .join(Artist, Ordinariumwork.artist_id == Artist.id)
-        .where(*[combined.contains(word, autoescape=True) for word in words])
-        .order_by(Artist.surname, Artist.givenname, Ordinariumwork.name)
-        .limit(_SEARCH_RESULT_LIMIT)
-    )
-    rows = db.execute(stmt).all()
-    return [
-        IdLabelOutput(
-            id=ordinariumwork.id, label=f"{label_for(artist)}: {ordinariumwork.name}"
-        )
-        for ordinariumwork, artist in rows
-    ]
+    return search_works(db, _WORK_KIND, query)
 
 
 def get_available_positions(db: Session) -> OrdinariumworkAvailablePositionsOutput:

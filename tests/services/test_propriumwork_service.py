@@ -207,6 +207,25 @@ class TestCreatePropriumwork:
                 db_session, _request(artist_id, name=name)
             )
 
+    def test_reports_every_failing_work_field(self, db_session: Session):
+        # Built without validation: the request schema already refuses these
+        # values, the service check is the second line of defence.
+        data = PropriumworkRequest.model_construct(
+            name="ab",
+            description=None,
+            artist_id=uuid.uuid4(),
+            duration=0,
+            demanding=False,
+        )
+
+        errors = propriumwork_service._validate(db_session, data, None)
+
+        assert [field for field, _message in errors] == [
+            "name",
+            "artist_id",
+            "duration",
+        ]
+
     def test_rejects_out_of_range_duration(self):
         # Same tightening as test_rejects_short_name, for
         # PropriumworkRequest's new Field(le=999).

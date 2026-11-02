@@ -24,6 +24,8 @@ _WRAPPERS_AND_TARGETS = [
     (scheduled_jobs.purge_old_request_logs_task, "purge_old_request_logs"),
     (scheduled_jobs.backup_koofr_task, "job_backup_koofr"),
     (scheduled_jobs.downsync_task, "job_downsync"),
+    (scheduled_jobs.manual_backup_task, "job_manual_backup_koofr"),
+    (scheduled_jobs.manual_downsync_task, "job_downsync"),
 ]
 
 # The four simple, single-exit-point job bodies that go through
@@ -115,10 +117,13 @@ class TestRunAndRecord:
         not additionally record a run for either of them."""
         with (
             patch.object(scheduled_jobs, "job_backup_koofr"),
+            patch.object(scheduled_jobs, "job_manual_backup_koofr"),
             patch.object(scheduled_jobs, "job_downsync"),
         ):
             asyncio.run(scheduled_jobs.backup_koofr_task({}))
+            asyncio.run(scheduled_jobs.manual_backup_task({}))
             asyncio.run(scheduled_jobs.downsync_task({}))
+            asyncio.run(scheduled_jobs.manual_downsync_task({}))
 
         mock_record_job_run.assert_not_called()
 
@@ -139,6 +144,12 @@ class TestSelfRecordingTasks:
         [
             (scheduled_jobs.backup_koofr_task, "job_backup_koofr", "backup_koofr"),
             (scheduled_jobs.downsync_task, "job_downsync", "downsync"),
+            (
+                scheduled_jobs.manual_backup_task,
+                "job_manual_backup_koofr",
+                "backup_koofr",
+            ),
+            (scheduled_jobs.manual_downsync_task, "job_downsync", "downsync"),
         ],
     )
     def test_an_escaped_exception_is_recorded_and_reraised(
@@ -162,6 +173,8 @@ class TestSelfRecordingTasks:
         [
             (scheduled_jobs.backup_koofr_task, "job_backup_koofr"),
             (scheduled_jobs.downsync_task, "job_downsync"),
+            (scheduled_jobs.manual_backup_task, "job_manual_backup_koofr"),
+            (scheduled_jobs.manual_downsync_task, "job_downsync"),
         ],
     )
     def test_the_failure_is_recorded_through_the_threadpool(

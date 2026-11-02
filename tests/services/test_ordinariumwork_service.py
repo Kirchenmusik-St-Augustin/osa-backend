@@ -257,6 +257,46 @@ class TestCreateOrdinariumwork:
             ("setup", "instruments: Element nicht gefunden.")
         ]
 
+    def test_rejects_unknown_voice_in_setup(self, db_session: Session):
+        artist_id = _make_artist(db_session)
+        setup = OrdinariumworkSetupInput(
+            voices=[OrdinariumworkPositionInput(id=uuid.uuid4(), quantity=1)]
+        )
+
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
+            ordinariumwork_service.create_ordinariumwork(
+                db_session, _request(artist_id, setup=setup)
+            )
+
+        assert exc_info.value.errors == [("setup", "voices: Element nicht gefunden.")]
+
+    def test_reports_the_work_field_errors_before_the_setup_errors(
+        self, db_session: Session
+    ):
+        # Built without validation: the request schema already refuses these
+        # values, the service check is the second line of defence.
+        data = OrdinariumworkRequest.model_construct(
+            name="ab",
+            description=None,
+            artist_id=uuid.uuid4(),
+            duration=0,
+            demanding=False,
+            setup=OrdinariumworkSetupInput(
+                instruments=[OrdinariumworkPositionInput(id=uuid.uuid4(), quantity=1)]
+            ),
+        )
+
+        errors = ordinariumwork_service._validate(db_session, data, None)
+
+        assert [field for field, _message in errors] == [
+            "name",
+            "artist_id",
+            "duration",
+            "setup",
+        ]
+
     def test_rejects_duplicate_position_entry(self, db_session: Session):
         artist_id = _make_artist(db_session)
         instrument = _make_instrument(db_session)

@@ -118,3 +118,55 @@ class TestJobBackupKoofr:
         assert recorded["status"] == "success"
         assert "archive.dump" in recorded["output"]
         assert "delete failed" in recorded["output"]
+
+
+class TestJobManualBackupKoofr:
+    def test_runs_a_manual_backup_without_the_retention_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch, mock_record_job_run: Mock
+    ):
+        run_backup_calls: list[dict[str, object]] = []
+
+        def fake_run_backup(**kwargs: object) -> str:
+            run_backup_calls.append(kwargs)
+            return "production-2026-08-13_12-00-00-manual.dump"
+
+        def unexpected_cleanup() -> list[str]:
+            msg = "a manual backup must not clean up older backups"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(backup_jobs, "run_backup", fake_run_backup)
+        monkeypatch.setattr(backup_jobs, "cleanup_old_backups", unexpected_cleanup)
+
+        backup_jobs.job_manual_backup_koofr()
+
+        assert run_backup_calls == [{"manual": True}]
+        mock_record_job_run.assert_called_once()
+        assert mock_record_job_run.call_args.args[0] == "backup_koofr"
+        assert mock_record_job_run.call_args.kwargs == {
+            "status": "success",
+            "output": (
+                "Manual backup production-2026-08-13_12-00-00-manual.dump created."
+            ),
+        }
+
+    def test_records_the_failure_with_the_backup_error_message(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        mock_record_job_run: Mock,
+    ):
+        def failing_backup(**_kwargs: object) -> str:
+            msg = "Koofr upload failed"
+            raise BackupError(msg)
+
+        monkeypatch.setattr(backup_jobs, "run_backup", failing_backup)
+
+        with caplog.at_level(logging.ERROR):
+            backup_jobs.job_manual_backup_koofr()
+
+        assert "manual koofr backup failed" in caplog.text.lower()
+        assert mock_record_job_run.call_args.args[0] == "backup_koofr"
+        assert mock_record_job_run.call_args.kwargs == {
+            "status": "failure",
+            "output": "Koofr upload failed",
+        }

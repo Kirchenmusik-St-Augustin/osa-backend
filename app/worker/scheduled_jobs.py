@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
-from app.services.backup_jobs import job_backup_koofr
+from app.services.backup_jobs import job_backup_koofr, job_manual_backup_koofr
 from app.services.booking_jobs import (
     notify_upcoming_booking_status,
     purge_stale_booking_requests,
@@ -128,6 +128,23 @@ async def backup_koofr_task(
 
 
 async def downsync_task(
+    ctx: dict[str, object],  # noqa: ARG001 -- see purge_stale_booking_requests_task
+) -> None:
+    await _run_self_recording("downsync", job_downsync)
+
+
+# The two on-demand jobs below run the same bodies as the cron jobs above but
+# under their own function names: arq keeps one entry per function name and a
+# cron job of the same name would replace the on-demand one on a stage that
+# schedules it. Both record under the scheduled job's id, so the scheduler
+# page shows their outcome as that job's last run.
+async def manual_backup_task(
+    ctx: dict[str, object],  # noqa: ARG001 -- see purge_stale_booking_requests_task
+) -> None:
+    await _run_self_recording("backup_koofr", job_manual_backup_koofr)
+
+
+async def manual_downsync_task(
     ctx: dict[str, object],  # noqa: ARG001 -- see purge_stale_booking_requests_task
 ) -> None:
     await _run_self_recording("downsync", job_downsync)

@@ -1,12 +1,10 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 
 from app.db.models.job_run import JobRun
 from app.services import permission_service
-from app.services.backup_service import BackupError
 from tests.login import login_headers
 
 if TYPE_CHECKING:
@@ -83,18 +81,13 @@ class TestTriggerNeedsItsOwnPermission:
             "/administrator/scheduler/downsync/trigger",
         ],
     )
-    def test_the_trigger_is_refused_without_running_the_action(
-        self, client, view_only_headers, path
+    def test_the_trigger_is_refused_without_queueing_the_job(
+        self, client, view_only_headers, path, fake_arq_pool
     ):
-        with (
-            patch("app.api.router_includes.scheduler.run_backup") as run_backup,
-            patch("app.api.router_includes.scheduler.run_restore") as run_restore,
-        ):
-            response = client.post(path, headers=view_only_headers)
+        response = client.post(path, headers=view_only_headers)
 
         assert response.status_code == 403
-        run_backup.assert_not_called()
-        run_restore.assert_not_called()
+        fake_arq_pool.enqueue_job.assert_not_called()
 
 
 def test_returns_registered_jobs_with_expected_shape(client, make_user):
@@ -152,8 +145,8 @@ def test_shows_production_only_jobs_in_production(client, make_user, monkeypatch
 
 
 class TestTriggerBackup:
-    def test_returns_201_with_backup_name_and_triggered_at(
-        self, client, make_user, monkeypatch
+    def test_queues_the_manual_backup_and_answers_202(
+        self, client, make_user, monkeypatch, fake_arq_pool
     ):
         # Set the env BEFORE login_headers() triggers the first
         # get_settings() call in this test (login itself doesn't depend on
@@ -162,148 +155,64 @@ class TestTriggerBackup:
         monkeypatch.setenv("APP_ENVIRONMENT", "production")
         headers = login_headers(client, make_user, administrator=True)
 
-        # Patched at the router's import site (app.api.router_includes.scheduler),
-        # not app.services.backup_service -- `from ... import run_backup` copies
-        # the name into the router module's own namespace.
-        with patch(
-            "app.api.router_includes.scheduler.run_backup",
-            return_value="production-2026-08-13_12-00-00-manual.tar.gz",
-        ) as mock_run_backup:
-            response = client.post(
-                "/administrator/scheduler/backup/trigger", headers=headers
-            )
+        response = client.post(
+            "/administrator/scheduler/backup/trigger", headers=headers
+        )
 
-        assert response.status_code == 201
+        assert response.status_code == 202
         body = response.json()
-        assert body["backup_name"] == "production-2026-08-13_12-00-00-manual.tar.gz"
+        assert body["job_id"] == "backup_koofr"
         # Locks in the UtcDatetime contract (Zeitzonen-Konsolidierung,
         # 2026-08-14): must carry a real UTC offset, not an offset-free
         # string, consistent with every other UTC-instant response field.
-        triggered_at = datetime.fromisoformat(body["triggered_at"])
-        assert triggered_at.tzinfo is not None
-        mock_run_backup.assert_called_once_with(manual=True)
+        assert datetime.fromisoformat(body["queued_at"]).tzinfo is not None
+        fake_arq_pool.enqueue_job.assert_awaited_once_with(
+            "manual_backup_task", _job_id="backup_koofr"
+        )
 
-    def test_returns_500_with_detail_when_backup_fails(
-        self, client, make_user, monkeypatch
-    ):
-        monkeypatch.setenv("APP_ENVIRONMENT", "production")
-        headers = login_headers(client, make_user, administrator=True)
-
-        with patch(
-            "app.api.router_includes.scheduler.run_backup",
-            side_effect=BackupError("Koofr upload failed"),
-        ):
-            response = client.post(
-                "/administrator/scheduler/backup/trigger", headers=headers
-            )
-
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Koofr upload failed"
-
-    def test_returns_409_outside_production_without_running_backup(
-        self, client, make_user
+    def test_returns_409_outside_production_without_queueing(
+        self, client, make_user, fake_arq_pool
     ):
         headers = login_headers(client, make_user, administrator=True)
 
-        def unexpected_run_backup(**_kwargs: object) -> str:
-            msg = "must never run a backup once blocked by the production gate"
-            raise AssertionError(msg)
-
-        with patch(
-            "app.api.router_includes.scheduler.run_backup",
-            side_effect=unexpected_run_backup,
-        ):
-            response = client.post(
-                "/administrator/scheduler/backup/trigger", headers=headers
-            )
+        response = client.post(
+            "/administrator/scheduler/backup/trigger", headers=headers
+        )
 
         assert response.status_code == 409
+        fake_arq_pool.enqueue_job.assert_not_called()
 
 
 class TestTriggerDownsync:
-    def test_returns_201_with_restored_backup_and_triggered_at(self, client, make_user):
+    def test_queues_the_manual_downsync_and_answers_202(
+        self, client, make_user, fake_arq_pool
+    ):
         headers = login_headers(client, make_user, administrator=True)
 
-        with (
-            patch(
-                "app.api.router_includes.scheduler.list_backups",
-                return_value=[
-                    "production-2024-01-01_00-00-00.tar.gz",
-                    "production-2024-06-01_00-00-00.tar.gz",
-                ],
-            ) as mock_list_backups,
-            patch(
-                "app.api.router_includes.scheduler.run_restore",
-                return_value="production-2024-06-01_00-00-00.tar.gz",
-            ) as mock_run_restore,
-        ):
-            response = client.post(
-                "/administrator/scheduler/downsync/trigger", headers=headers
-            )
-
-        assert response.status_code == 201
-        body = response.json()
-        assert body["restored_backup"] == "production-2024-06-01_00-00-00.tar.gz"
-        triggered_at = datetime.fromisoformat(body["triggered_at"])
-        assert triggered_at.tzinfo is not None
-        mock_list_backups.assert_called_once_with(stage="production")
-        mock_run_restore.assert_called_once_with(
-            backup_name="production-2024-06-01_00-00-00.tar.gz"
+        response = client.post(
+            "/administrator/scheduler/downsync/trigger", headers=headers
         )
 
-    def test_returns_409_in_production_without_listing_backups(
-        self, client, make_user, monkeypatch
+        assert response.status_code == 202
+        body = response.json()
+        assert body["job_id"] == "downsync"
+        assert datetime.fromisoformat(body["queued_at"]).tzinfo is not None
+        fake_arq_pool.enqueue_job.assert_awaited_once_with(
+            "manual_downsync_task", _job_id="downsync"
+        )
+
+    def test_returns_409_in_production_without_queueing(
+        self, client, make_user, monkeypatch, fake_arq_pool
     ):
-        # Set the env BEFORE login_headers() triggers the first
-        # get_settings() call in this test (login itself doesn't depend on
-        # app_environment, but get_settings() is lru_cache'd -- see
-        # conftest.py's client fixture docstring).
         monkeypatch.setenv("APP_ENVIRONMENT", "production")
         headers = login_headers(client, make_user, administrator=True)
 
-        def unexpected_list_backups(**_kwargs: object) -> list[str]:
-            msg = "must never list backups once blocked by the production gate"
-            raise AssertionError(msg)
-
-        with patch(
-            "app.api.router_includes.scheduler.list_backups",
-            side_effect=unexpected_list_backups,
-        ):
-            response = client.post(
-                "/administrator/scheduler/downsync/trigger", headers=headers
-            )
+        response = client.post(
+            "/administrator/scheduler/downsync/trigger", headers=headers
+        )
 
         assert response.status_code == 409
-
-    def test_returns_404_when_no_production_backup_exists(self, client, make_user):
-        headers = login_headers(client, make_user, administrator=True)
-
-        with patch("app.api.router_includes.scheduler.list_backups", return_value=[]):
-            response = client.post(
-                "/administrator/scheduler/downsync/trigger", headers=headers
-            )
-
-        assert response.status_code == 404
-
-    def test_returns_500_with_detail_when_restore_fails(self, client, make_user):
-        headers = login_headers(client, make_user, administrator=True)
-
-        with (
-            patch(
-                "app.api.router_includes.scheduler.list_backups",
-                return_value=["production-2024-01-01_00-00-00.tar.gz"],
-            ),
-            patch(
-                "app.api.router_includes.scheduler.run_restore",
-                side_effect=BackupError("Koofr download failed"),
-            ),
-        ):
-            response = client.post(
-                "/administrator/scheduler/downsync/trigger", headers=headers
-            )
-
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Koofr download failed"
+        fake_arq_pool.enqueue_job.assert_not_called()
 
 
 class TestNPlusOne:
