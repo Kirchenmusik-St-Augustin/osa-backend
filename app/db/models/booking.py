@@ -19,7 +19,7 @@ class Booking(TimestampColumns, PositionColumns, Base):
     - `bookings_user_id_index` on `user_id` alone -- both unique
       constraints below lead with `performance_id`, so a plain
       `WHERE user_id = ...` scan (see
-      get_upcoming_requests_and_bookings_for_user in booking_service.py)
+      get_upcoming_requests_and_bookings_for_user in booking_listing_service.py)
       needs its own index.
     - `fee >= 0`, also enforced at the Pydantic layer
       (CastMemberInput.fee: Field(ge=0)).
@@ -41,7 +41,7 @@ class Booking(TimestampColumns, PositionColumns, Base):
     Choirjob position, `order` is the position within that position's cast
     list (0-based array index at save time) -- `order < performance_
     positions.quantity` is what makes a booking "regular" (cast) vs.
-    "standby", computed in booking_service, never stored as a column.
+    "standby", computed in the booking services, never stored as a column.
 
     Two unique constraints, both load-bearing: the five-column one is the
     obvious one-slot-per-user-per-position rule (postgresql_nulls_not_
@@ -51,7 +51,7 @@ class Booking(TimestampColumns, PositionColumns, Base):
     populated column, silently permitting duplicate bookings); the
     two-column `(performance_id, user_id)` one is the stronger business
     rule that a user can only ever hold ONE booking per performance at all,
-    regardless of position -- booking_service enforces this app-side by
+    regardless of position -- cast_service enforces this app-side by
     deleting any existing booking for the same user on a DIFFERENT position
     before inserting a new one (see _save_cast_item's "purge other position"
     step)."""

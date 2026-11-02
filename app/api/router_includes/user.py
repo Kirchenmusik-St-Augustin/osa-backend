@@ -11,7 +11,7 @@ from app.schemas.base import IdLabelOutput
 from app.schemas.booking import PerformanceShortOutput
 from app.schemas.pagination import Page
 from app.schemas.user import UserFormOptionsOutput, UserRequest, UserResponse
-from app.services import booking_service, user_service
+from app.services import booking_listing_service, user_service
 
 user_router = APIRouter()
 
@@ -58,14 +58,14 @@ def get_requests_and_bookings(
     page: PageDep,
 ) -> Page[PerformanceShortOutput]:
     """Admin-side counterpart to /support/requests-and-bookings (the Show
-    page's link), backed by the same generic booking_service function,
+    page's link), backed by the same generic booking_listing_service function,
     scoped to an arbitrary `user_id` instead of the caller. `upcoming_only=
     False` here (unlike the Selfadmin caller): the admin sees the user's
     ALL-history (see get_upcoming_requests_and_bookings_for_user's
     docstring)."""
     user_service.get_user(db, user_id)
     return Page.of(
-        booking_service.get_upcoming_requests_and_bookings_for_user(
+        booking_listing_service.get_upcoming_requests_and_bookings_for_user(
             db, user_id, page, upcoming_only=False
         ),
         page,

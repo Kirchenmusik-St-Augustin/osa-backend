@@ -18,7 +18,7 @@ from app.db.uuid_pk import uuid_pk
 class Performance(TimestampColumns, Base):
     """A scheduled performance, with these DB-level guarantees:
     - `performances_schedule_index` on `schedule` -- filtered/sorted on in
-      performance_service.py, booking_jobs.py, booking_service.py, and
+      performance_service.py, booking_jobs.py, booking_listing_service.py, and
       user_service.py.
     - Four money CheckConstraints (`choirjob_defaultfee >= 0`,
       `instrument_defaultfee >= 0`, `voice_defaultfee >= 0`, and

@@ -179,7 +179,7 @@ def notify_upcoming_booking_status() -> None:
         # Location/Ordinariumwork/Artist -- a fixed number of queries
         # regardless of how many performances are involved, instead of
         # get_performance_detail()'s ~5 queries PER performance_id (same
-        # loader booking_service.py uses for its own performance listing).
+        # loader booking_listing_service.py uses for its own performance listing).
         needed_performance_ids = {
             performance_id
             for pairs in entries_by_user.values()

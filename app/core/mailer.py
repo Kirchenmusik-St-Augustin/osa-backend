@@ -425,8 +425,9 @@ class BookingCanceledMailEntry:
 def send_booked_or_standby_canceled_email(
     to_emails: list[str], canceling_user_name: str, entry: BookingCanceledMailEntry
 ) -> None:
-    """Cancellation notice -- sent synchronously to every `disponent` user when someone
-    self-cancels a booking/standby (booking_service.change_user_request_status)."""
+    """Cancellation notice -- sent synchronously to every `disponent` user when
+    someone self-cancels a booking/standby
+    (booking_status_service.change_user_request_status)."""
     now = local_now()
     subject = f"Eine Buchung wurde storniert! ({_format_ymd_timestamp(now)})"
     _send_templated_email(
@@ -448,7 +449,7 @@ def send_user_message_email(
 ) -> None:
     """Free-text message mail, used by both the Selfadmin/Support "message a
     contact person" feature and MessageToCast (see
-    booking_service.send_message_to_cast). Sent via Bcc (data protection):
+    message_service.send_message_to_cast). Sent via Bcc (data protection):
     `to_emails` here is a disponent-picked, potentially large group of
     musicians/singers who don't necessarily know each other and have no
     reason to see one another's address, unlike e.g. the small, fixed

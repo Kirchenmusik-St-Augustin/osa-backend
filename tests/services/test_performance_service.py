@@ -911,13 +911,13 @@ class TestUpdatePerformance:
         ]
         assert [(item.id, item.quantity) for item in setup.voices] == [(added.id, 2)]
 
-    def test_setup_shrink_reconciles_bookings_via_booking_service(
+    def test_setup_shrink_reconciles_bookings_via_cast_service(
         self, db_session: Session, make_user
     ):
         """Shrinking a position's quantity
         must demote the now-standby booking, and removing a position
         entirely must purge its bookings -- both via
-        booking_service.reconcile_setup_change, wired in from
+        cast_service.reconcile_setup_change, wired in from
         update_performance()."""
         composer_id = _make_artist(db_session, composer=True)
         location = _make_location(db_session)

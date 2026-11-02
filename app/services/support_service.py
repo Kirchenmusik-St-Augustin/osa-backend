@@ -12,7 +12,7 @@ from app.schemas.support import (
     MessageToContactpersonRequest,
     RoleWithContactsOutput,
 )
-from app.services import booking_service
+from app.services import booking_listing_service
 
 if TYPE_CHECKING:
     from app.schemas.booking import PerformanceShortOutput
@@ -23,7 +23,7 @@ def get_my_requests_and_bookings(
     db: Session, user: User, page: PageParams
 ) -> PagedRows[PerformanceShortOutput]:
     """Thin wrapper: the caller's own upcoming requests and bookings."""
-    return booking_service.get_upcoming_requests_and_bookings_for_user(
+    return booking_listing_service.get_upcoming_requests_and_bookings_for_user(
         db, user.id, page
     )
 
@@ -76,7 +76,7 @@ def send_message_to_contactperson(
 
     Returns (to_emails, sender_name, message) for the ROUTER to enqueue via
     `JobQueue.enqueue(send_user_message_email_task, ...)` -- same
-    framework-agnostic split as booking_service.send_message_to_cast."""
+    framework-agnostic split as message_service.send_message_to_cast."""
     recipient = db.execute(
         select(User).where(
             User.id == data.recipient_id,

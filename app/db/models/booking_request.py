@@ -19,7 +19,7 @@ class BookingRequest(TimestampColumns, Base):
     `notbooked_at` is set once that request was explicitly rejected on the
     Cast page ("zurückweisen", the REJECTED booking status) rather than
     being fulfilled. Cleared back to NULL every time the Cast page is
-    re-saved (see booking_service's `_apply_notbooked`).
+    re-saved (see cast_service's `_apply_notbooked`).
 
     `notbooked_at` is TIMESTAMPTZ and stays Python-managed.
 

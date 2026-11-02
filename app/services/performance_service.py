@@ -285,7 +285,7 @@ def _sync_positions(
 ) -> tuple[
     set[tuple[PositionType, uuid.UUID]], dict[tuple[PositionType, uuid.UUID], int]
 ]:
-    """Returns (removed_keys, old_quantities) for booking_service.reconcile_setup_change
+    """Returns (removed_keys, old_quantities) for cast_service.reconcile_setup_change
     -- old_quantities covers only positions that existed for THIS performance before the
     update, not every Instrument/Voice/Choirjob row system-wide: a position never
     previously configured here cannot have any pre-existing bookings to reconcile
@@ -608,7 +608,7 @@ def get_rehearsals(
 @dataclass(frozen=True)
 class PerformanceBatchEntry:
     """Everything list_performances_for_month() and
-    booking_service.get_upcoming_requests_and_bookings_for_user() both need
+    booking_listing_service.get_upcoming_requests_and_bookings_for_user() both need
     to enrich a raw Performance row -- extracted so the two N+1-safe batch
     loaders share ONE implementation instead of duplicating it."""
 
@@ -630,7 +630,7 @@ def load_performance_batch_data(
     Rehearsals across an arbitrary list of Performances -- a fixed number
     of queries regardless of list length, the shared building block behind
     both list_performances_for_month() (month-filtered) and
-    booking_service's user-scoped equivalent."""
+    booking_listing_service's user-scoped equivalent."""
     if not performances:
         return {}
 
@@ -720,12 +720,12 @@ def list_performances_for_month(
 
     batch = load_performance_batch_data(db, performances)
 
-    # Narrow, function-local import: booking_service imports
+    # Narrow, function-local import: booking_common imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
     # module level, so a module-level import here would be circular. The
     # calendar's self-service badge/trigger needs the real status per row,
     # batched N+1-safe across the whole month.
-    from app.services.booking_service import (  # noqa: PLC0415
+    from app.services.booking_status_service import (  # noqa: PLC0415
         user_booking_status_for_performances,
     )
 
@@ -947,12 +947,12 @@ def update_performance(
     _sync_proprium(db, performance_id, data)
     _sync_rehearsals(db, performance_id, data)
 
-    # Narrow, function-local import: booking_service imports
+    # Narrow, function-local import: booking_common imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
     # module level, so a module-level import here would be circular. Cast
     # reconciliation: purges bookings on removed positions and re-evaluates
     # promote/demote on every remaining position against its old quantity.
-    from app.services.booking_service import reconcile_setup_change  # noqa: PLC0415
+    from app.services.cast_service import reconcile_setup_change  # noqa: PLC0415
 
     reconcile_setup_change(db, performance_id, removed_keys, old_quantities)
 
@@ -962,7 +962,7 @@ def update_performance(
 
 def _has_bookings_or_requests(db: Session, performance_id: uuid.UUID) -> bool:
     """Queries the Booking/BookingRequest models directly (not
-    booking_service) since that's all this needs, avoiding the circular
+    the booking modules) since that's all this needs, avoiding the circular
     import update_performance's reconcile_setup_change call already has to
     work around."""
     booking_count = db.execute(

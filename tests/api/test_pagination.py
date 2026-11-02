@@ -80,7 +80,7 @@ def _seed_sent_emails(db: Session, _make_user: Callable[..., User]) -> None:
 # name -> (path of the route for the calling user, extra query parameters,
 # seeding function). The two requests-and-bookings routes need performances
 # with bookings to hold several rows, their paging is covered in
-# tests/services/test_booking_service.py.
+# tests/services/test_booking_listing_service.py.
 _SEEDED_ROUTES = {
     "fees": (lambda _user: "/fees", {}, _seed_fees),
     "composers": (lambda _user: "/artists/composers", {}, _seed_composers),

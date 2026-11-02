@@ -23,7 +23,7 @@ class CoreelementColumns(TimestampColumns):
     SentEmail.mail_from, see sent_email.py), so every
     `.order`/`order=`/`order_by(<Model>.order)` call site across
     coreelement_service.py/performance_service.py/user_service.py/
-    booking_service.py uses the Python name.
+    cast_service.py uses the Python name.
 
     `id` is a UUIDv7 primary key (server-generated via Postgres's native
     `uuidv7()`, see app.db.uuid_pk)."""
