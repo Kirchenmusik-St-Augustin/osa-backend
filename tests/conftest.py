@@ -89,7 +89,7 @@ from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
-from app.db.database import engine, get_db
+from app.db.database import Base, engine, get_db
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
@@ -302,6 +302,35 @@ housekeeping_jobs.SessionLocal = _job_session_factory
 mailer.SessionLocal = _job_session_factory
 request_logging.SessionLocal = _job_session_factory
 job_run_service.SessionLocal = _job_session_factory
+
+
+@pytest.fixture
+def committed_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
+    """A session whose commits are real, for the few tests about commit
+    boundaries: what a second connection sees after a commit, and what
+    survives a failure in the middle of a run. Every other test runs inside
+    one outer transaction (see _db_transaction), where a commit only releases
+    a savepoint and a rollback at the end hides what was or was not committed.
+
+    The modules that open their own sessions are pointed at real sessions as
+    well, and every table is emptied afterwards, so the rows of one test never
+    reach the next one. Use it only where a real commit is the subject."""
+    for module in (
+        booking_jobs,
+        housekeeping_jobs,
+        mailer,
+        request_logging,
+        job_run_service,
+    ):
+        monkeypatch.setattr(module, "SessionLocal", TestingSessionLocal)
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+        with engine.begin() as connection:
+            connection.execute(text(f"TRUNCATE {tables} CASCADE"))
 
 
 @pytest.fixture
