@@ -5,7 +5,7 @@ from sqlalchemy import engine_from_config, pool
 import app.db.base  # registers every model with Base.metadata before autogenerate runs
 from alembic import context
 from app.core.config import get_settings, require_setting
-from app.db.database import Base
+from app.db.database import Base, with_psycopg_driver
 
 config = context.config
 
@@ -24,9 +24,9 @@ if config.config_file_name is not None:
 # URL-encoded credentials.
 config.set_main_option(
     "sqlalchemy.url",
-    require_setting(get_settings().database_url, "DATABASE_URL")
-    .get_secret_value()
-    .replace("%", "%%"),
+    with_psycopg_driver(
+        require_setting(get_settings().database_url, "DATABASE_URL").get_secret_value()
+    ).replace("%", "%%"),
 )
 
 target_metadata = Base.metadata

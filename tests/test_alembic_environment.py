@@ -80,7 +80,7 @@ def test_env_reads_database_url_from_settings_with_percent_encoding(
 
     assert "CREATE TABLE artists" in capsys.readouterr().out
     assert config.get_main_option("sqlalchemy.url") == (
-        "postgresql://user:p%40ss%25word@db.invalid/osa"
+        "postgresql+psycopg://user:p%40ss%25word@db.invalid/osa"
     )
 
 

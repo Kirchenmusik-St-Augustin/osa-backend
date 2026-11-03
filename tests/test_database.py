@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import QueuePool
 
-from app.db.database import engine, get_db
+from app.db.database import engine, get_db, with_psycopg_driver
 
 
 def test_get_db_session_can_query_schema():
@@ -57,3 +57,43 @@ def test_the_pool_is_bounded():
     assert pool.timeout() == 10
     # QueuePool has no public accessor for the overflow limit.
     assert pool._max_overflow == 5
+
+
+def test_the_engine_connects_through_psycopg_3():
+    """The test environment names a plain postgresql:// URL, so this proves
+    the driver comes from the normalisation and not from the URL."""
+    assert engine.dialect.driver == "psycopg"
+    assert engine.url.drivername == "postgresql+psycopg"
+
+
+@pytest.mark.parametrize(
+    ("database_url", "expected"),
+    [
+        (
+            "postgresql://osa_app:p%40ss%2Fword@127.0.0.1:5432/osa?sslmode=disable",
+            (
+                "postgresql+psycopg://osa_app:p%40ss%2Fword@127.0.0.1:5432/osa"
+                "?sslmode=disable"
+            ),
+        ),
+        ("postgresql:///osa", "postgresql+psycopg:///osa"),
+    ],
+)
+def test_a_plain_postgresql_url_gets_the_psycopg_driver(
+    database_url: str, expected: str
+):
+    assert with_psycopg_driver(database_url) == expected
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql+psycopg://u:p@db.example/osa",
+        "postgresql+asyncpg://u:p@db.example/osa",
+        "mysql://u:p@db.example/osa",
+    ],
+)
+def test_a_url_that_names_a_driver_or_another_database_is_left_alone(
+    database_url: str,
+):
+    assert with_psycopg_driver(database_url) == database_url

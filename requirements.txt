@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 gunicorn
 sqlalchemy
-psycopg2-binary
+psycopg
 alembic
 arq
 pydantic-settings

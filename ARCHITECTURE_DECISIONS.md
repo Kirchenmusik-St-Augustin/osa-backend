@@ -46,8 +46,8 @@ registry to the request model, ENUM labels and columns;
 **Status:** accepted, 2026-10-17
 
 All handlers that touch the database are plain `def` functions that Starlette
-runs in its thread pool. The driver is `psycopg2` with a synchronous `Session`
-(no `AsyncSession`, no asyncpg).
+runs in its thread pool. The driver is `psycopg` (version 3) with a synchronous
+`Session` (no `AsyncSession`, no asyncpg).
 
 **Decision:** database access stays synchronous. This is a deliberate
 exception to the rule that database access goes through an async driver.
@@ -82,7 +82,7 @@ exception to the rule that database access goes through an async driver.
 
 **Status:** accepted
 
-All handlers that touch the database are plain `def` functions that Starlette runs in its thread pool; the driver is `psycopg2` with a synchronous `Session`.
+All handlers that touch the database are plain `def` functions that Starlette runs in its thread pool; the driver is `psycopg` (version 3) with a synchronous `Session`.
 
 **Why:** the whole service layer, the Alembic setup and the worker's job bodies share one synchronous code path; one gunicorn worker serves roughly a hundred members, so throughput is not the constraint.
 

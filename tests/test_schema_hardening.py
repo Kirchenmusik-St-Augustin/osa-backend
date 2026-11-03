@@ -583,7 +583,7 @@ class TestRequestLogsJsonb:
         db_session.add(entry)
         db_session.flush()
 
-        # psycopg2's jsonb typecaster is registered at the connection
+        # psycopg's jsonb loader is registered at the connection
         # level by SQLAlchemy's dialect, so even this raw text() SELECT
         # (bypassing the ORM's own JSONB type handling) comes back as a
         # real Python dict, not a string.
