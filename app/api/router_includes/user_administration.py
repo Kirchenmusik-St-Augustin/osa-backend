@@ -46,7 +46,7 @@ def list_deleted_users(
     page: PageDep,
 ) -> Page[UserAdministrationDeletedEntryOutput]:
     paged = user_administration_service.list_deleted_users(db, page)
-    return Page.of(paged.map(user_administration_service.to_deleted_entry), page)
+    return paged.map(user_administration_service.to_deleted_entry).to_page(page)
 
 
 @user_administration_router.get("/{user_id}")

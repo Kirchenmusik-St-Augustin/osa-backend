@@ -38,4 +38,4 @@ def list_users(
     page: PageDep,
 ) -> Page[UserDirectoryEntryOutput]:
     entries = userdirectory_service.list_entries(db, directory_type, position_id, page)
-    return Page.of(entries, page)
+    return entries.to_page(page)

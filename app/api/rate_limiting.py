@@ -43,5 +43,7 @@ def rate_limited_per_user[**P, R](
     decorated endpoint must declare a literal "request: Request" parameter."""
     return cast(
         "Callable[[Callable[P, R]], Callable[P, R]]",
-        limiter.shared_limit(limit, scope=scope, key_func=user_or_client_key),
+        limiter.shared_limit(  # pyright: ignore[reportUnknownMemberType]
+            limit, scope=scope, key_func=user_or_client_key
+        ),
     )

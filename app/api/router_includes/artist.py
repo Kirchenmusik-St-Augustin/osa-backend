@@ -42,7 +42,7 @@ def list_composer_artists(
     page: PageDep,
 ) -> Page[IdLabelOutput]:
     paged = artist_service.list_composer_artists(db, page)
-    return Page.of(paged.map(artist_service.to_search_result), page)
+    return paged.map(artist_service.to_search_result).to_page(page)
 
 
 @artist_router.get("/{artist_id}")

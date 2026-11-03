@@ -32,7 +32,10 @@ def rate_limited[**P, R](limit: str) -> Callable[[Callable[P, R]], Callable[P, R
     type checker at every use site. A decorated endpoint must declare a
     literal "request: Request" parameter even if its body never reads it:
     slowapi looks the request up by that name."""
-    return cast("Callable[[Callable[P, R]], Callable[P, R]]", limiter.limit(limit))
+    return cast(
+        "Callable[[Callable[P, R]], Callable[P, R]]",
+        limiter.limit(limit),  # pyright: ignore[reportUnknownMemberType]
+    )
 
 
 def shared_rate_limited[**P, R](
@@ -44,5 +47,5 @@ def shared_rate_limited[**P, R](
     counter."""
     return cast(
         "Callable[[Callable[P, R]], Callable[P, R]]",
-        limiter.shared_limit(limit, scope=scope),
+        limiter.shared_limit(limit, scope=scope),  # pyright: ignore[reportUnknownMemberType]
     )

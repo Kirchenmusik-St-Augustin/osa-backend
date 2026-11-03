@@ -26,7 +26,7 @@ def list_sent_emails(
     _current_user: Annotated[AuthUser, _VIEW],
     page: PageDep,
 ) -> Page[SentEmailShortOutput]:
-    return Page.of(sent_email_service.list_for_month(db, year, month, page), page)
+    return sent_email_service.list_for_month(db, year, month, page).to_page(page)
 
 
 @sent_email_router.get("/{sent_email_id}")

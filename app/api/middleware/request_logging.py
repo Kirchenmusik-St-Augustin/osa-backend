@@ -8,7 +8,8 @@ import json
 import logging
 import resource
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -46,7 +47,7 @@ async def _extract_request_input(request: Request) -> JsonObject:
         return {}
     if "application/json" in content_type:
         try:
-            parsed = json.loads(body)
+            parsed: JsonValue = json.loads(body)
         except json.JSONDecodeError:
             return {}
         return parsed if isinstance(parsed, dict) else {"value": parsed}
@@ -171,7 +172,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return response
 
         response_body = b""
-        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+        # The response of call_next() is typed as a plain Response, but it is
+        # always a streaming response with a body iterator.
+        chunks = cast("AsyncIterable[bytes]", response.body_iterator)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        async for chunk in chunks:
             response_body += chunk
         rebuilt = Response(
             content=response_body,

@@ -19,10 +19,12 @@ class OrdinariumworkPositionInput(StrictInputModel):
 
 class OrdinariumworkSetupInput(StrictInputModel):
     instruments: list[OrdinariumworkPositionInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[OrdinariumworkPositionInput],
+        max_length=MAX_CATALOGUE_ENTRIES,
     )
     voices: list[OrdinariumworkPositionInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[OrdinariumworkPositionInput],
+        max_length=MAX_CATALOGUE_ENTRIES,
     )
 
 

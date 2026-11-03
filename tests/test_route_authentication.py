@@ -54,15 +54,6 @@ MEMBER_ROUTES: frozenset[Route] = frozenset(
     }
 )
 
-# Routes that still check the request body before the permission, so a member
-# gets a validation error (422) instead of the 403. The set may only shrink.
-VALIDATED_BEFORE_AUTHORIZATION: frozenset[Route] = frozenset(
-    {
-        ("POST", "/coreelements/{element_type}"),
-        ("PUT", "/coreelements/{element_type}/{element_id}"),
-    }
-)
-
 _PATH_PARAMETER_VALUES = {
     "{element_type}": "instrument",
     "{direction}": "up",
@@ -109,7 +100,6 @@ def test_every_listed_route_still_exists():
 
     assert existing >= PUBLIC_ROUTES
     assert existing >= MEMBER_ROUTES
-    assert existing >= VALIDATED_BEFORE_AUTHORIZATION
 
 
 def test_a_member_without_roles_reaches_exactly_the_member_routes(client, make_user):
@@ -131,4 +121,4 @@ def test_a_member_without_roles_reaches_exactly_the_member_routes(client, make_u
         != 403
     }
 
-    assert reachable == MEMBER_ROUTES | VALIDATED_BEFORE_AUTHORIZATION
+    assert reachable == MEMBER_ROUTES

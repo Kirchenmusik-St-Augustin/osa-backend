@@ -29,8 +29,8 @@ def get_my_requests_and_bookings(
 ) -> Page[PerformanceShortOutput]:
     """No permission gate beyond being logged in -- every user manages only
     their own requests/bookings."""
-    return Page.of(
-        support_service.get_my_requests_and_bookings(db, current_user, page), page
+    return support_service.get_my_requests_and_bookings(db, current_user, page).to_page(
+        page
     )
 
 

@@ -48,13 +48,13 @@ class PerformancePositionInput(StrictInputModel):
 
 class PerformanceSetupInput(StrictInputModel):
     instruments: list[PerformancePositionInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[PerformancePositionInput], max_length=MAX_CATALOGUE_ENTRIES
     )
     voices: list[PerformancePositionInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[PerformancePositionInput], max_length=MAX_CATALOGUE_ENTRIES
     )
     choirjobs: list[PerformancePositionInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[PerformancePositionInput], max_length=MAX_CATALOGUE_ENTRIES
     )
 
 
@@ -81,10 +81,11 @@ class PerformanceRequest(StrictInputModel):
     extracost_description: OptionalText = None
     setup: PerformanceSetupInput
     proprium: list[PerformancePropriumEntryInput] = Field(
-        default_factory=list, max_length=MAX_PROPRIUM_ENTRIES
+        default_factory=list[PerformancePropriumEntryInput],
+        max_length=MAX_PROPRIUM_ENTRIES,
     )
     rehearsals: list[PerformanceRehearsalInput] = Field(
-        default_factory=list, max_length=MAX_REHEARSALS
+        default_factory=list[PerformanceRehearsalInput], max_length=MAX_REHEARSALS
     )
 
 

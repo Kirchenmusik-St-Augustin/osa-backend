@@ -15,8 +15,6 @@ from app.schemas.coreelement import (
 from app.schemas.pagination import Page
 from app.services import coreelement_service
 
-coreelement_router = APIRouter()
-
 # All six maintain abilities (Instrument/Voice/Choirjob/Location/ Propriumelement/Role)
 # resolve to the exact same condition (administrator-Flag) -- routed through the central
 # PERMISSION_RULES matrix regardless, so a future policy change for a single type is a
@@ -31,16 +29,27 @@ _PERMISSION_BY_TYPE: dict[CoreelementType, str] = {
 }
 
 
+def _require_maintain_permission(
+    element_type: CoreelementType,
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
+) -> None:
+    """Per-type maintain permission as a route dependency, so it is checked
+    before the request body is validated: a caller without the permission
+    gets 403, not a 422 that describes the schema."""
+    ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
+
+
+coreelement_router = APIRouter(dependencies=[Depends(_require_maintain_permission)])
+
+
 @coreelement_router.get("/{element_type}")
 def list_items(
     element_type: CoreelementType,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[AuthUser, Depends(get_verified_user)],
     page: PageDep,
 ) -> Page[CoreelementResponse]:
-    ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     paged = coreelement_service.list_coreelements_page(db, element_type, page)
-    return Page.of(paged.map(coreelement_service.to_response), page)
+    return paged.map(coreelement_service.to_response).to_page(page)
 
 
 @coreelement_router.post("/{element_type}", status_code=status.HTTP_201_CREATED)
@@ -48,9 +57,7 @@ def create_item(
     element_type: CoreelementType,
     data: CoreelementRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> CoreelementResponse:
-    ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     item = coreelement_service.create_coreelement(db, element_type, data)
     return coreelement_service.to_response(item)
 
@@ -61,9 +68,7 @@ def update_item(
     element_id: uuid.UUID,
     data: CoreelementRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> CoreelementResponse:
-    ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     item = coreelement_service.update_coreelement(db, element_type, element_id, data)
     return coreelement_service.to_response(item)
 
@@ -73,9 +78,7 @@ def delete_item(
     element_type: CoreelementType,
     element_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> dict[str, str]:
-    ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     coreelement_service.delete_coreelement(db, element_type, element_id)
     return {"status": "ok", "message": "Element wurde gelöscht."}
 
@@ -86,9 +89,7 @@ def move_item(
     element_id: uuid.UUID,
     direction: Literal["up", "down"],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> list[CoreelementResponse]:
-    ensure_permission(current_user, _PERMISSION_BY_TYPE[element_type])
     items = coreelement_service.move_coreelement(
         db, element_type, element_id, direction
     )

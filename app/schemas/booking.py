@@ -29,19 +29,19 @@ class CastMemberInput(StrictInputModel):
 class CastSetupItemInput(StrictInputModel):
     id: LenientUuid
     cast: list[CastMemberInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[CastMemberInput], max_length=MAX_CATALOGUE_ENTRIES
     )
 
 
 class CastSectionInput(StrictInputModel):
     instruments: list[CastSetupItemInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[CastSetupItemInput], max_length=MAX_CATALOGUE_ENTRIES
     )
     voices: list[CastSetupItemInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[CastSetupItemInput], max_length=MAX_CATALOGUE_ENTRIES
     )
     choirjobs: list[CastSetupItemInput] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[CastSetupItemInput], max_length=MAX_CATALOGUE_ENTRIES
     )
 
 
@@ -52,7 +52,7 @@ class NotBookedEntryInput(StrictInputModel):
 class CastSaveRequest(StrictInputModel):
     cast: CastSectionInput = Field(default_factory=CastSectionInput)
     not_booked: list[NotBookedEntryInput] = Field(
-        default_factory=list, max_length=MAX_RECIPIENTS
+        default_factory=list[NotBookedEntryInput], max_length=MAX_RECIPIENTS
     )
 
 

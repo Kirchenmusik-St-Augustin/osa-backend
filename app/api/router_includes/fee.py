@@ -21,7 +21,7 @@ def list_fees(
     db: Annotated[Session, Depends(get_db)],
     page: PageDep,
 ) -> Page[FeeResponse]:
-    return Page.of(fee_service.list_fees_page(db, page), page)
+    return fee_service.list_fees_page(db, page).to_page(page)
 
 
 @fee_router.post("", status_code=status.HTTP_201_CREATED)

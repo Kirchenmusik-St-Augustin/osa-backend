@@ -15,6 +15,7 @@ The web side (`app.core.arq_pool`) and the worker side
 import json
 from dataclasses import asdict
 from datetime import datetime
+from typing import cast
 
 from app.core.mailer import BookingCanceledMailEntry
 from app.core.redacted import Redacted
@@ -90,8 +91,8 @@ def dumps_job(value: dict[str, object]) -> bytes:
 
 
 def loads_job(raw: bytes) -> dict[str, object]:
-    value = json.loads(raw, object_hook=_decode_object)
+    value: object = json.loads(raw, object_hook=_decode_object)
     if not isinstance(value, dict):
         msg = "A job payload must be a JSON object."
         raise TypeError(msg)
-    return value
+    return cast("dict[str, object]", value)

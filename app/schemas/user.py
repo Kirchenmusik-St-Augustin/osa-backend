@@ -51,16 +51,16 @@ class UserRequest(StrictInputModel):
     phone: OptionalPhoneNumber = None
     auth_locked: bool = False
     instruments: list[LenientUuid] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
     )
     voices: list[LenientUuid] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
     )
     choirjobs: list[LenientUuid] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
     )
     roles: list[LenientUuid] = Field(
-        default_factory=list, max_length=MAX_CATALOGUE_ENTRIES
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
     )
     administrator: bool = False
 

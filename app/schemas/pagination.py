@@ -29,6 +29,14 @@ class PagedRows[T]:
     def map[U](self, convert: Callable[[T], U]) -> PagedRows[U]:
         return PagedRows(rows=[convert(row) for row in self.rows], total=self.total)
 
+    def to_page(self, params: PageParams) -> Page[T]:
+        return Page(
+            items=list(self.rows),
+            total=self.total,
+            limit=params.limit,
+            offset=params.offset,
+        )
+
 
 class Page[T](BaseModel):
     """Envelope of every paginated list: the requested page and the number of
@@ -38,12 +46,3 @@ class Page[T](BaseModel):
     total: int
     limit: int
     offset: int
-
-    @classmethod
-    def of(cls, paged: PagedRows[T], params: PageParams) -> Page[T]:
-        return cls(
-            items=list(paged.rows),
-            total=paged.total,
-            limit=params.limit,
-            offset=params.offset,
-        )

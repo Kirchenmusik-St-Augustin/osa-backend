@@ -64,12 +64,9 @@ def get_requests_and_bookings(
     ALL-history (see get_upcoming_requests_and_bookings_for_user's
     docstring)."""
     user_service.get_user(db, user_id)
-    return Page.of(
-        booking_listing_service.get_upcoming_requests_and_bookings_for_user(
-            db, user_id, page, upcoming_only=False
-        ),
-        page,
-    )
+    return booking_listing_service.get_upcoming_requests_and_bookings_for_user(
+        db, user_id, page, upcoming_only=False
+    ).to_page(page)
 
 
 @user_router.post("", status_code=status.HTTP_201_CREATED)

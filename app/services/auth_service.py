@@ -565,7 +565,7 @@ class _BoundedGoogleRequest(google_requests.Request):
         timeout: int = _GOOGLE_REQUEST_TIMEOUT_SECONDS,
         **kwargs: object,
     ) -> GoogleResponse:
-        return super().__call__(
+        return super().__call__(  # pyright: ignore[reportUnknownMemberType]
             url,
             method,
             body,
@@ -616,7 +616,7 @@ def _verify_google_id_token(credential: str) -> JsonObject:
         return cast(
             "JsonObject",
             dict(
-                google_id_token.verify_oauth2_token(
+                google_id_token.verify_oauth2_token(  # pyright: ignore[reportUnknownMemberType]
                     credential, _google_request(), client_id
                 )
             ),

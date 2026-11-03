@@ -51,6 +51,7 @@ from app.services.user_position_service import get_qualified_user_ids_batch
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from app.db.models.user import User
     from app.schemas.performance import (
         PerformancePositionOutput,
         PerformanceSetupOutput,
@@ -162,7 +163,7 @@ def _get_cast_form_data(
     for position_type, items in setup_groups:
         for item in items:
             entries = bookings_by_position.get((position_type, item.id), [])
-            cast_members = []
+            cast_members: list[CastMemberOutput] = []
             for booking in entries:
                 voice_name, voice_order = _choirjob_voice_fields(
                     position_type, booking.user_id, primary_voice_by_user
@@ -253,7 +254,7 @@ def _get_staff(
             other: list[BookableUserOutput] = []
             # Qualified user ids come out of a plain set here, so the sort
             # by (surname, givenname) has to happen explicitly.
-            candidates = sorted(
+            candidates: list[User] = sorted(
                 (
                     user
                     for user_id in qualified.get((position_type, item.id), set())
