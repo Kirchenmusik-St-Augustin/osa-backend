@@ -1,0 +1,9 @@
+title = "osa-backend secret scan"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The test suite uses fixed fake passwords and tokens."
+targetRules = ["generic-api-key"]
+paths = ['''^tests/''']
