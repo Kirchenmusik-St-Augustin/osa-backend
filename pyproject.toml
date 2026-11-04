@@ -125,7 +125,7 @@ line-ending = "auto"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=app --cov=scripts --cov=main --cov-report=term-missing --cov-report=xml --cov-fail-under=81"
+addopts = "--cov=app --cov=scripts --cov=main --cov-report=term-missing --cov-report=xml --cov-report=json --cov-fail-under=97"
 filterwarnings = [
     "error",
     "default::DeprecationWarning",
@@ -134,6 +134,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["app", "scripts", "main.py"]
+branch = true
 omit = [
     "alembic/*",
     "tests/*",
@@ -147,6 +148,16 @@ exclude_lines = [
     "raise NotImplementedError",
     "pass",
 ]
+
+[tool.coverage_gate]
+# Per-metric minimums in percent, enforced by scripts/check_coverage_gate.py
+# after pytest. They sit slightly below the measured values (statements
+# 99.15, branches 95.74, functions 99.15), so a real drop fails the pipeline
+# but normal refactoring does not. The combined --cov-fail-under in
+# [tool.pytest.ini_options] is the coarse safety net, this table the fine one.
+statements = 98.0
+branches = 94.0
+functions = 98.0
 
 [tool.pyright]
 include = ["app", "scripts", "main.py"]

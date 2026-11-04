@@ -76,6 +76,7 @@ jobs:
           CORS_ORIGINS: http://localhost
           SECRET_KEY: ci-alembic-check-dummy-secret-key-not-for-real-use
       - run: pytest --tb=short -q
+      - run: python scripts/check_coverage_gate.py
 
   security:
     name: CodeQL Security Scan

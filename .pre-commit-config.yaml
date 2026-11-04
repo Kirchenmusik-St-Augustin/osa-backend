@@ -46,3 +46,10 @@ repos:
         types: [python]
         pass_filenames: false
         always_run: true
+
+      - id: coverage-gate
+        name: Coverage minimums per metric
+        entry: podman exec osa-backend python scripts/check_coverage_gate.py
+        language: system
+        pass_filenames: false
+        always_run: true
