@@ -1,11 +1,16 @@
+import ssl
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from jinja2 import Template
+from pydantic import SecretStr
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core import mailer
 from app.db.models.sent_email import SentEmail
+from tests.sent_emails import sent_email
 
 
 @pytest.fixture(autouse=True)
@@ -19,22 +24,25 @@ def _clear_sent_emails(db_session):
     return
 
 
-def test_count_recipients_handles_none_empty_and_multiple():
-    assert mailer._count_recipients(None) == 0
-    assert mailer._count_recipients("") == 0
-    assert mailer._count_recipients("a@example.test") == 1
-    assert mailer._count_recipients("a@example.test, b@example.test") == 2
-
-
 def test_format_ymd_timestamp():
     now = datetime(2026, 3, 5, 9, 7, tzinfo=UTC)
     assert mailer._format_ymd_timestamp(now) == "2026-03-05 09:07"
 
 
-def test_format_short_date_pads_month_but_not_day():
+def test_format_short_datetime_pads_month_but_not_day():
     # Day without leading zeros, month WITH leading zeros -- a single-digit
     # month must not be conflated with the day's no-padding rule.
-    assert mailer._format_short_date(datetime(2026, 3, 5, tzinfo=UTC)) == "5. 03. 2026"
+    assert (
+        mailer._format_short_datetime(datetime(2026, 3, 5, 9, 7, tzinfo=UTC))
+        == "5. 03. 2026, 09:07"
+    )
+
+
+def test_format_short_datetime_uses_24_hour_clock():
+    assert (
+        mailer._format_short_datetime(datetime(2026, 12, 24, 18, 30, tzinfo=UTC))
+        == "24. 12. 2026, 18:30"
+    )
 
 
 def test_format_notification_timestamp_has_no_leading_zeros():
@@ -56,7 +64,7 @@ def test_kill_switch_activates_at_threshold(
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "3")
     now = datetime.now(UTC)
     db_session.add(
-        SentEmail(to="a@example.test, b@example.test, c@example.test", created_at=now)
+        sent_email(to="a@example.test, b@example.test, c@example.test", created_at=now)
     )
     db_session.commit()
 
@@ -72,7 +80,7 @@ def test_kill_switch_ignores_emails_outside_rolling_window(
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
     monkeypatch.setenv("MAIL_KILL_SWITCH_PERIOD_DAYS", "30")
     stale = datetime.now(UTC) - timedelta(days=31)
-    db_session.add(SentEmail(to="a@example.test", created_at=stale))
+    db_session.add(sent_email(to="a@example.test", created_at=stale))
     db_session.commit()
 
     assert mailer.get_kill_switch_status(db_session).active is False
@@ -113,7 +121,11 @@ def test_send_verification_email_sends_and_logs(
     recipients = mock_send.call_args.args[1]
     assert recipients == ["user@example.test"]
 
-    row = db_session.query(SentEmail).filter(SentEmail.headers == "verify-email").one()
+    row = (
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "verify-email")
+        .one()
+    )
     assert row.to == "user@example.test"
     assert "verify" in row.body.lower() or "bestätig" in row.body.lower()
 
@@ -133,7 +145,11 @@ def test_send_verification_email_subject_uses_app_timezone_not_utc(
     with patch("app.core.mailer._send_message"):
         mailer.send_verification_email("user@example.test", "https://x.test/verify")
 
-    row = db_session.query(SentEmail).filter(SentEmail.headers == "verify-email").one()
+    row = (
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "verify-email")
+        .one()
+    )
     assert "15. 8. 2026, 00:30" in row.subject
 
 
@@ -149,7 +165,11 @@ def test_send_user_message_email_subject_uses_app_timezone_not_utc(
     with patch("app.core.mailer._send_message"):
         mailer.send_user_message_email(["a@example.test"], "Muster, Max", "Hallo!")
 
-    row = db_session.query(SentEmail).filter(SentEmail.headers == "user-message").one()
+    row = (
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "user-message")
+        .one()
+    )
     assert "2026-08-15 00:30" in row.subject
 
 
@@ -164,7 +184,9 @@ def test_send_password_reset_email_body_contains_ttl_minutes(
         )
 
     row = (
-        db_session.query(SentEmail).filter(SentEmail.headers == "password-reset").one()
+        db_session.query(SentEmail)
+        .filter(SentEmail.template_key == "password-reset")
+        .one()
     )
     assert "60 Minuten" in row.body
 
@@ -188,7 +210,7 @@ def test_send_new_registration_notice_goes_to_disponent_address(
 
     row = (
         db_session.query(SentEmail)
-        .filter(SentEmail.headers == "new-registration")
+        .filter(SentEmail.template_key == "new-registration")
         .one()
     )
     assert "SCHIMPL" in row.body
@@ -201,7 +223,7 @@ def test_kill_switch_suppresses_send_without_logging_or_sending(
     _make_smtp_settings(monkeypatch)
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
     db_session.add(
-        SentEmail(to="preexisting@example.test", created_at=datetime.now(UTC))
+        sent_email(to="preexisting@example.test", created_at=datetime.now(UTC))
     )
     db_session.commit()
 
@@ -224,7 +246,11 @@ def test_send_message_uses_ssl_for_port_465(monkeypatch: pytest.MonkeyPatch):
         mock_server = mock_ssl.return_value.__enter__.return_value
         mailer._send_message(MagicMock(), ["a@example.test"])
 
-    mock_ssl.assert_called_once_with("smtp.test.invalid", 465)
+    mock_ssl.assert_called_once()
+    assert mock_ssl.call_args.args == ("smtp.test.invalid", 465)
+    assert mock_ssl.call_args.kwargs["timeout"] == 30
+    assert mock_ssl.call_args.kwargs["context"].verify_mode == ssl.CERT_REQUIRED
+    assert mock_ssl.call_args.kwargs["context"].check_hostname is True
     mock_server.login.assert_called_once_with("user", "secret")
 
 
@@ -239,6 +265,23 @@ def test_send_message_uses_starttls_when_available(monkeypatch: pytest.MonkeyPat
 
     mock_server.starttls.assert_called_once()
     assert mock_server.ehlo.call_count == 2
+
+
+def test_starttls_connection_verifies_the_server_certificate_and_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "587")
+
+    with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
+        mock_server = mock_smtp.return_value.__enter__.return_value
+        mock_server.has_extn.return_value = True
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    context = mock_server.starttls.call_args.kwargs["context"]
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert mock_smtp.call_args.kwargs["timeout"] == 30
 
 
 def test_send_message_refuses_to_send_when_starttls_unavailable(
@@ -261,12 +304,13 @@ def test_send_message_refuses_to_send_when_starttls_unavailable(
     mock_server.sendmail.assert_not_called()
 
 
-def test_send_message_skips_login_when_user_is_null_sentinel(
+def test_send_message_skips_login_without_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
     monkeypatch.setenv("SMTP_PORT", "587")
-    monkeypatch.setenv("SMTP_USER", "null")
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
 
     with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
         mock_server = mock_smtp.return_value.__enter__.return_value
@@ -274,6 +318,77 @@ def test_send_message_skips_login_when_user_is_null_sentinel(
         mailer._send_message(MagicMock(), ["a@example.test"])
 
     mock_server.login.assert_not_called()
+    mock_server.sendmail.assert_called_once()
+
+
+def test_send_message_skips_login_over_ssl_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.delenv("SMTP_USER", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    with patch("app.core.mailer.smtplib.SMTP_SSL") as mock_ssl:
+        mock_server = mock_ssl.return_value.__enter__.return_value
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    mock_server.login.assert_not_called()
+    mock_server.sendmail.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("user", "password"),
+    [("user", None), (None, SecretStr("secret"))],
+    ids=["only-user", "only-password"],
+)
+def test_login_is_skipped_when_only_one_credential_is_set(
+    monkeypatch: pytest.MonkeyPatch, user: str | None, password: SecretStr | None
+):
+    # Settings refuse such a pair at boot; the helper still must never log in
+    # with half a credential.
+    monkeypatch.setattr(
+        mailer,
+        "get_settings",
+        lambda: SimpleNamespace(smtp_user=user, smtp_password=password),
+    )
+    server = MagicMock()
+
+    mailer._login_if_configured(server)
+
+    server.login.assert_not_called()
+
+
+def test_send_message_logs_in_with_the_word_null_as_a_real_credential(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USER", "null")
+    monkeypatch.setenv("SMTP_PASSWORD", "null")
+
+    with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
+        mock_server = mock_smtp.return_value.__enter__.return_value
+        mock_server.has_extn.return_value = True
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    mock_server.login.assert_called_once_with("null", "null")
+
+
+def test_send_message_logs_in_after_starttls(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "secret")
+
+    with patch("app.core.mailer.smtplib.SMTP") as mock_smtp:
+        mock_server = mock_smtp.return_value.__enter__.return_value
+        mock_server.has_extn.return_value = True
+        mailer._send_message(MagicMock(), ["a@example.test"])
+
+    mock_server.login.assert_called_once_with("user", "secret")
+    method_names = [call[0] for call in mock_server.method_calls]
+    assert method_names.index("starttls") < method_names.index("login")
 
 
 def test_send_message_requires_smtp_host_and_port(monkeypatch: pytest.MonkeyPatch):
@@ -320,11 +435,12 @@ class TestSendBookingStatusEmail:
         assert recipients == ["user@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "booking-status")
+            .filter(SentEmail.template_key == "booking-status")
             .one()
         )
         assert "die folgende Aufführung" in row.body
         assert "gebucht" in row.body
+        assert "9. 08. 2026, 11:00" in row.body
 
     def test_plural_intro_for_multiple_entries(
         self, db_session, monkeypatch: pytest.MonkeyPatch
@@ -338,11 +454,32 @@ class TestSendBookingStatusEmail:
 
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "booking-status")
+            .filter(SentEmail.template_key == "booking-status")
             .one()
         )
         assert "die folgenden Aufführungen" in row.body
         assert "nicht gebucht" in row.body
+
+
+class TestBookingCanceledMailEntryLabel:
+    @staticmethod
+    def _entry(previous_status: int) -> mailer.BookingCanceledMailEntry:
+        return mailer.BookingCanceledMailEntry(
+            ordinariumwork_artist_name="HAYDN Joseph",
+            ordinariumwork_name="Nelsonmesse",
+            schedule=datetime(2026, 9, 1, 10, 0, tzinfo=UTC),
+            location_name="Stephansdom",
+            location_address=None,
+            previous_status=previous_status,
+            position_name="Violine 1",
+        )
+
+    def test_names_standby_and_booked(self):
+        assert self._entry(3).previous_status_label == "Standby"
+        assert self._entry(4).previous_status_label == "Gebucht"
+
+    def test_marks_any_other_status_as_unknown(self):
+        assert self._entry(1).previous_status_label == "[unbekannter Status: 1]"
 
 
 class TestSendBookedOrStandbyCanceledEmail:
@@ -370,12 +507,92 @@ class TestSendBookedOrStandbyCanceledEmail:
         assert recipients == ["disponent1@example.test", "disponent2@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "booked-or-standby-canceled")
+            .filter(SentEmail.template_key == "booked-or-standby-canceled")
             .one()
         )
         assert "Muster, Max hat soeben folgende Buchung storniert" in row.body
         assert "Gebucht" in row.body
         assert "Violine 1" in row.body
+        assert "1. 09. 2026, 10:00" in row.body
+
+
+class TestSendRegistrationConflictEmails:
+    def test_known_address_mail_links_to_login_and_password_reset(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        monkeypatch.setenv(
+            "FRONTEND_VERIFY_EMAIL_URL", "https://app.example.com/verify-email"
+        )
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_registration_account_exists_email("user@example.test")
+
+        message, recipients = mock_send.call_args.args
+        assert message["Subject"] == "Registrierung mit bereits bekannter Adresse"
+        assert recipients == ["user@example.test"]
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.template_key == "registration-account-exists")
+            .one()
+        )
+        assert "Du hast bereits ein Konto" in row.body
+        assert '<a href="https://app.example.com/login">Anmelden</a>' in row.body
+        assert (
+            '<a href="https://app.example.com/forgot-password">Passwort vergessen</a>'
+            in row.body
+        )
+
+    def test_known_address_mail_needs_the_frontend_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        monkeypatch.delenv("FRONTEND_VERIFY_EMAIL_URL", raising=False)
+
+        with (
+            patch("app.core.mailer._send_message") as mock_send,
+            pytest.raises(RuntimeError, match="FRONTEND_VERIFY_EMAIL_URL"),
+        ):
+            mailer.send_registration_account_exists_email("user@example.test")
+
+        mock_send.assert_not_called()
+
+    def test_taken_name_mail_names_the_person_and_the_disposition(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        monkeypatch.setenv("MAIL_DISPONENT", "disposition@example.com")
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_registration_entry_exists_email(
+                "user@example.test", givenname="Max", surname="Muster"
+            )
+
+        message, recipients = mock_send.call_args.args
+        assert message["Subject"] == "Registrierung: Name bereits vorhanden"
+        assert recipients == ["user@example.test"]
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.template_key == "registration-entry-exists")
+            .one()
+        )
+        assert "Für den Namen Max Muster gibt es bereits einen Eintrag." in row.body
+        assert "(disposition@example.com)" in row.body
+
+    def test_taken_name_mail_escapes_the_submitted_name(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        with patch("app.core.mailer._send_message"):
+            mailer.send_registration_entry_exists_email(
+                "user@example.test", givenname="<b>Max</b>", surname="Muster"
+            )
+
+        row = (
+            db_session.query(SentEmail)
+            .filter(SentEmail.template_key == "registration-entry-exists")
+            .one()
+        )
+        assert "<b>Max</b>" not in row.body
+        assert "&lt;b&gt;Max&lt;/b&gt;" in row.body
 
 
 class TestSendUserMessageEmail:
@@ -392,7 +609,7 @@ class TestSendUserMessageEmail:
         assert recipients == ["a@example.test", "b@example.test"]
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "user-message")
+            .filter(SentEmail.template_key == "user-message")
             .one()
         )
         assert "Muster, Max hat folgende Nachricht geschickt" in row.body
@@ -419,7 +636,7 @@ class TestSendUserMessageEmail:
 
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "user-message")
+            .filter(SentEmail.template_key == "user-message")
             .one()
         )
         assert row.to is None
@@ -434,8 +651,72 @@ class TestSendUserMessageEmail:
 
         row = (
             db_session.query(SentEmail)
-            .filter(SentEmail.headers == "user-message")
+            .filter(SentEmail.template_key == "user-message")
             .one()
         )
         assert "<script>" not in row.body
         assert "&lt;script&gt;" in row.body
+
+
+class TestStoredBodiesOmitOneTimeLinks:
+    """A verification or password-reset URL is a credential until it expires:
+    the mail carries it, the stored copy must not."""
+
+    def _sent_html(self, mock_send: MagicMock) -> str:
+        message = mock_send.call_args.args[0]
+        return message.get_payload()[0].get_payload(decode=True).decode()
+
+    def test_stored_password_reset_mail_has_no_link(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        link = (
+            "https://app.example/reset-password?token=SECRET-TOKEN&email=a@example.test"
+        )
+
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_password_reset_email("a@example.test", link)
+
+        stored = db_session.query(SentEmail).one()
+        assert "SECRET-TOKEN" not in stored.body
+        assert "[Link entfernt]" in stored.body
+        assert stored.template_key == "password-reset"
+        assert "SECRET-TOKEN" in self._sent_html(mock_send)
+
+    def test_stored_verification_mail_has_no_link(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+        link = "https://app.example/verify-email?token=ANOTHER-SECRET"
+
+        with patch("app.core.mailer._send_message") as mock_send:
+            mailer.send_verification_email("a@example.test", link)
+
+        stored = db_session.query(SentEmail).one()
+        assert "ANOTHER-SECRET" not in stored.body
+        assert "Bestätigungslink" in stored.body
+        assert "ANOTHER-SECRET" in self._sent_html(mock_send)
+
+    def test_other_mails_are_stored_unchanged(
+        self, db_session, monkeypatch: pytest.MonkeyPatch
+    ):
+        _make_smtp_settings(monkeypatch)
+
+        with patch("app.core.mailer._send_message"):
+            mailer.send_user_message_email(["a@example.test"], "Sender", "Hallo Welt")
+
+        stored = db_session.query(SentEmail).one()
+        assert "Hallo Welt" in stored.body
+        assert "[Link entfernt]" not in stored.body
+
+    def test_only_link_bearing_templates_get_the_placeholder(self):
+        template = Template('<a href="{{ url }}">Link</a>')
+        context: dict[str, object] = {"url": "https://x.test/?t=SECRET"}
+        html = template.render(**context)
+
+        link_bearing = mailer._storable_body(template, html, "password-reset", context)
+        other = mailer._storable_body(template, html, "some-other-mail", context)
+
+        assert "SECRET" not in link_bearing
+        assert "[Link entfernt]" in link_bearing
+        assert other == html

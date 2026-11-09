@@ -1,21 +1,21 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
+from sqlalchemy import (
+    ForeignKey,
+    Index,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class UserRole(Base):
-    """Pure pivot table (user <-> role) that nevertheless carries
-    `created_at`/`updated_at` columns and treats them like every other
-    created_at/updated_at pair in the schema, not as a mapping-table
-    exemption: the columns hold genuinely-UTC data. `created_at` is
-    populated by the database's own DEFAULT now(), `updated_at` by the
-    shared set_updated_at() BEFORE UPDATE trigger -- neither is assigned
-    from Python.
+class UserRole(TimestampColumns, Base):
+    """Pure pivot table (user <-> role) that nevertheless carries the
+    standard created_at and updated_at columns like every other table, not
+    as a mapping-table exemption.
 
     Both foreign keys have an explicit `ondelete=`, deliberately asymmetric: `user_id`
     is ON DELETE CASCADE (a role grant is meaningless without its user, and no existing
@@ -25,7 +25,10 @@ class UserRole(Base):
     grant instead, which is security-relevant and must fail loudly)."""
 
     __tablename__ = "user_roles"
-    __table_args__ = (UniqueConstraint("user_id", "role_id"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_id"),
+        Index("user_roles_role_id_index", "role_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -33,10 +36,4 @@ class UserRole(Base):
     )
     role_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("roles.id", ondelete="RESTRICT", onupdate="RESTRICT")
-    )
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
     )

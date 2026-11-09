@@ -7,12 +7,12 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import get_verified_user
+from app.api.auth_guards import AuthUser, get_verified_user
 from app.api.deps import get_current_user, oauth2_scheme
 from app.api.job_queue import JobQueue, get_job_queue
 from app.core import mailer
 from app.core.config import get_settings
-from app.core.rate_limit import limiter
+from app.core.rate_limit import client_ip, rate_limited
 from app.core.redacted import Redacted
 from app.core.security import (
     REFRESH_TOKEN_LIFETIME_DAYS,
@@ -20,7 +20,6 @@ from app.core.security import (
     parse_refresh_cookie,
 )
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.auth import (
     EmailKillSwitchStatusOutput,
     ForgotPasswordRequest,
@@ -36,11 +35,14 @@ from app.services.auth_service import (
     AccountNotLinkedError,
     InvalidSessionError,
     OauthBindingNotFoundError,
+    RegistrationConflict,
 )
 from app.services.permission_service import calculate_permissions
 from app.worker.tasks import (
     send_new_registration_notice_task,
     send_password_reset_email_task,
+    send_registration_account_exists_email_task,
+    send_registration_entry_exists_email_task,
     send_verification_email_task,
 )
 
@@ -54,10 +56,6 @@ COOKIE_PATH = "/api/auth"
 COOKIE_MAX_AGE = REFRESH_TOKEN_LIFETIME_DAYS * 86400
 
 
-def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
-
-
 def _build_login_response(
     access_token: str, session_id: str, refresh_secret: str
 ) -> JSONResponse:
@@ -69,7 +67,7 @@ def _build_login_response(
         value=build_refresh_cookie_value(session_id, refresh_secret),
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite=get_settings().refresh_cookie_samesite,
         path=COOKIE_PATH,
         max_age=COOKIE_MAX_AGE,
     )
@@ -77,21 +75,35 @@ def _build_login_response(
 
 
 def _ensure_trusted_origin(request: Request) -> None:
-    """CSRF defense for /refresh: samesite="none" on the refresh-token
-    cookie above (required so a future frontend/backend domain split keeps
-    working) means the browser now attaches that cookie to a cross-site
-    request too, not just requests from our own frontend. /refresh is the
-    one endpoint that acts purely on that cookie, no Authorization header
-    required (unlike /logout, see get_current_user), so it's the one
-    actually exposed to that. A browser always sends an Origin header on a
-    POST, so a missing/untrusted one means this request didn't originate
-    from a page we serve."""
+    """CSRF defense for /refresh, second layer behind the SameSite attribute of
+    the refresh-token cookie above. With REFRESH_COOKIE_SAMESITE=none (needed
+    when the frontend and the API live on different registrable domains) the
+    browser attaches the cookie to a cross-site request too, not just
+    requests from our own frontend. /refresh is the one endpoint that acts
+    purely on that cookie, no Authorization header required (unlike /logout,
+    see get_current_user), so it's the one actually exposed to that. A
+    browser always sends an Origin header on a POST, so a missing/untrusted
+    one means this request didn't originate from a page we serve."""
     origin = request.headers.get("origin")
     if origin not in get_settings().cors_origins_list:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Anfrage-Herkunft nicht vertrauenswürdig.",
         )
+
+
+def _throttled_response(seconds_remaining: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "detail": (
+                f"Zu viele Anmeldeversuche. Bitte in {seconds_remaining} "
+                "Sekunden erneut versuchen."
+            ),
+            "seconds": seconds_remaining,
+            "minutes": ceil(seconds_remaining / 60),
+        },
+    )
 
 
 @auth_router.post("/login")
@@ -107,10 +119,11 @@ def login(
     (the login fails generically for both, which prevents account
     enumeration -- there is no separate "Passwort falsch." message in the
     login flow, that string belongs to the unrelated self-service
-    change-password form). Lockout threshold/window (5 attempts / 60s), see
+    change-password form). Lockout: 5 failed attempts / 60s per e-mail and
+    address, 20 / 15 min per e-mail from any address, see
     auth_service.check_login_throttle.
     """
-    ip_address = _client_ip(request)
+    ip_address = client_ip(request)
     user_agent = request.headers.get("user-agent")
 
     seconds_remaining = auth_service.check_login_throttle(
@@ -124,18 +137,7 @@ def login(
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        minutes = ceil(seconds_remaining / 60)
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={
-                "detail": (
-                    f"Zu viele Anmeldeversuche. Bitte in {seconds_remaining} "
-                    "Sekunden erneut versuchen."
-                ),
-                "seconds": seconds_remaining,
-                "minutes": minutes,
-            },
-        )
+        return _throttled_response(seconds_remaining)
 
     user, reason = auth_service.authenticate_user(
         db, form_data.username, form_data.password
@@ -180,7 +182,7 @@ def login(
 
 
 @auth_router.post("/refresh")
-@limiter.limit("10/minute")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("10/minute")
 def refresh(request: Request, db: Annotated[Session, Depends(get_db)]) -> JSONResponse:
     """Exchange the refresh-token cookie for a new access token, rotating
     the refresh secret on every use. Per-IP rate limit only."""
@@ -213,7 +215,7 @@ def logout(
     _request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
 ) -> JSONResponse:
     """Invalidate the current session and clear the refresh-token cookie."""
     auth_service.logout_user(db, token)
@@ -227,7 +229,7 @@ def logout(
 
 @auth_router.get("/me")
 def get_current_user_profile(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> UserProfileResponse:
     """The frontend calls this once after login/on boot to populate its auth
@@ -251,25 +253,52 @@ def get_current_user_profile(
     )
 
 
+def _registration_notice(email: str) -> dict[str, str]:
+    return {
+        "status": "ok",
+        "message": (
+            f"Bitte prüfe dein Postfach. Wir haben eine E-Mail an {email} "
+            "geschickt. Falls für diese Adresse noch kein Konto besteht, "
+            "enthält sie einen Bestätigungslink. Nach der Bestätigung bist "
+            "du angemeldet."
+        ),
+    }
+
+
 @auth_router.post("/register")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def register(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: RegisterRequest,
     db: Annotated[Session, Depends(get_db)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
-) -> JSONResponse:
-    """Register + auto-login right after user creation, then notify the disponent
-    address in the background -- registration itself must not wait on (or fail because
-    of) mail delivery. No auth/permission dependency exists on this endpoint (it must
-    work logged-out), so there is no dependency-ordering concern here, unlike
-    resend_verification_email below. A RegistrationConflictError propagates
-    to app.api.exception_handlers' global DomainValidationError handler."""
-    user = auth_service.register_user(db, data)
-    access_token, session_id, refresh_secret = auth_service.create_user_session(
-        db, user
-    )
+) -> dict[str, str]:
+    """Answers every registration alike, so an anonymous visitor cannot learn
+    whether an address or a name is already in use (the login and reset flows
+    avoid the same enumeration). A new address gets its account, the
+    verification mail and, in the background, the disponent notice; no session
+    is issued, the verification link logs in. An address that has an account,
+    or a name that is taken, creates nothing and gets a mail saying so.
+    Registration itself must not wait on (or fail because of) mail delivery.
+    No auth/permission dependency exists on this endpoint (it must work
+    logged-out), so there is no dependency-ordering concern here, unlike
+    resend_verification_email below."""
+    outcome = auth_service.register_user(db, data)
+    email = data.email.lower()
 
+    if outcome is RegistrationConflict.ACCOUNT_EXISTS:
+        job_queue.enqueue(send_registration_account_exists_email_task, email)
+        return _registration_notice(email)
+    if outcome is RegistrationConflict.ENTRY_EXISTS:
+        job_queue.enqueue(
+            send_registration_entry_exists_email_task,
+            email,
+            data.givenname,
+            data.surname,
+        )
+        return _registration_notice(email)
+
+    user = outcome
     job_queue.enqueue(
         send_new_registration_notice_task,
         surname=user.surname,
@@ -283,14 +312,14 @@ def register(
             send_verification_email_task, user.email, Redacted(verify_url)
         )
 
-    return _build_login_response(access_token, session_id, refresh_secret)
+    return _registration_notice(email)
 
 
 @auth_router.post("/resend-verification-email")
-@limiter.limit("6/minute")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("6/minute")
 def resend_verification_email(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
-    current_user: Annotated[User, Depends(get_current_user)],
+    request: Request,  # noqa: ARG001
+    current_user: Annotated[AuthUser, Depends(get_current_user)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """Re-sends the verification mail. Deliberately uses get_current_user,
@@ -310,9 +339,9 @@ def resend_verification_email(
 
 
 @auth_router.post("/verify-email")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def verify_email(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: VerifyEmailRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
@@ -335,9 +364,9 @@ def verify_email(
 
 
 @auth_router.post("/forgot-password")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def forgot_password(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: ForgotPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
@@ -362,9 +391,9 @@ def forgot_password(
 
 
 @auth_router.post("/reset-password")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def reset_password(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: ResetPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, str]:
@@ -379,9 +408,9 @@ def reset_password(
 
 
 @auth_router.post("/google/callback")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def google_callback(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,  # noqa: ARG001
     data: GoogleCallbackRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
@@ -408,23 +437,51 @@ def google_callback(
 
 
 @auth_router.post("/google/link")
-@limiter.limit("5/hour")  # type: ignore[reportUntypedFunctionDecorator]
+@rate_limited("5/hour")
 def google_link(
-    request: Request,  # noqa: ARG001 -- slowapi's @limiter.limit requires a literal "request" param, even though the body never reads it
+    request: Request,
     data: GoogleLinkRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> JSONResponse:
+    """Checks the local e-mail and password, so it shares the login lockout
+    and audit trail: otherwise it would be a way to guess passwords that
+    the login throttle never sees."""
+    ip_address = client_ip(request)
+    user_agent = request.headers.get("user-agent")
+
+    seconds_remaining = auth_service.check_login_throttle(db, data.email, ip_address)
+    if seconds_remaining is not None:
+        auth_service.log_auth_event(
+            db,
+            "Lockout",
+            data.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return _throttled_response(seconds_remaining)
+
     try:
         user = auth_service.link_google_account(
             db, data.credential, data.email, data.password
         )
     except ValueError as exc:
+        auth_service.log_auth_event(
+            db,
+            "Failed",
+            data.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            payload={"via": "google_link"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
         ) from None
 
     access_token, session_id, refresh_secret = auth_service.create_user_session(
         db, user
+    )
+    auth_service.log_auth_event(
+        db, "Login", user.email, ip_address=ip_address, user_agent=user_agent
     )
     return _build_login_response(access_token, session_id, refresh_secret)
 
@@ -433,7 +490,7 @@ def google_link(
 def disconnect_oauth2_binding(
     binding_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> dict[str, str]:
     """Unlinks an OAuth binding, restricted to the caller's own bindings --
     see auth_service.unlink_oauth_binding for the IDOR protection.

@@ -1,27 +1,35 @@
 from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 
 from app.api.deps import get_current_user
 from app.db.models.user import User
-from app.services.permission_service import calculate_permissions
+from app.services.permission_service import has_permission
+
+# Routers import the authenticated-user type from here instead of reaching into
+# app.db.models: they call service functions only and never import persistence
+# models (scripts/check_router_soc.py enforces it).
+AuthUser = User
 
 
 def ensure_permission(user: User, required_permission: str) -> None:
     """Raises 403 if `user` lacks `required_permission`. Used directly
-    (not via `require_permission` below) by routers whose required
+    (not via `require_permission` below) by guards whose required
     permission depends on request data only known at call time -- e.g. the
     Coreelement router's `element_type` path param selects one of six
     different permissions, which `require_permission`'s route-declaration-
     time factory can't express."""
-    if required_permission not in calculate_permissions(user):
+    if not has_permission(user, required_permission):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Fehlende Berechtigung: {required_permission}",
         )
 
 
-def get_verified_user(current_user: User = Depends(get_current_user)) -> User:
+def get_verified_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
     """Requires a verified email on every route except auth's own endpoints
     (login/refresh/logout/me/verify-email/resend-verification-email).
     Deliberately a separate dependency from get_current_user (not merged
@@ -36,10 +44,10 @@ def get_verified_user(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-def require_permission(required_permission: str) -> Callable[..., User]:
+def require_permission(required_permission: str) -> Callable[[User], User]:
     """Usage: Depends(require_permission("userMaintain"))"""
 
-    def _guard(current_user: User = Depends(get_verified_user)) -> User:
+    def _guard(current_user: Annotated[User, Depends(get_verified_user)]) -> User:
         ensure_permission(current_user, required_permission)
         return current_user
 

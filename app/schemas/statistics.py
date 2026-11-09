@@ -1,14 +1,13 @@
 from pydantic import BaseModel
 
+from app.schemas.auth import EmailKillSwitchStatusOutput
 
-class StatisticsEmailOutput(BaseModel):
+
+class StatisticsEmailOutput(EmailKillSwitchStatusOutput):
     """The kill-switch status plus its raw `sent` count -- `sent` is
     exclusive to this endpoint (see mailer.MailKillSwitchStatus docstring),
     not exposed via GET /auth/me."""
 
-    active: bool
-    period_days: int
-    threshold: int
     sent: int
 
 
@@ -20,4 +19,5 @@ class StatisticsOutput(BaseModel):
     ordinariumworks: int
     propriumworks: int
     scores: int
-    email: StatisticsEmailOutput
+    # Only for holders of the sentEmailView permission.
+    email: StatisticsEmailOutput | None

@@ -1,6 +1,8 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from tests.login import login_headers
+
 
 def _unique(base: str = "Element") -> str:
     """Every test gets its own collision-free name -- tests/conftest.py's
@@ -13,15 +15,7 @@ def _unique(base: str = "Element") -> str:
 def _auth_headers(
     client, make_user, *, administrator: bool = True, roles: list[str] | None = None
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password", administrator=administrator, roles=roles
-    )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    return login_headers(client, make_user, administrator=administrator, roles=roles)
 
 
 class TestPermissionGuard:
@@ -41,6 +35,55 @@ class TestPermissionGuard:
         )
         assert response.status_code == 403
 
+    def test_every_route_answers_403_to_a_non_administrator(self, client, make_user):
+        headers = _auth_headers(client, make_user, administrator=False)
+        some_id = uuid.uuid4()
+
+        responses = {
+            "list": client.get("/coreelements/instrument", headers=headers),
+            "create": client.post(
+                "/coreelements/instrument", json={"name": _unique()}, headers=headers
+            ),
+            "update": client.put(
+                f"/coreelements/instrument/{some_id}",
+                json={"name": _unique()},
+                headers=headers,
+            ),
+            "delete": client.delete(
+                f"/coreelements/instrument/{some_id}", headers=headers
+            ),
+            "move": client.post(
+                f"/coreelements/instrument/{some_id}/move/up", headers=headers
+            ),
+        }
+
+        assert {name: r.status_code for name, r in responses.items()} == dict.fromkeys(
+            responses, 403
+        )
+
+    def test_the_permission_is_checked_before_the_body_is_validated(
+        self, client, make_user
+    ):
+        """A caller without the permission learns nothing about the schema:
+        an invalid body is answered with 403, not with a 422 that lists the
+        fields."""
+        headers = _auth_headers(client, make_user, administrator=False)
+
+        create = client.post("/coreelements/location", json={}, headers=headers)
+        update = client.put(
+            f"/coreelements/location/{uuid.uuid4()}", json={}, headers=headers
+        )
+
+        assert (create.status_code, update.status_code) == (403, 403)
+        assert "Fehlende Berechtigung" in create.json()["detail"]
+
+    def test_an_administrator_still_gets_the_validation_error(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+
+        response = client.post("/coreelements/location", json={}, headers=headers)
+
+        assert response.status_code == 422
+
 
 class TestCrudRoundtrip:
     def test_create_list_update_delete_instrument(self, client, make_user):
@@ -55,7 +98,7 @@ class TestCrudRoundtrip:
         assert created["name"] == name
 
         list_response = client.get("/coreelements/instrument", headers=headers)
-        assert name in [item["name"] for item in list_response.json()]
+        assert name in [item["name"] for item in list_response.json()["items"]]
 
         new_name = _unique("Kontrafagott")
         update_response = client.put(
@@ -72,7 +115,7 @@ class TestCrudRoundtrip:
         assert delete_response.status_code == 200
 
         final_list = client.get("/coreelements/instrument", headers=headers)
-        assert new_name not in [item["name"] for item in final_list.json()]
+        assert new_name not in [item["name"] for item in final_list.json()["items"]]
 
     def test_create_and_archive_instrument(self, client, make_user):
         headers = _auth_headers(client, make_user)
@@ -300,6 +343,42 @@ class TestDeleteInUseViaOrdinariumworkPosition:
         assert delete_response.status_code == 422
         assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
 
+    def test_voice_delete_blocked_while_referenced_by_ordinariumwork(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        voice_response = client.post(
+            "/coreelements/voice",
+            json={"name": _unique("Alt")},
+            headers=headers,
+        )
+        voice_id = voice_response.json()["id"]
+        planner_headers, artist_id, _ordinariumwork_id = _make_performance_dependencies(
+            client, make_user
+        )
+        client.post(
+            "/ordinariumworks",
+            json={
+                "name": _unique("Werk"),
+                "description": None,
+                "artist_id": artist_id,
+                "duration": None,
+                "demanding": False,
+                "setup": {
+                    "instruments": [],
+                    "voices": [{"id": voice_id, "quantity": 1}],
+                },
+            },
+            headers=planner_headers,
+        )
+
+        delete_response = client.delete(
+            f"/coreelements/voice/{voice_id}", headers=headers
+        )
+
+        assert delete_response.status_code == 422
+        assert "noch in Verwendung" in delete_response.json()["detail"][0]["msg"]
+
 
 def _make_performance_dependencies(
     client, make_user
@@ -337,7 +416,7 @@ def _make_performance_dependencies(
 
 
 def _performance_payload(
-    location_id: int, ordinariumwork_id: int, **overrides: object
+    location_id: str, ordinariumwork_id: str, **overrides: object
 ) -> dict:
     payload: dict[str, object] = {
         "schedule": (datetime.now(UTC) + timedelta(days=2)).strftime(
@@ -561,5 +640,5 @@ class TestQueryCount:
 
         assert small_response.status_code == 200
         assert large_response.status_code == 200
-        assert len(large_response.json()) > len(small_response.json())
+        assert len(large_response.json()["items"]) > len(small_response.json()["items"])
         assert large.count == small.count

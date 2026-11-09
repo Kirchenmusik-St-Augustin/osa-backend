@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.config import get_settings
 from app.db.models.shorturl import Shorturl
@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+_TARGET_SCHEME_MESSAGE = "Nur http- und https-Adressen sind erlaubt."
+
+
 class ShorturlNotFoundError(NotFoundError):
     """Raised when `shorturl_id` doesn't exist."""
 
@@ -24,14 +27,25 @@ class ShorturlValidationError(DomainValidationError):
     failing field -- same pattern as fee_service.FeeValidationError."""
 
 
-def ensure_scheme(url: str) -> str:
-    """Prepends "http://" if `url` has no scheme of its own. One shared
-    function, called from both the save path (create_shorturl/
-    update_shorturl) and the redirect path (resolve_and_record_hit)
-    below."""
-    if not urlparse(url).scheme:
-        return f"http://{url}"
-    return url
+def normalize_target(url: str) -> str:
+    """Redirect targets are http(s) addresses only: a missing scheme becomes
+    https, anything else (javascript:, data:, file:, ftp:, a bare //host) or
+    an address without a usable host is refused. One shared function, called
+    from both the save path (create_shorturl/update_shorturl) and the
+    redirect path (resolve_and_record_hit) below."""
+    candidate = url.strip()
+    if "://" not in candidate:
+        candidate = f"https://{candidate}"
+    parsed = urlparse(candidate)
+    try:
+        # A non-numeric "port" is how a scheme-less javascript:/data: input
+        # presents itself after the default scheme was added.
+        parsed.port  # noqa: B018 -- raises ValueError for an invalid port
+    except ValueError:
+        raise ValueError(_TARGET_SCHEME_MESSAGE) from None
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise ValueError(_TARGET_SCHEME_MESSAGE)
+    return candidate
 
 
 def _path_taken(db: Session, path: str, exclude_id: uuid.UUID | None) -> bool:
@@ -82,19 +96,23 @@ def list_shorturls_with_prefix(db: Session) -> ShorturlListResponse:
     )
 
 
-def create_shorturl(db: Session, data: ShorturlRequest) -> ShorturlResponse:
-    # `lstrip` only -- strips leading slashes only, not trailing/embedded
-    # ones.
-    path = data.path.lstrip("/")
-    errors = _validate(db, path, exclude_id=None)
+def _validated_path_and_target(
+    db: Session, data: ShorturlRequest, exclude_id: uuid.UUID | None
+) -> tuple[str, str]:
+    errors = _validate(db, data.path, exclude_id)
+    target = ""
+    try:
+        target = normalize_target(data.target)
+    except ValueError as exc:
+        errors.append(FieldError("target", str(exc)))
     if errors:
         raise ShorturlValidationError(errors)
+    return data.path, target
 
-    shorturl = Shorturl(
-        path=path,
-        target=ensure_scheme(data.target),
-        counter=0,
-    )
+
+def create_shorturl(db: Session, data: ShorturlRequest) -> ShorturlResponse:
+    path, target = _validated_path_and_target(db, data, exclude_id=None)
+    shorturl = Shorturl(path=path, target=target, counter=0)
     db.add(shorturl)
     db.commit()
     return _to_response(shorturl)
@@ -104,13 +122,9 @@ def update_shorturl(
     db: Session, shorturl_id: uuid.UUID, data: ShorturlRequest
 ) -> ShorturlResponse:
     shorturl = _get_or_404(db, shorturl_id)
-    path = data.path.lstrip("/")
-    errors = _validate(db, path, exclude_id=shorturl_id)
-    if errors:
-        raise ShorturlValidationError(errors)
-
+    path, target = _validated_path_and_target(db, data, exclude_id=shorturl_id)
     shorturl.path = path
-    shorturl.target = ensure_scheme(data.target)
+    shorturl.target = target
     db.commit()
     return _to_response(shorturl)
 
@@ -124,16 +138,23 @@ def delete_shorturl(db: Session, shorturl_id: uuid.UUID) -> None:
 
 def resolve_and_record_hit(db: Session, path: str) -> str | None:
     """Looks up `path` for the public go-redirect endpoint. On a hit,
-    records the click (counter/latestcall_at) and returns the normalized
-    target URL; returns None on a miss (the router turns that into a 404).
-    No special-casing for any particular path value (e.g. "listAll") -- see
-    app.api.router_includes.go for why there is no public dump path."""
-    result = db.execute(select(Shorturl).where(Shorturl.path == path))
-    shorturl = result.scalar_one_or_none()
-    if shorturl is None:
-        return None
-
-    shorturl.counter += 1
-    shorturl.latestcall_at = datetime.now(UTC)
+    records the click and returns the target URL; returns None on a miss or
+    when the stored target is not a valid http(s) address (the router turns
+    that into a 404). The click is counted by one atomic UPDATE ...
+    RETURNING, so concurrent clicks are all counted and the lookup costs one
+    statement. No special-casing for any particular path value (e.g.
+    "listAll") -- see app.api.router_includes.go for why there is no public
+    dump path."""
+    stored_target = db.execute(
+        update(Shorturl)
+        .where(Shorturl.path == path)
+        .values(counter=Shorturl.counter + 1, latestcall_at=datetime.now(UTC))
+        .returning(Shorturl.target)
+    ).scalar_one_or_none()
     db.commit()
-    return ensure_scheme(shorturl.target)
+    if stored_target is None:
+        return None
+    try:
+        return normalize_target(stored_target)
+    except ValueError:
+        return None

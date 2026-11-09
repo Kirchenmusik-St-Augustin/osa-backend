@@ -4,26 +4,37 @@ from sqlalchemy import select
 
 from app.db.models.user import User
 from app.db.models.user_position import UserPosition
+from app.schemas.base import IdNameOutput
 from app.schemas.coreelement import CoreelementType
-from app.schemas.performance import PositionRefOutput
-from app.schemas.userdirectory import UserDirectoryAbilitiesOutput
+from app.schemas.pagination import PagedRows
+from app.schemas.userdirectory import (
+    DirectoryType,
+    UserDirectoryAbilitiesOutput,
+    UserDirectoryEntryOutput,
+)
 from app.services import coreelement_service
+from app.services.pagination import select_page
+from app.services.position_types import position_column
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
 
-    from sqlalchemy.orm import InstrumentedAttribute, Session
+    from sqlalchemy.orm import Session
 
+    from app.schemas.pagination import PageParams
     from app.services.position_types import PositionType
 
-# UserPosition's own WHERE-clause dispatch table -- see booking_service.py's
-# identical _BOOKING_POSITION_COLUMNS for the full rationale.
-_USER_POSITION_COLUMNS: dict[PositionType, InstrumentedAttribute[uuid.UUID | None]] = {
-    "instruments": UserPosition.instrument_id,
-    "voices": UserPosition.voice_id,
-    "choirjobs": UserPosition.choirjob_id,
-}
+
+def to_entry(user: User) -> UserDirectoryEntryOutput:
+    has_email = user.email_verified_at is not None
+    return UserDirectoryEntryOutput(
+        id=user.id,
+        surname=user.surname,
+        givenname=user.givenname,
+        has_email=has_email,
+        email=user.email if has_email else None,
+        phone=user.phone,
+    )
 
 
 def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
@@ -31,9 +42,9 @@ def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
     user_service.get_form_options() does, roles excluded (see
     UserDirectoryAbilitiesOutput docstring)."""
 
-    def _refs(type_: CoreelementType) -> list[PositionRefOutput]:
+    def _refs(type_: CoreelementType) -> list[IdNameOutput]:
         return [
-            PositionRefOutput(id=item.id, name=item.name)
+            IdNameOutput(id=item.id, name=item.name)
             for item in coreelement_service.list_coreelements(db, type_)
         ]
 
@@ -44,20 +55,23 @@ def get_abilities(db: Session) -> UserDirectoryAbilitiesOutput:
     )
 
 
-def list_all_users(db: Session) -> Sequence[User]:
+def list_all_users(db: Session, page: PageParams) -> PagedRows[User]:
     """All users (type=all) -- excludes soft-deleted users, ordered by
     surname/givenname."""
     stmt = (
         select(User)
         .where(User.deleted_at.is_(None))
-        .order_by(User.surname, User.givenname)
+        .order_by(User.surname, User.givenname, User.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)
 
 
 def list_users_for_position(
-    db: Session, position_type: PositionType, position_id: uuid.UUID
-) -> Sequence[User]:
+    db: Session,
+    position_type: PositionType,
+    position_id: uuid.UUID,
+    page: PageParams,
+) -> PagedRows[User]:
     """Users holding a position (type=instruments|voices|choirjobs) -- via
     the user_positions pivot, same ordering/soft-delete exclusion as
     list_all_users(). A position_id that doesn't correspond to a real
@@ -69,9 +83,27 @@ def list_users_for_position(
         select(User)
         .join(UserPosition, UserPosition.user_id == User.id)
         .where(
-            _USER_POSITION_COLUMNS[position_type] == position_id,
+            position_column(UserPosition, position_type) == position_id,
             User.deleted_at.is_(None),
         )
-        .order_by(User.surname, User.givenname)
+        .order_by(User.surname, User.givenname, User.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)
+
+
+def list_entries(
+    db: Session,
+    directory_type: DirectoryType | None,
+    position_id: uuid.UUID | None,
+    page: PageParams,
+) -> PagedRows[UserDirectoryEntryOutput]:
+    """One page of the directory: everybody for no type or type=all, the
+    holders of one position for a position type together with its id, and
+    nobody for a position type without an id."""
+    if directory_type is None or directory_type == "all":
+        users = list_all_users(db, page)
+    elif position_id is not None:
+        users = list_users_for_position(db, directory_type, position_id, page)
+    else:
+        users = PagedRows[User](rows=[], total=0)
+    return users.map(to_entry)

@@ -1,4 +1,4 @@
-FROM python:3.14-slim AS base
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS base
 WORKDIR /app
 # Skip writing .pyc files: this app's runtime root filesystem is read-only
 # in production (see osa-deploy's osa-backend Quadlets), and there's
@@ -21,10 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-FROM python:3.14-slim AS builder
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
 WORKDIR /build
 COPY requirements.lock .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.lock
+# --require-hashes: every pin in the lock carries the hashes of its release
+# files, so a re-uploaded release or a poisoned mirror cannot replace code
+# that ends up in the production image.
+RUN pip install --no-cache-dir --require-hashes --prefix=/install -r requirements.lock
 
 FROM base AS dev
 # libatomic1: required by pyright's bundled prebuilt Node.js runtime, which
@@ -32,14 +35,14 @@ FROM base AS dev
 RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 # Installs from the lock file, not requirements-dev.txt directly -- the
-# same pinned versions CI installs via `uv pip install --system -r
-# requirements-dev.lock`, so a routine image rebuild can never silently
-# pick up a newer ruff/pyright/pytest from PyPI than what pre-commit and
-# CI are actually gated on. requirements-dev.lock already transitively
-# includes requirements.txt's runtime pins, so no separate
+# same pinned versions CI installs via `uv pip install --system
+# --require-hashes -r requirements-dev.lock`, so a routine image rebuild can
+# never silently pick up a newer ruff/pyright/pytest from PyPI than what
+# pre-commit and CI are actually gated on. requirements-dev.lock already
+# transitively includes requirements.txt's runtime pins, so no separate
 # requirements.txt copy is needed here.
 COPY requirements-dev.lock ./
-RUN pip install --no-cache-dir -r requirements-dev.lock
+RUN pip install --no-cache-dir --require-hashes -r requirements-dev.lock
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 FROM base AS prod
@@ -63,9 +66,15 @@ ENTRYPOINT ["./docker-entrypoint.sh"]
 # shutdown's grace period doesn't need to allow any more than that same
 # ceiling (see osa-deploy's osa-backend Quadlet StopTimeout=/TimeoutStopSec=,
 # which are sized off this same value plus a buffer).
+# --forwarded-allow-ips: the only client of the published port is Caddy, which
+# overwrites any X-Forwarded-For sent by a visitor, so the header is trusted
+# from every peer address. Without it request.client.host is the same
+# internal address for every visitor and all per-address rate limits and the
+# login lockout collapse into one shared bucket (see app/core/rate_limit.py).
 CMD ["gunicorn", "main:app", "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", \
-     "--graceful-timeout", "120", "--access-logfile", "-", "--no-control-socket"]
+     "--graceful-timeout", "120", "--forwarded-allow-ips", "*", \
+     "--access-logfile", "-", "--no-control-socket"]
 # --no-control-socket: this feature (gunicorn >= 25.1.0) is for gunicornc,
 # a CLI tool for runtime worker management -- unused here (Podman/systemd
 # own the container lifecycle instead). Without this flag, gunicorn tries

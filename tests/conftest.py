@@ -21,14 +21,22 @@ reproduced in isolation.
 """
 
 import os
+from urllib.parse import urlsplit
 
 os.environ["APP_ENVIRONMENT"] = "test"
+# The suite hashes a password for almost every test; the minimum work factor
+# keeps that fast. Production clamps to at least 12 (see app.core.security).
+os.environ["BCRYPT_ROUNDS"] = "4"
 os.environ["CORS_ORIGINS"] = "http://localhost:21001"
 os.environ["SECRET_KEY"] = "test-secret-key-" + "x" * 32
+os.environ["VALKEY_PASSWORD"] = (
+    "test-valkey-password"  # required on qa and production, see Settings
+)
 
 # Guards against ever pointing this at a real dev/prod database: the
 # session fixture below drops and rebuilds the entire 'public' schema.
 _ALLOWED_TEST_DBS = {"osa_test", "test"}
+_ALLOWED_TEST_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get(
     "DATABASE_URL"
 )
@@ -40,7 +48,16 @@ if not _TEST_DATABASE_URL:
     )
     raise RuntimeError(msg)
 
-_dbname = _TEST_DATABASE_URL.rsplit("/", 1)[-1].split("?")[0]
+_url = urlsplit(_TEST_DATABASE_URL)
+if _url.hostname not in _ALLOWED_TEST_HOSTS:
+    msg = (
+        f"Refusing to run tests against host {_url.hostname!r}. The test "
+        "session drops and rebuilds the 'public' schema, so the database "
+        f"must be local: {sorted(_ALLOWED_TEST_HOSTS)}."
+    )
+    raise RuntimeError(msg)
+
+_dbname = _url.path.lstrip("/")
 if _dbname not in _ALLOWED_TEST_DBS:
     msg = (
         f"Refusing to run tests against non-test database {_dbname!r}. "
@@ -72,7 +89,7 @@ from app.core.arq_pool import get_arq_pool
 from app.core.config import get_settings
 from app.core.rate_limit import limiter
 from app.core.security import get_password_hash
-from app.db.database import engine, get_db
+from app.db.database import Base, engine, get_db
 from app.db.models.artist import Artist
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
@@ -288,11 +305,40 @@ job_run_service.SessionLocal = _job_session_factory
 
 
 @pytest.fixture
+def committed_db(monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
+    """A session whose commits are real, for the few tests about commit
+    boundaries: what a second connection sees after a commit, and what
+    survives a failure in the middle of a run. Every other test runs inside
+    one outer transaction (see _db_transaction), where a commit only releases
+    a savepoint and a rollback at the end hides what was or was not committed.
+
+    The modules that open their own sessions are pointed at real sessions as
+    well, and every table is emptied afterwards, so the rows of one test never
+    reach the next one. Use it only where a real commit is the subject."""
+    for module in (
+        booking_jobs,
+        housekeeping_jobs,
+        mailer,
+        request_logging,
+        job_run_service,
+    ):
+        monkeypatch.setattr(module, "SessionLocal", TestingSessionLocal)
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+        with engine.begin() as connection:
+            connection.execute(text(f"TRUNCATE {tables} CASCADE"))
+
+
+@pytest.fixture
 def client():
     # Origin header default matches CORS_ORIGINS above -- a real browser
     # always sends one on POST requests, and /auth/refresh's origin check
-    # (see app/api/router_includes/auth.py) now depends on it since the
-    # refresh cookie moved to samesite="none". Tests that specifically
+    # (see app/api/router_includes/auth.py) is its second layer behind the
+    # SameSite attribute of the refresh cookie. Tests that specifically
     # exercise a missing/untrusted origin override this per-request.
     with TestClient(
         app,

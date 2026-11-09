@@ -2,20 +2,20 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
-from app.db.models.artist import Artist
 from app.db.models.performance_proprium import PerformanceProprium
 from app.db.models.propriumwork import Propriumwork
-from app.schemas.propriumwork import (
-    PropriumworkRequest,
-    PropriumworkResponse,
-    PropriumworkSearchResult,
-)
-from app.services.artist_service import label_for
+from app.schemas.propriumwork import PropriumworkRequest, PropriumworkResponse
 from app.services.errors import (
     DomainValidationError,
     FieldError,
     GeneralValidationError,
     NotFoundError,
+)
+from app.services.work_common import (
+    WorkKind,
+    search_works,
+    validate_work_fields,
+    work_response,
 )
 
 if TYPE_CHECKING:
@@ -24,18 +24,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-_NAME_MIN_LENGTH = 3
-_NAME_MAX_LENGTH = 60
-# Propriumwork requires a duration of at least 1, while Ordinariumwork
-# (ordinariumwork_service.py) allows 0 -- not a typo, the two genuinely
-# differ on this bound.
-_DURATION_MIN = 1
-_DURATION_MAX = 999
-_SEARCH_RESULT_LIMIT = 20
-_NAME_LENGTH_ERROR = (
-    f"Muss zwischen {_NAME_MIN_LENGTH} und {_NAME_MAX_LENGTH} Zeichen lang sein."
-)
+    from app.schemas.base import IdLabelOutput
 
+_WORK_KIND = WorkKind(model=Propriumwork, response_type=PropriumworkResponse)
 
 _IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
 
@@ -46,7 +37,7 @@ class PropriumworkNotFoundError(NotFoundError):
 
 class PropriumworkValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as auth_service.RegistrationConflictError."""
+    failing field."""
 
 
 class PropriumworkInUseError(GeneralValidationError):
@@ -70,85 +61,22 @@ def _get_or_404(db: Session, propriumwork_id: uuid.UUID) -> Propriumwork:
 def _validate(
     db: Session, data: PropriumworkRequest, exclude_id: uuid.UUID | None
 ) -> list[FieldError]:
-    errors: list[FieldError] = []
-
-    if not _NAME_MIN_LENGTH <= len(data.name) <= _NAME_MAX_LENGTH:
-        errors.append(FieldError("name", _NAME_LENGTH_ERROR))
-
-    if (
-        db.execute(
-            select(Artist.id).where(Artist.id == data.artist_id)
-        ).scalar_one_or_none()
-        is None
-    ):
-        errors.append(FieldError("artist_id", "Komponist/in wurde nicht gefunden."))
-
-    if (
-        data.duration is not None
-        and not _DURATION_MIN <= data.duration <= _DURATION_MAX
-    ):
-        errors.append(
-            FieldError(
-                "duration", f"Muss zwischen {_DURATION_MIN} und {_DURATION_MAX} liegen."
-            )
-        )
-
-    stmt = select(Propriumwork.id).where(
-        func.lower(Propriumwork.name) == data.name.lower(),
-        Propriumwork.artist_id == data.artist_id,
+    return validate_work_fields(
+        db,
+        _WORK_KIND,
+        name=data.name,
+        artist_id=data.artist_id,
+        duration=data.duration,
+        exclude_id=exclude_id,
     )
-    if exclude_id is not None:
-        stmt = stmt.where(Propriumwork.id != exclude_id)
-    if db.execute(stmt).scalar_one_or_none() is not None:
-        errors.append(
-            FieldError(
-                "name", "Dieses Werk ist für diesen Komponisten bereits erfasst."
-            )
-        )
-
-    return errors
 
 
 def _to_response(db: Session, propriumwork: Propriumwork) -> PropriumworkResponse:
-    artist = db.execute(
-        select(Artist).where(Artist.id == propriumwork.artist_id)
-    ).scalar_one_or_none()
-    return PropriumworkResponse(
-        id=propriumwork.id,
-        name=propriumwork.name,
-        description=propriumwork.description,
-        artist_id=propriumwork.artist_id,
-        artist_name=label_for(artist) if artist else "",
-        duration=propriumwork.duration,
-        demanding=propriumwork.demanding,
-    )
+    return work_response(db, _WORK_KIND, propriumwork)
 
 
-def search_propriumworks(db: Session, query: str) -> Sequence[PropriumworkSearchResult]:
-    """Filtered and sorted in the database (not in memory): every
-    whitespace-separated word in `query` must appear in the work's name or
-    its artist's name."""
-    words = [word for word in query.lower().split() if word]
-    if not words:
-        return []
-
-    combined = func.lower(
-        Artist.surname + " " + Artist.givenname + " " + Propriumwork.name
-    )
-    stmt = (
-        select(Propriumwork, Artist)
-        .join(Artist, Propriumwork.artist_id == Artist.id)
-        .where(*[combined.like(f"%{word}%") for word in words])
-        .order_by(Artist.surname, Artist.givenname, Propriumwork.name)
-        .limit(_SEARCH_RESULT_LIMIT)
-    )
-    rows = db.execute(stmt).all()
-    return [
-        PropriumworkSearchResult(
-            id=propriumwork.id, label=f"{label_for(artist)}: {propriumwork.name}"
-        )
-        for propriumwork, artist in rows
-    ]
+def search_propriumworks(db: Session, query: str) -> Sequence[IdLabelOutput]:
+    return search_works(db, _WORK_KIND, query)
 
 
 def create_propriumwork(db: Session, data: PropriumworkRequest) -> PropriumworkResponse:

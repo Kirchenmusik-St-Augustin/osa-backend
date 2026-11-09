@@ -1,17 +1,24 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, FetchedValue, ForeignKey, Index, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class Performance(Base):
+class Performance(TimestampColumns, Base):
     """A scheduled performance, with these DB-level guarantees:
     - `performances_schedule_index` on `schedule` -- filtered/sorted on in
-      performance_service.py, booking_jobs.py, booking_service.py, and
+      performance_service.py, booking_jobs.py, booking_listing_service.py, and
       user_service.py.
     - Four money CheckConstraints (`choirjob_defaultfee >= 0`,
       `instrument_defaultfee >= 0`, `voice_defaultfee >= 0`, and
@@ -33,10 +40,7 @@ class Performance(Base):
     placeholder billing rates used only to price still-unfilled slots in
     the Abrechnung.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python. `schedule` deliberately stays a naive TIMESTAMP: it's
+    `schedule` deliberately stays a naive TIMESTAMP: it's
     user-entered local wall-clock time in Settings.app_timezone, not a UTC
     instant (see app.core.datetime_utils module docstring)."""
 
@@ -57,6 +61,9 @@ class Performance(Base):
             name="performances_extracost_amount_check",
         ),
         Index("performances_schedule_index", "schedule"),
+        Index("performances_location_id_index", "location_id"),
+        Index("performances_ordinariumwork_id_index", "ordinariumwork_id"),
+        Index("performances_artist_id_index", "artist_id"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -71,14 +78,14 @@ class Performance(Base):
         ForeignKey("artists.id", ondelete="RESTRICT", onupdate="RESTRICT")
     )
     description: Mapped[str | None]
-    choirjob_defaultfee: Mapped[int] = mapped_column(default=35)
-    instrument_defaultfee: Mapped[int] = mapped_column(default=60)
-    voice_defaultfee: Mapped[int] = mapped_column(default=110)
+    choirjob_defaultfee: Mapped[int] = mapped_column(
+        default=35, server_default=text("35")
+    )
+    instrument_defaultfee: Mapped[int] = mapped_column(
+        default=60, server_default=text("60")
+    )
+    voice_defaultfee: Mapped[int] = mapped_column(
+        default=110, server_default=text("110")
+    )
     extracost_amount: Mapped[int | None]
     extracost_description: Mapped[str | None]
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

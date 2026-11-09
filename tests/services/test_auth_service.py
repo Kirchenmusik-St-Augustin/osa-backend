@@ -1,3 +1,4 @@
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -19,14 +20,17 @@ from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
+from app.db.models.user import User
 from app.schemas.auth import RegisterRequest
 from app.services import auth_service
 from app.services.auth_service import (
     AccountNotLinkedError,
     InvalidSessionError,
     OauthBindingNotFoundError,
-    RegistrationConflictError,
+    RegistrationConflict,
 )
+from tests.google_credential import google_credential, google_credential_key
+from tests.sql_capture import recorded_statements
 
 pytestmark = pytest.mark.usefixtures("db_session")
 
@@ -74,15 +78,96 @@ def test_authenticate_user_success(db_session, make_user):
     assert reason == "ok"
 
 
-def test_authenticate_user_email_match_is_case_sensitive(db_session, make_user):
-    make_user(email="CaseSensitive@example.test", password="pw")
+def test_authenticate_user_email_match_is_case_insensitive(db_session, make_user):
+    make_user(email="casesensitive@example.test", password="pw")
 
     user, reason = auth_service.authenticate_user(
-        db_session, "casesensitive@example.test", "pw"
+        db_session, "CaseSensitive@Example.test", "pw"
     )
 
-    assert user is None
-    assert reason == "unknown_email"
+    assert user is not None
+    assert reason == "ok"
+
+
+def test_authenticate_user_unknown_email_still_verifies_a_password_hash(db_session):
+    with patch.object(auth_service, "verify_password", return_value=False) as verify:
+        user, reason = auth_service.authenticate_user(
+            db_session, "nobody@example.test", "irrelevant"
+        )
+
+    assert (user, reason) == (None, "unknown_email")
+    verify.assert_called_once()
+    assert isinstance(verify.call_args.args[1], str)
+
+
+def test_authenticate_user_without_local_password_still_verifies_a_password_hash(
+    db_session, make_user
+):
+    created = make_user()
+    created.auth_password = None
+    db_session.commit()
+
+    with patch.object(auth_service, "verify_password", return_value=False) as verify:
+        user, reason = auth_service.authenticate_user(
+            db_session, created.email, "irrelevant"
+        )
+
+    assert (user, reason) == (None, "wrong_password")
+    verify.assert_called_once()
+    assert isinstance(verify.call_args.args[1], str)
+
+
+def test_authenticate_user_with_a_password_verifies_against_the_stored_hash(
+    db_session, make_user
+):
+    created = make_user(password="correct-password")
+
+    with patch.object(auth_service, "verify_password", return_value=True) as verify:
+        _user, reason = auth_service.authenticate_user(
+            db_session, created.email, "correct-password"
+        )
+
+    assert reason == "ok"
+    verify.assert_called_once_with("correct-password", created.auth_password)
+
+
+def test_log_auth_event_clips_values_chosen_by_an_unauthenticated_client(db_session):
+    auth_service.log_auth_event(
+        db_session,
+        "Failed",
+        "x" * 5000,
+        ip_address="1" * 100,
+        user_agent="u" * 5000,
+    )
+
+    row = db_session.execute(
+        select(AuthLog).order_by(AuthLog.fired_at.desc()).limit(1)
+    ).scalar_one()
+    assert row.email is not None
+    assert row.user_agent is not None
+    assert row.ip_address is not None
+    assert len(row.email) == 254
+    assert len(row.user_agent) == 512
+    assert len(row.ip_address) == 45
+
+
+def test_log_auth_event_keeps_values_within_the_limits_untouched(db_session):
+    auth_service.log_auth_event(
+        db_session,
+        "Failed",
+        "short@example.test",
+        ip_address="203.0.113.7",
+        user_agent="Mozilla/5.0",
+    )
+
+    row = db_session.execute(
+        select(AuthLog).order_by(AuthLog.fired_at.desc()).limit(1)
+    ).scalar_one()
+    assert (row.email, row.ip_address, row.user_agent) == (
+        "short@example.test",
+        "203.0.113.7",
+        "Mozilla/5.0",
+    )
 
 
 def test_check_login_throttle_allows_under_threshold(db_session, make_user):
@@ -167,6 +252,99 @@ def test_check_login_throttle_ignores_failures_outside_window(db_session, make_u
     assert result is None
 
 
+def test_check_login_throttle_limits_one_account_across_addresses(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        auth_service.log_auth_event(
+            db_session, "Failed", created.email, ip_address=f"10.0.0.{index}"
+        )
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is not None
+    assert 0 < result <= auth_service.ACCOUNT_THROTTLE_WINDOW_SECONDS
+
+
+def test_check_login_throttle_allows_one_account_below_the_account_limit(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT - 1):
+        auth_service.log_auth_event(
+            db_session, "Failed", created.email, ip_address=f"10.0.0.{index}"
+        )
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
+def test_check_login_throttle_ignores_account_failures_outside_its_window(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        db_session.add(
+            AuthLog(
+                event="Failed",
+                fired_at=datetime.now(UTC)
+                - timedelta(seconds=auth_service.ACCOUNT_THROTTLE_WINDOW_SECONDS + 5),
+                ip_address=f"10.0.0.{index}",
+                email=created.email,
+                payload={},
+            )
+        )
+    db_session.commit()
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
+def test_check_login_throttle_account_window_clears_after_a_successful_login(
+    db_session, make_user
+):
+    created = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        auth_service.log_auth_event(
+            db_session, "Failed", created.email, ip_address=f"10.0.0.{index}"
+        )
+    auth_service.log_auth_event(
+        db_session, "Login", created.email, ip_address="198.51.100.5"
+    )
+
+    result = auth_service.check_login_throttle(
+        db_session, created.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
+def test_check_login_throttle_account_limit_ignores_other_accounts(
+    db_session, make_user
+):
+    victim = make_user()
+    bystander = make_user()
+    for index in range(auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT):
+        auth_service.log_auth_event(
+            db_session, "Failed", victim.email, ip_address=f"10.0.0.{index}"
+        )
+
+    result = auth_service.check_login_throttle(
+        db_session, bystander.email, ip_address="203.0.113.77"
+    )
+
+    assert result is None
+
+
 def test_create_user_session_persists_token_and_lastlogin(db_session, make_user):
     created = make_user()
 
@@ -179,7 +357,7 @@ def test_create_user_session_persists_token_and_lastlogin(db_session, make_user)
     assert refresh_secret
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     token_row = result.scalar_one()
     assert token_row.user_id == created.id
@@ -213,6 +391,26 @@ def test_refresh_session_rotates_secret(db_session, make_user):
     # Old secret must no longer verify -- it was rotated, not reused.
     with pytest.raises(InvalidSessionError):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+
+def test_refresh_session_locks_the_session_row_while_it_rotates_the_secret(
+    db_session, make_user
+):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    with recorded_statements() as statements:
+        auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+    session_selects = [
+        statement
+        for statement in statements
+        if "FROM personal_access_tokens" in statement
+        and statement.lstrip().upper().startswith("SELECT")
+    ]
+    assert session_selects
+    assert all("FOR UPDATE" in statement for statement in session_selects)
 
 
 def test_refresh_session_bumps_auth_lastsignal(db_session, make_user):
@@ -250,7 +448,7 @@ def test_refresh_session_rejects_idle_timeout(db_session, make_user):
     )
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     token_row = result.scalar_one()
     token_row.last_used_at = datetime.now(UTC) - timedelta(hours=999)
@@ -267,7 +465,7 @@ def test_refresh_session_rejects_absolute_lifetime_exceeded(db_session, make_use
     )
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     token_row = result.scalar_one()
     token_row.created_at = datetime.now(UTC) - timedelta(days=999)
@@ -310,7 +508,7 @@ def test_logout_user_deletes_session_and_sets_lastlogout(db_session, make_user):
     auth_service.logout_user(db_session, access_token)
 
     result = db_session.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
     )
     assert result.scalar_one_or_none() is None
 
@@ -318,18 +516,42 @@ def test_logout_user_deletes_session_and_sets_lastlogout(db_session, make_user):
     assert created.auth_lastlogout is not None
 
 
-def test_logout_user_ignores_garbage_token(db_session):
-    # Must not raise -- logout is a best-effort cleanup.
+def _session_count_of(db_session, user) -> int:
+    return len(
+        db_session.execute(
+            select(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def test_logout_user_ignores_garbage_token(db_session, make_user):
+    # Must not raise -- logout is a best-effort cleanup -- and must not touch
+    # anybody's session.
+    created = make_user()
+    auth_service.create_user_session(db_session, created)
+
     auth_service.logout_user(db_session, "not-a-real-jwt")
 
+    assert _session_count_of(db_session, created) == 1
+    db_session.refresh(created)
+    assert created.auth_lastlogout is None
 
-def test_logout_user_ignores_token_without_jti(db_session):
+
+def test_logout_user_ignores_token_without_jti(db_session, make_user):
+    created = make_user()
+    auth_service.create_user_session(db_session, created)
     token_without_jti = jwt.encode(
-        {"sub": "someone@example.test"}, SECRET_KEY, algorithm=ALGORITHM
+        {"sub": created.email}, SECRET_KEY, algorithm=ALGORITHM
     )
 
     # Must not raise -- same best-effort semantics as a garbage token.
     auth_service.logout_user(db_session, token_without_jti)
+
+    assert _session_count_of(db_session, created) == 1
+    db_session.refresh(created)
+    assert created.auth_lastlogout is None
 
 
 def test_logout_user_ignores_unknown_session(db_session, make_user):
@@ -345,6 +567,10 @@ def test_logout_user_ignores_unknown_session(db_session, make_user):
     db_session.commit()
 
     auth_service.logout_user(db_session, access_token)
+
+    assert _session_count_of(db_session, created) == 0
+    db_session.refresh(created)
+    assert created.auth_lastlogout is None
 
 
 def test_log_auth_event_persists_row(db_session):
@@ -389,8 +615,8 @@ def _register_request(**overrides: object) -> RegisterRequest:
         "givenname": f"max{unique}",
         "email": f"max.muster.{unique}@example.com",
         "phone": "+43 660 1234567",
-        "password": "Passw0rd1",
-        "password_confirmation": "Passw0rd1",
+        "password": "Passw0rd12",
+        "password_confirmation": "Passw0rd12",
     }
     defaults.update(overrides)
     return RegisterRequest(**defaults)
@@ -401,49 +627,74 @@ def test_register_user_persists_normalized_fields(db_session):
 
     user = auth_service.register_user(db_session, request)
 
+    assert isinstance(user, User)
     assert user.surname == "MUSTER"
     assert user.givenname == "Max"
     assert user.email == request.email
-    assert user.auth_password != "Passw0rd1"
+    assert user.auth_password != "Passw0rd12"
 
 
-def test_register_user_rejects_duplicate_name_combo_case_insensitive(db_session):
+def test_register_user_reports_a_taken_name_combo_case_insensitive(db_session):
     unique = uuid.uuid4().hex[:8]
     existing = auth_service.register_user(
         db_session,
         _register_request(surname=f"muster{unique}", givenname=f"max{unique}"),
     )
+    assert isinstance(existing, User)
     assert existing.surname == f"MUSTER{unique}".upper()
+    users_before = db_session.query(User).count()
 
-    with pytest.raises(RegistrationConflictError) as exc_info:
-        auth_service.register_user(
-            db_session,
-            _register_request(surname=f"MUSTER{unique}", givenname=f"MAX{unique}"),
-        )
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(surname=f"MUSTER{unique}", givenname=f"MAX{unique}"),
+    )
 
-    fields = {field for field, _msg in exc_info.value.errors}
-    assert fields == {"givenname", "surname"}
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
+    assert db_session.query(User).count() == users_before
 
 
-def test_register_user_rejects_duplicate_email_case_insensitive(db_session):
+def test_register_reports_a_name_with_a_sharp_s_that_is_already_taken(db_session):
+    unique = uuid.uuid4().hex[:8]
+    auth_service.register_user(
+        db_session, _register_request(surname="Strauß", givenname=f"Johann{unique}")
+    )
+
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(surname="Strauß", givenname=f"Johann{unique}"),
+    )
+
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
+
+
+def test_register_user_reports_a_taken_address_case_insensitive(db_session):
+    request = _register_request()
+    auth_service.register_user(db_session, request)
+    users_before = db_session.query(User).count()
+
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(
+            surname="Zweite", givenname="Person", email=request.email.upper()
+        ),
+    )
+
+    assert outcome is RegistrationConflict.ACCOUNT_EXISTS
+    assert db_session.query(User).count() == users_before
+
+
+def test_register_user_reports_the_address_when_name_and_address_are_both_taken(
+    db_session,
+):
     request = _register_request()
     auth_service.register_user(db_session, request)
 
-    with pytest.raises(RegistrationConflictError) as exc_info:
-        auth_service.register_user(
-            db_session,
-            _register_request(
-                surname="Zweite", givenname="Person", email=request.email.upper()
-            ),
-        )
+    outcome = auth_service.register_user(db_session, request)
 
-    fields = {field for field, _msg in exc_info.value.errors}
-    assert fields == {"email"}
+    assert outcome is RegistrationConflict.ACCOUNT_EXISTS
 
 
-def test_register_user_rejects_reusing_soft_deleted_users_identity(
-    db_session, make_user
-):
+def test_register_user_reports_reusing_soft_deleted_users_name(db_session, make_user):
     unique = uuid.uuid4().hex[:8]
     deleted_user = make_user(
         email=f"max.muster.{unique}@example.test", password="irrelevant-password"
@@ -453,15 +704,57 @@ def test_register_user_rejects_reusing_soft_deleted_users_identity(
     deleted_user.deleted_at = datetime.now(UTC)
     db_session.commit()
 
-    with pytest.raises(RegistrationConflictError):
-        auth_service.register_user(
-            db_session,
-            _register_request(
-                surname=f"muster{unique}",
-                givenname=f"max{unique}",
-                email=f"other.{unique}@example.com",
-            ),
-        )
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(
+            surname=f"muster{unique}",
+            givenname=f"max{unique}",
+            email=f"other.{unique}@example.com",
+        ),
+    )
+
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
+
+
+def test_register_user_sends_the_address_of_a_deleted_account_to_the_disposition(
+    db_session, make_user
+):
+    unique = uuid.uuid4().hex[:8]
+    deleted_user = make_user(
+        email=f"former.{unique}@example.com", password="irrelevant-password"
+    )
+    deleted_user.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    outcome = auth_service.register_user(
+        db_session,
+        _register_request(email=f"FORMER.{unique}@example.com"),
+    )
+
+    # A deleted account cannot log in or reset its password, so the hint
+    # "you already have an account" would lead nowhere.
+    assert outcome is RegistrationConflict.ENTRY_EXISTS
+
+
+@pytest.mark.parametrize("address_is_taken", [False, True])
+def test_register_user_hashes_the_password_once_in_every_outcome(
+    db_session, monkeypatch: pytest.MonkeyPatch, address_is_taken: bool
+):
+    request = _register_request()
+    if address_is_taken:
+        auth_service.register_user(db_session, request)
+    hashed: list[str] = []
+    real_hash = auth_service.get_password_hash
+
+    def counting_hash(password: str) -> str:
+        hashed.append(password)
+        return real_hash(password)
+
+    monkeypatch.setattr(auth_service, "get_password_hash", counting_hash)
+
+    auth_service.register_user(db_session, request)
+
+    assert hashed == ["Passw0rd12"]
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +763,7 @@ def test_register_user_rejects_reusing_soft_deleted_users_identity(
 
 
 def test_build_and_verify_email_verification_token_roundtrip(db_session, make_user):
-    user = make_user()
+    user = make_user(verified=False)
 
     token = auth_service.build_email_verification_token(user)
     verified_user = auth_service.verify_email(db_session, token)
@@ -480,17 +773,25 @@ def test_build_and_verify_email_verification_token_roundtrip(db_session, make_us
     assert user.email_verified_at is not None
 
 
-def test_verify_email_is_idempotent_on_already_verified_user(db_session, make_user):
-    user = make_user()
+def test_verify_email_link_is_single_use(db_session, make_user):
+    user = make_user(verified=False)
     token = auth_service.build_email_verification_token(user)
     auth_service.verify_email(db_session, token)
     db_session.refresh(user)
     first_verified_at = user.email_verified_at
 
-    auth_service.verify_email(db_session, token)
+    with pytest.raises(auth_service.VerificationLinkAlreadyUsedError):
+        auth_service.verify_email(db_session, token)
 
     db_session.refresh(user)
     assert user.email_verified_at == first_verified_at
+
+
+def test_used_link_error_is_a_value_error_with_a_user_message():
+    error = auth_service.VerificationLinkAlreadyUsedError()
+
+    assert isinstance(error, ValueError)
+    assert str(error) == "Der Bestätigungslink wurde bereits verwendet."
 
 
 def test_verify_email_rejects_unknown_user_id(db_session):
@@ -560,6 +861,34 @@ def test_request_password_reset_creates_token_row(db_session, make_user):
     assert row.token == hash_reset_token(token)
 
 
+def test_request_password_reset_ignores_a_soft_deleted_account(db_session, make_user):
+    created = make_user()
+    created.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    token = auth_service.request_password_reset(db_session, created.email)
+
+    assert token is None
+    assert (
+        db_session.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.email == created.email.lower()
+            )
+        ).scalar_one_or_none()
+        is None
+    )
+
+
+def test_build_password_reset_url_returns_none_for_a_soft_deleted_account(
+    db_session, make_user
+):
+    created = make_user()
+    created.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    assert auth_service.build_password_reset_url(db_session, created.email) is None
+
+
 def test_build_password_reset_url_returns_none_for_unknown_email(
     db_session, monkeypatch: pytest.MonkeyPatch
 ):
@@ -618,6 +947,44 @@ def test_request_password_reset_replaces_previous_token(db_session, make_user):
     assert len(rows) == 1
 
 
+def test_request_password_reset_updates_the_existing_row_in_place(
+    db_session, make_user
+):
+    user = make_user()
+    first_token = auth_service.request_password_reset(db_session, user.email)
+    first_row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
+    ).scalar_one()
+    first_id = first_row.id
+
+    second_token = auth_service.request_password_reset(db_session, user.email)
+
+    db_session.refresh(first_row)
+    assert first_row.id == first_id
+    assert first_row.token == hash_reset_token(second_token)
+    with pytest.raises(ValueError, match="ungültig"):
+        auth_service.execute_password_reset(
+            db_session, user.email, first_token, "Passw0rd12"
+        )
+
+
+def test_request_password_reset_restarts_the_token_lifetime(db_session, make_user):
+    user = make_user()
+    auth_service.request_password_reset(db_session, user.email)
+    row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email.lower())
+    ).scalar_one()
+    row.created_at = datetime.now(UTC) - timedelta(hours=2)
+    db_session.commit()
+
+    new_token = auth_service.request_password_reset(db_session, user.email)
+
+    db_session.refresh(row)
+    assert row.created_at is not None
+    assert datetime.now(UTC) - row.created_at < timedelta(minutes=1)
+    auth_service.execute_password_reset(db_session, user.email, new_token, "Passw0rd12")
+
+
 def test_execute_password_reset_success_sets_password_and_invalidates_sessions(
     db_session, make_user
 ):
@@ -627,12 +994,12 @@ def test_execute_password_reset_success_sets_password_and_invalidates_sessions(
     )
     token = auth_service.request_password_reset(db_session, user.email)
 
-    auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd1")
+    auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
 
     db_session.refresh(user)
     assert user.email_verified_at is not None
     new_user, reason = auth_service.authenticate_user(
-        db_session, user.email, "Passw0rd1"
+        db_session, user.email, "Passw0rd12"
     )
     assert reason == "ok"
     assert new_user is not None
@@ -648,7 +1015,7 @@ def test_execute_password_reset_rejects_invalid_token(db_session, make_user):
 
     with pytest.raises(ValueError, match="ungültig"):
         auth_service.execute_password_reset(
-            db_session, user.email, "bogus-token", "Passw0rd1"
+            db_session, user.email, "bogus-token", "Passw0rd12"
         )
 
 
@@ -662,7 +1029,21 @@ def test_execute_password_reset_rejects_expired_token(db_session, make_user):
     db_session.commit()
 
     with pytest.raises(ValueError, match="ungültig"):
-        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd1")
+        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+
+def test_execute_password_reset_ignores_a_soft_deleted_account(db_session, make_user):
+    user = make_user()
+    token = auth_service.request_password_reset(db_session, user.email)
+    original_hash = user.auth_password
+    user.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="nicht gefunden"):
+        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+    db_session.refresh(user)
+    assert user.auth_password == original_hash
 
 
 # ---------------------------------------------------------------------------
@@ -710,7 +1091,9 @@ def test_authenticate_google_user_raises_when_not_linked(db_session):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
         pytest.raises(AccountNotLinkedError),
     ):
-        auth_service.authenticate_google_user(db_session, "fake-credential")
+        auth_service.authenticate_google_user(
+            db_session, google_credential("client-id")
+        )
 
 
 def test_authenticate_google_user_logs_in_when_bound(db_session, make_user):
@@ -736,7 +1119,7 @@ def test_authenticate_google_user_logs_in_when_bound(db_session, make_user):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
     ):
         logged_in_user = auth_service.authenticate_google_user(
-            db_session, "fake-credential"
+            db_session, google_credential("client-id")
         )
 
     assert logged_in_user.id == user.id
@@ -766,7 +1149,9 @@ def test_authenticate_google_user_rejects_locked_account(db_session, make_user):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
         pytest.raises(ValueError, match="gesperrt"),
     ):
-        auth_service.authenticate_google_user(db_session, "fake-credential")
+        auth_service.authenticate_google_user(
+            db_session, google_credential("client-id")
+        )
 
 
 def test_link_google_account_rejects_wrong_local_credentials(db_session, make_user):
@@ -774,7 +1159,7 @@ def test_link_google_account_rejects_wrong_local_credentials(db_session, make_us
 
     with pytest.raises(ValueError, match="Anmeldedaten unbekannt"):
         auth_service.link_google_account(
-            db_session, "fake-credential", user.email, "wrong-password"
+            db_session, google_credential("client-id"), user.email, "wrong-password"
         )
 
 
@@ -790,7 +1175,7 @@ def test_link_google_account_creates_new_binding(db_session, make_user):
         patch("app.services.auth_service.require_setting", return_value="client-id"),
     ):
         linked_user = auth_service.link_google_account(
-            db_session, "fake-credential", user.email, "correct-password"
+            db_session, google_credential("client-id"), user.email, "correct-password"
         )
 
     assert linked_user.id == user.id
@@ -827,7 +1212,7 @@ def test_link_google_account_rejects_binding_already_used_by_other_account(
         pytest.raises(ValueError, match="bereits verknüpft"),
     ):
         auth_service.link_google_account(
-            db_session, "fake-credential", user.email, "correct-password"
+            db_session, google_credential("client-id"), user.email, "correct-password"
         )
 
 
@@ -902,3 +1287,138 @@ def test_unlink_oauth_binding_rejects_unknown_id(db_session, make_user):
 
     with pytest.raises(OauthBindingNotFoundError):
         auth_service.unlink_oauth_binding(db_session, uuid.uuid4(), user.id)
+
+
+@pytest.mark.parametrize("credential", ["not-a-jwt", "a.b.c", ""])
+def test_google_garbage_credential_is_rejected_without_any_network_call(credential):
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(credential)
+
+    verify.assert_not_called()
+
+
+def test_google_token_for_another_audience_is_rejected_without_any_network_call():
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(google_credential("someone-elses-app"))
+
+    verify.assert_not_called()
+
+
+def _google_token_with(claims: dict[str, object], *, algorithm: str) -> str:
+    key = google_credential_key() if algorithm == "RS256" else "k" * 32
+    return jwt.encode(
+        {"aud": "client-id", "exp": int(time.time()) + 600, **claims},
+        key,
+        algorithm=algorithm,
+    )
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        _google_token_with({"iss": "https://accounts.google.com"}, algorithm="HS256"),
+        _google_token_with({"iss": "https://evil.example"}, algorithm="RS256"),
+        _google_token_with({}, algorithm="RS256"),
+    ],
+    ids=["wrong-algorithm", "wrong-issuer", "missing-issuer"],
+)
+def test_google_token_with_implausible_header_or_issuer_is_rejected_offline(credential):
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(credential)
+
+    verify.assert_not_called()
+
+
+def test_google_expired_token_is_rejected_without_any_network_call():
+    expired = jwt.encode(
+        {
+            "iss": "https://accounts.google.com",
+            "aud": "client-id",
+            "exp": int(time.time()) - 60,
+        },
+        google_credential_key(),
+        algorithm="RS256",
+    )
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token"
+        ) as verify,
+        pytest.raises(ValueError, match="Google-Token"),
+    ):
+        auth_service._verify_google_id_token(expired)
+
+    verify.assert_not_called()
+
+
+def test_google_plausible_token_proceeds_to_the_signature_check():
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token",
+            return_value={"sub": "abc"},
+        ) as verify,
+    ):
+        claims = auth_service._verify_google_id_token(google_credential("client-id"))
+
+    assert claims == {"sub": "abc"}
+    verify.assert_called_once()
+    assert isinstance(verify.call_args.args[1], auth_service._BoundedGoogleRequest)
+
+
+def test_google_failed_signature_check_is_reported_as_an_invalid_token():
+    with (
+        patch("app.services.auth_service.require_setting", return_value="client-id"),
+        patch(
+            "app.services.auth_service.google_id_token.verify_oauth2_token",
+            side_effect=ValueError("Wrong number of segments"),
+        ),
+        pytest.raises(ValueError, match=r"Ungültiger oder abgelaufener Google-Token\."),
+    ):
+        auth_service._verify_google_id_token(google_credential("client-id"))
+
+
+@pytest.mark.parametrize(
+    ("requested_timeout", "expected"),
+    [(None, 5), (120, 5), (2, 2)],
+    ids=["default", "above-the-cap", "below-the-cap"],
+)
+def test_google_certificate_requests_use_the_bounded_timeout(
+    requested_timeout, expected
+):
+    captured: dict[str, object] = {}
+
+    def fake_request(_self, _method, _url, **kwargs):
+        captured.update(kwargs)
+        msg = "stop before any network access"
+        raise RuntimeError(msg)
+
+    call_kwargs = {} if requested_timeout is None else {"timeout": requested_timeout}
+    with (
+        patch("requests.Session.request", fake_request),
+        pytest.raises(Exception, match="stop before any network access"),
+    ):
+        auth_service._google_request()(
+            "https://www.googleapis.com/oauth2/v1/certs", **call_kwargs
+        )
+
+    assert captured["timeout"] == expected
+    assert expected <= auth_service._GOOGLE_REQUEST_TIMEOUT_SECONDS

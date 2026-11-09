@@ -2,7 +2,14 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
+from app.schemas.base import (
+    MAX_CATALOGUE_ENTRIES,
+    IdNameOutput,
+    LenientUuid,
+    OptionalText,
+    StrictInputModel,
+    WorkName,
+)
 
 
 class OrdinariumworkPositionInput(StrictInputModel):
@@ -11,15 +18,21 @@ class OrdinariumworkPositionInput(StrictInputModel):
 
 
 class OrdinariumworkSetupInput(StrictInputModel):
-    instruments: list[OrdinariumworkPositionInput] = Field(default_factory=list)
-    voices: list[OrdinariumworkPositionInput] = Field(default_factory=list)
+    instruments: list[OrdinariumworkPositionInput] = Field(
+        default_factory=list[OrdinariumworkPositionInput],
+        max_length=MAX_CATALOGUE_ENTRIES,
+    )
+    voices: list[OrdinariumworkPositionInput] = Field(
+        default_factory=list[OrdinariumworkPositionInput],
+        max_length=MAX_CATALOGUE_ENTRIES,
+    )
 
 
 class OrdinariumworkRequest(StrictInputModel):
-    name: str = Field(min_length=3, max_length=60)
+    name: WorkName
     description: OptionalText = None
     artist_id: LenientUuid
-    duration: int | None = Field(default=None, ge=0, le=999)
+    duration: int | None = Field(default=None, ge=1, le=999)
     demanding: bool = False
     setup: OrdinariumworkSetupInput
 
@@ -50,16 +63,6 @@ class OrdinariumworkSetupOutput(BaseModel):
     voices: list[OrdinariumworkPositionOutput]
 
 
-class OrdinariumworkSearchResult(BaseModel):
-    id: uuid.UUID
-    label: str
-
-
-class AvailablePositionOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class OrdinariumworkAvailablePositionsOutput(BaseModel):
-    instruments: list[AvailablePositionOutput]
-    voices: list[AvailablePositionOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]

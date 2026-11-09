@@ -7,6 +7,7 @@ from app.core.datetime_utils import (
     ensure_tz_aware,
     get_app_timezone,
     local_day_bounds_utc,
+    local_month_bounds_utc,
     local_now,
 )
 
@@ -98,3 +99,38 @@ def test_local_day_bounds_utc_honors_a_configured_app_timezone(
     tz = ZoneInfo("America/New_York")
     assert start == datetime(2026, 8, 12, tzinfo=tz).astimezone(UTC)
     assert end == datetime(2026, 8, 13, tzinfo=tz).astimezone(UTC)
+
+
+def test_local_month_bounds_utc_follow_the_local_calendar_month_in_winter():
+    start, end = local_month_bounds_utc(2026, 1)
+
+    assert start == datetime(2025, 12, 31, 23, 0, tzinfo=UTC)
+    assert end == datetime(2026, 1, 31, 23, 0, tzinfo=UTC)
+
+
+def test_local_month_bounds_utc_follow_the_local_calendar_month_in_summer():
+    start, end = local_month_bounds_utc(2026, 7)
+
+    assert start == datetime(2026, 6, 30, 22, 0, tzinfo=UTC)
+    assert end == datetime(2026, 7, 31, 22, 0, tzinfo=UTC)
+
+
+def test_local_month_bounds_utc_span_the_month_of_the_spring_forward_day():
+    start, end = local_month_bounds_utc(2026, 3)
+
+    assert start == datetime(2026, 2, 28, 23, 0, tzinfo=UTC)
+    assert end == datetime(2026, 3, 31, 22, 0, tzinfo=UTC)
+
+
+def test_local_month_bounds_utc_roll_over_from_december_to_january():
+    start, end = local_month_bounds_utc(2026, 12)
+
+    assert start == datetime(2026, 11, 30, 23, 0, tzinfo=UTC)
+    assert end == datetime(2026, 12, 31, 23, 0, tzinfo=UTC)
+
+
+def test_local_month_bounds_utc_are_adjacent_for_consecutive_months():
+    _, end_of_february = local_month_bounds_utc(2027, 2)
+    start_of_march, _ = local_month_bounds_utc(2027, 3)
+
+    assert end_of_february == start_of_march

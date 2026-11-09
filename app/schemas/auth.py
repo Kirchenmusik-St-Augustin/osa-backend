@@ -1,31 +1,23 @@
 import uuid
 
-from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import StrictInputModel
+from app.schemas.base import NormalizedEmail, PersonName, StrictInputModel
 from app.schemas.validators import (
-    PHONE_PATTERN,
+    PhoneNumber,
     validate_confirmation,
     validate_password_policy,
 )
 
 
 class RegisterRequest(StrictInputModel):
-    surname: str = Field(min_length=3, max_length=32)
-    givenname: str = Field(min_length=3, max_length=32)
-    email: EmailStr
-    phone: str
+    surname: PersonName
+    givenname: PersonName
+    email: NormalizedEmail
+    phone: PhoneNumber
     password: str
     password_confirmation: str
-
-    @field_validator("phone")
-    @classmethod
-    def _validate_phone(cls, value: str) -> str:
-        if not PHONE_PATTERN.match(value):
-            msg = "Ungültige Telefonnummer"
-            raise ValueError(msg)
-        return value
 
     @field_validator("password")
     @classmethod
@@ -43,11 +35,11 @@ class VerifyEmailRequest(StrictInputModel):
 
 
 class ForgotPasswordRequest(StrictInputModel):
-    email: EmailStr
+    email: NormalizedEmail
 
 
 class ResetPasswordRequest(StrictInputModel):
-    email: EmailStr
+    email: NormalizedEmail
     token: str = Field(min_length=1)
     password: str
     password_confirmation: str
@@ -69,7 +61,7 @@ class GoogleCallbackRequest(StrictInputModel):
 
 class GoogleLinkRequest(StrictInputModel):
     credential: str = Field(min_length=1)
-    email: EmailStr
+    email: NormalizedEmail
     password: str = Field(min_length=1, max_length=128)
 
 

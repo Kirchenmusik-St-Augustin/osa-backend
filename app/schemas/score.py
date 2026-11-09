@@ -1,11 +1,11 @@
 import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.datetime_utils import UtcDatetime
 from app.schemas.base import BlankToNone, OptionalText, StrictInputModel
-from app.services.score_fields import SCORE_FIELDS
+from app.schemas.score_fields import SCORE_FIELDS
 
 # Shared by all 12 "*art" (Original/Kopie/Original-Kopie) fields -- always
 # optional: the form's blank option is submitted as "" and normalized to
@@ -21,7 +21,7 @@ _OptionalArt = Annotated[_ArtValue | None, BlankToNone]
 # check sits on the inner `int`, not the outer union -- Pydantic applies a
 # numeric constraint to whatever type it's attached to, and applied to the
 # union it raises a TypeError on the None branch instead of skipping it.
-_OptionalYear = Annotated[Annotated[int, Field(ge=0, le=9999)] | None, BlankToNone]
+_OptionalYear = Annotated[Annotated[int, Field(ge=1, le=9999)] | None, BlankToNone]
 
 _SparteValue = Literal[
     "Advent/Weihnacht",
@@ -76,7 +76,13 @@ class ScoreRequest(StrictInputModel):
     numbers default to 0 in the form and stay required, except
     geboren/gestorben/jahr, which stay NULL when left blank -- there is no
     meaningful year 0, so unlike every other number field they carry no
-    "empty means 0" convention (see score_service.py's get_defaults())."""
+    "empty means 0" convention (see score_service.py's get_defaults()).
+
+    Text is stripped before its length is checked, so a required field made
+    of blanks counts as empty and no field stores surrounding whitespace.
+    The setting only touches string values."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
 
     # -- Fundort (physical location) --
     kasten: str = Field(min_length=1, max_length=SCORE_FIELDS["kasten"].length)
@@ -198,8 +204,3 @@ class ScoreResponse(BaseModel):
     created_at: UtcDatetime | None
     updated_at: UtcDatetime | None
     fields: dict[str, str | int | None]
-
-
-class ScoreSearchResult(BaseModel):
-    id: uuid.UUID
-    label: str

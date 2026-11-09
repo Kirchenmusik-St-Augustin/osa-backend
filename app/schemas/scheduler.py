@@ -34,17 +34,11 @@ class ScheduledJobOutput(BaseModel):
     last_run: JobRunOutput | None = None
 
 
-class BackupTriggerOutput(BaseModel):
-    """Response of a manually triggered Koofr backup
-    (POST /administrator/scheduler/backup/trigger)."""
+class JobQueuedOutput(BaseModel):
+    """Response of a manually triggered backup or downsync
+    (POST /administrator/scheduler/backup/trigger and .../downsync/trigger):
+    the job was handed to the worker, its outcome appears as the `last_run`
+    of the scheduled job with this `job_id`."""
 
-    backup_name: str
-    triggered_at: UtcDatetime
-
-
-class DownsyncTriggerOutput(BaseModel):
-    """Response of a manually triggered downsync
-    (POST /administrator/scheduler/downsync/trigger)."""
-
-    restored_backup: str
-    triggered_at: UtcDatetime
+    job_id: str
+    queued_at: UtcDatetime

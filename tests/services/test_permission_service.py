@@ -1,8 +1,10 @@
 from app.services.permission_service import (
     ALL_PERMISSIONS,
+    PERMISSION_ROLE_NAMES,
     PERMISSION_RULES,
     calculate_permissions,
     get_permission_rules_display,
+    has_permission,
 )
 
 
@@ -24,6 +26,7 @@ def test_administrator_gets_all_administrator_gated_permissions(make_user):
         "sentEmailView",
         "sqlInspectorView",
         "schedulerView",
+        "schedulerTrigger",
     ):
         assert permission in permissions
 
@@ -88,7 +91,7 @@ def test_shorturls_role_grants_only_shorturl_maintain(make_user):
 
 
 def test_all_permissions_matches_rule_count():
-    assert len(ALL_PERMISSIONS) == len(PERMISSION_RULES) == 22
+    assert len(ALL_PERMISSIONS) == len(PERMISSION_RULES) == 23
 
 
 def test_permission_rules_display_has_description_per_rule():
@@ -98,3 +101,51 @@ def test_permission_rules_display_has_description_per_rule():
     for entry in display:
         assert entry["permission"]
         assert entry["description"]
+
+
+def test_a_role_the_matrix_does_not_know_grants_nothing(make_user):
+    # Role names are matched by value: look-alikes must not be treated as the
+    # real role.
+    baseline = calculate_permissions(make_user(roles=[]))
+
+    look_alikes = make_user(roles=["Planner", "admin", "planner "])
+
+    assert calculate_permissions(look_alikes) == baseline
+
+
+def test_the_administrator_flag_alone_never_grants_the_role_gated_permissions(
+    make_user,
+):
+    permissions = calculate_permissions(make_user(administrator=True))
+
+    for role_gated in (
+        "performanceCast",
+        "performanceBilling",
+        "feeMaintain",
+        "scoreMaintain",
+        "shorturlMaintain",
+    ):
+        assert role_gated not in permissions
+
+
+def test_has_permission_agrees_with_calculate_permissions(make_user):
+    user = make_user(administrator=True)
+
+    for permission in ALL_PERMISSIONS:
+        assert has_permission(user, permission) == (
+            permission in calculate_permissions(user)
+        )
+
+
+def test_permission_role_names_are_exactly_the_roles_the_rules_react_to():
+    candidates = {"billing", "disponent", "planner", "scores", "shorturls", "member"}
+    reacting = {
+        role
+        for role in candidates
+        if any(
+            rule.condition({role}, False) != rule.condition(set(), False)
+            for rule in PERMISSION_RULES
+        )
+    }
+
+    assert reacting == PERMISSION_ROLE_NAMES

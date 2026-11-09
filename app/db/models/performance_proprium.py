@@ -1,22 +1,23 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, ForeignKey, UniqueConstraint, func
+from sqlalchemy import (
+    ForeignKey,
+    Index,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class PerformanceProprium(Base):
+class PerformanceProprium(TimestampColumns, Base):
     """Pivot row: which Propriumwork fills which liturgical Propriumelement
     slot (e.g. "Graduale") for a Performance. Unique per (performance,
     element) -- only one work per liturgical slot per performance.
 
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python. Foreign keys are deliberately asymmetric: `performance_id` is ON
+    Foreign keys are deliberately asymmetric: `performance_id` is ON
     DELETE CASCADE (performance_service.delete_performance() already deletes
     this table's own rows before deleting their Performance),
     `propriumelement_id`/`propriumwork_id` are ON DELETE RESTRICT
@@ -26,7 +27,11 @@ class PerformanceProprium(Base):
     referenced here)."""
 
     __tablename__ = "performance_proprium"
-    __table_args__ = (UniqueConstraint("performance_id", "propriumelement_id"),)
+    __table_args__ = (
+        UniqueConstraint("performance_id", "propriumelement_id"),
+        Index("performance_proprium_propriumelement_id_index", "propriumelement_id"),
+        Index("performance_proprium_propriumwork_id_index", "propriumwork_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     performance_id: Mapped[uuid.UUID] = mapped_column(
@@ -37,10 +42,4 @@ class PerformanceProprium(Base):
     )
     propriumwork_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("propriumworks.id", ondelete="RESTRICT", onupdate="RESTRICT")
-    )
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
     )

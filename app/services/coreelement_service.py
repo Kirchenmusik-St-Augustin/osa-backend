@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -14,41 +15,33 @@ from app.db.models.propriumelement import Propriumelement
 from app.db.models.role import Role
 from app.db.models.user_role import UserRole
 from app.db.models.voice import Voice
-from app.schemas.coreelement import CoreelementRequest, CoreelementType
+from app.schemas.coreelement import (
+    CoreelementRequest,
+    CoreelementResponse,
+    CoreelementType,
+)
 from app.services.errors import (
     DomainValidationError,
     FieldError,
     GeneralValidationError,
     NotFoundError,
 )
+from app.services.pagination import select_page
+from app.services.permission_service import PERMISSION_ROLE_NAMES
+from app.services.position_types import position_column
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable, Sequence
 
-    from sqlalchemy.orm import InstrumentedAttribute, Session
+    from sqlalchemy import Select
+    from sqlalchemy.orm import Session
 
+    from app.schemas.pagination import PagedRows, PageParams
     from app.services.position_types import PositionType
 
 CoreelementModel = Instrument | Voice | Choirjob | Location | Propriumelement | Role
 
-# Which of PerformancePosition's three FK columns / OrdinariumworkPosition's
-# two FK columns corresponds to a given position_type -- OrdinariumworkPosition
-# structurally has no choirjob_id column at all (see its own model docstring),
-# so it is a 2-entry table, not 3.
-_PERFORMANCE_POSITION_COLUMNS: dict[
-    PositionType, InstrumentedAttribute[uuid.UUID | None]
-] = {
-    "instruments": PerformancePosition.instrument_id,
-    "voices": PerformancePosition.voice_id,
-    "choirjobs": PerformancePosition.choirjob_id,
-}
-_ORDINARIUMWORK_POSITION_COLUMNS: dict[
-    Literal["instruments", "voices"], InstrumentedAttribute[uuid.UUID | None]
-] = {
-    "instruments": OrdinariumworkPosition.instrument_id,
-    "voices": OrdinariumworkPosition.voice_id,
-}
 # The subset of CoreelementModel that actually has an `active` column --
 # narrows config.model back down wherever has_active_field guards the
 # access at runtime (Location/Propriumelement/Role don't have this
@@ -57,6 +50,12 @@ _ActiveCoreelementModel = Instrument | Voice | Choirjob
 
 
 _IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
+_HEX_COLOR_PATTERN = re.compile(r"[0-9a-fA-F]{6}")
+_HEX_COLOR_MESSAGE = "Muss ein sechsstelliger Hex-Farbwert sein (z. B. ff0000)."
+_PERMISSION_ROLE_DETAIL = (
+    "Diese Rolle wird von der Rechteverwaltung verwendet und kann weder "
+    "umbenannt noch gelöscht werden."
+)
 
 
 class CoreelementNotFoundError(NotFoundError):
@@ -65,7 +64,7 @@ class CoreelementNotFoundError(NotFoundError):
 
 class CoreelementValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as auth_service.RegistrationConflictError."""
+    failing field."""
 
 
 class CoreelementInUseError(GeneralValidationError):
@@ -81,6 +80,8 @@ class FieldSpec:
     min_length: int
     max_length: int
     unique: bool = False
+    pattern: re.Pattern[str] | None = None
+    pattern_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,22 @@ class CoreelementTypeConfig:
     # (see create_coreelement/update_coreelement below), so it gets its
     # own config flag instead of a FieldSpec entry.
     has_active_field: bool = False
+
+
+def to_response(item: CoreelementModel) -> CoreelementResponse:
+    """The attributes that exist for one type only (label/description for a
+    role, address/color for a location, active for the archivable types) are
+    None for every other type."""
+    return CoreelementResponse(
+        id=item.id,
+        name=item.name,
+        order=item.order,
+        label=item.label if isinstance(item, Role) else None,
+        description=item.description if isinstance(item, Role) else None,
+        address=item.address if isinstance(item, Location) else None,
+        color=item.color if isinstance(item, Location) else None,
+        active=item.active if isinstance(item, _ActiveCoreelementModel) else None,
+    )
 
 
 def _role_has_dependent_users(db: Session, role: CoreelementModel) -> bool:
@@ -123,12 +140,14 @@ def _make_position_dependency_check(
             ordinariumwork_count = db.execute(
                 select(func.count())
                 .select_from(OrdinariumworkPosition)
-                .where(_ORDINARIUMWORK_POSITION_COLUMNS[position_type] == item.id)
+                .where(
+                    position_column(OrdinariumworkPosition, position_type) == item.id
+                )
             ).scalar_one()
         performance_count = db.execute(
             select(func.count())
             .select_from(PerformancePosition)
-            .where(_PERFORMANCE_POSITION_COLUMNS[position_type] == item.id)
+            .where(position_column(PerformancePosition, position_type) == item.id)
         ).scalar_one()
         return ordinariumwork_count > 0 or performance_count > 0
 
@@ -181,7 +200,13 @@ COREELEMENT_CONFIG: dict[CoreelementType, CoreelementTypeConfig] = {
         model=Location,
         extra_fields=(
             FieldSpec("address", min_length=3, max_length=60),
-            FieldSpec("color", min_length=3, max_length=6),
+            FieldSpec(
+                "color",
+                min_length=3,
+                max_length=6,
+                pattern=_HEX_COLOR_PATTERN,
+                pattern_message=_HEX_COLOR_MESSAGE,
+            ),
         ),
         has_dependencies=_location_has_dependent_performances,
     ),
@@ -238,6 +263,8 @@ def _validate_extra_field(
             spec.name,
             f"Muss zwischen {spec.min_length} und {spec.max_length} Zeichen lang sein.",
         )
+    if spec.pattern is not None and not spec.pattern.fullmatch(value):
+        return FieldError(spec.name, spec.pattern_message)
     if spec.unique and _value_taken(db, config.model, spec.name, value, exclude_id):
         return FieldError(spec.name, "Dieser Wert ist bereits vergeben.")
     return None
@@ -293,6 +320,17 @@ def _get_or_404(
     return obj
 
 
+def _coreelement_select(
+    type_: CoreelementType, *, active_only: bool = False
+) -> Select[tuple[CoreelementModel]]:
+    config = COREELEMENT_CONFIG[type_]
+    stmt = select(config.model).order_by(config.model.order, config.model.id)
+    if active_only and config.has_active_field:
+        active_model = cast("type[_ActiveCoreelementModel]", config.model)
+        stmt = stmt.where(active_model.active == True)  # noqa: E712
+    return stmt
+
+
 def list_coreelements(
     db: Session, type_: CoreelementType, *, active_only: bool = False
 ) -> Sequence[CoreelementModel]:
@@ -304,19 +342,32 @@ def list_coreelements(
     so every row is effectively "active". The admin Coreelement listing
     itself (GET /coreelements/{type}) deliberately never sets this --
     archived elements must stay visible/editable/reactivatable there."""
-    config = COREELEMENT_CONFIG[type_]
-    stmt = select(config.model).order_by(config.model.order, config.model.id)
-    if active_only and config.has_active_field:
-        active_model = cast("type[_ActiveCoreelementModel]", config.model)
-        stmt = stmt.where(active_model.active == True)  # noqa: E712
-    result = db.execute(stmt)
-    return result.scalars().all()
+    stmt = _coreelement_select(type_, active_only=active_only)
+    return db.execute(stmt).scalars().all()
+
+
+def list_coreelements_page(
+    db: Session, type_: CoreelementType, page: PageParams
+) -> PagedRows[CoreelementModel]:
+    """One page of the admin Coreelement listing (every row, archived ones
+    included)."""
+    return select_page(db, _coreelement_select(type_), page)
+
+
+def _lock_order(db: Session, config: CoreelementTypeConfig) -> None:
+    """Serialises the writers of one type's `order` column until the end of
+    the transaction: two concurrent creates would otherwise read the same
+    maximum and produce two rows with the same position."""
+    db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(config.model.__tablename__)))
+    )
 
 
 def create_coreelement(
     db: Session, type_: CoreelementType, data: CoreelementRequest
 ) -> CoreelementModel:
     config = COREELEMENT_CONFIG[type_]
+    _lock_order(db, config)
     errors = _validate(db, type_, data, exclude_id=None)
     if errors:
         raise CoreelementValidationError(errors)
@@ -348,6 +399,12 @@ def update_coreelement(
 ) -> CoreelementModel:
     config = COREELEMENT_CONFIG[type_]
     obj = _get_or_404(db, config.model, element_id)
+    if (
+        type_ is CoreelementType.role
+        and obj.name in PERMISSION_ROLE_NAMES
+        and data.name.strip() != obj.name
+    ):
+        raise CoreelementValidationError([FieldError("name", _PERMISSION_ROLE_DETAIL)])
     errors = _validate(db, type_, data, exclude_id=element_id)
     if errors:
         raise CoreelementValidationError(errors)
@@ -371,6 +428,8 @@ def delete_coreelement(
 ) -> None:
     config = COREELEMENT_CONFIG[type_]
     obj = _get_or_404(db, config.model, element_id)
+    if type_ is CoreelementType.role and obj.name in PERMISSION_ROLE_NAMES:
+        raise GeneralValidationError(_PERMISSION_ROLE_DETAIL)
     if config.has_dependencies is not None and config.has_dependencies(db, obj):
         raise CoreelementInUseError
     db.delete(obj)
@@ -386,6 +445,7 @@ def move_coreelement(
     """Two-row order swap (only the two affected rows are written, the rest
     of the list is never reindexed). No-op at either boundary of the
     list."""
+    _lock_order(db, COREELEMENT_CONFIG[type_])
     items = list(list_coreelements(db, type_))
     index = next((i for i, item in enumerate(items) if item.id == element_id), None)
     if index is None:

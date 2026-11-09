@@ -1,9 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import shared_rate_limited
 from app.db.database import get_db
 from app.services import shorturl_service
 
@@ -20,6 +21,11 @@ _ROOT_REDIRECT_TARGET = "https://www.hochamt.at"
 # 302 (Found), so the status must be passed explicitly.
 _FOUND = status.HTTP_302_FOUND
 
+# The redirect is public, so it costs a statement per click for anyone who
+# asks: one shared quota per client address across all short links.
+REDIRECT_LIMIT = "120/minute"
+_REDIRECT_SCOPE = "go-redirect"
+
 
 @go_router.get("/")
 def go_root() -> RedirectResponse:
@@ -27,7 +33,9 @@ def go_root() -> RedirectResponse:
 
 
 @go_router.get("/{path:path}")
+@shared_rate_limited(REDIRECT_LIMIT, _REDIRECT_SCOPE)
 def go_resolve(
+    request: Request,  # noqa: ARG001
     path: str,
     db: Annotated[Session, Depends(get_db)],
 ) -> RedirectResponse:

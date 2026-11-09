@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.core.security import verify_password
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.schemas.profile import ProfileUpdateRequest
-from app.services import profile_service
+from app.services import auth_service, profile_service
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -116,6 +117,14 @@ class TestUpdateProfile:
         assert updated.givenname == "Max"
         assert updated.phone == "+43 664 7654321"
 
+    def test_email_is_stored_in_lower_case(self, db_session: Session, make_user):
+        user = make_user(password=_CURRENT_PASSWORD)
+        mixed = f"{_unique('Mixed')}@Example.COM"
+        updated, _ = profile_service.update_profile(
+            db_session, user, _request(email=mixed)
+        )
+        assert updated.email == mixed.lower()
+
     def test_duplicate_name_combo_against_another_user_is_rejected(
         self, db_session: Session, make_user
     ):
@@ -189,23 +198,22 @@ class TestUpdateProfile:
         assert updated.email == new_email
         assert updated.email_verified_at is None
 
-    def test_email_case_change_counts_as_changed_raw_comparison(
-        self, db_session: Session, make_user
-    ):
-        # Raw strings are compared, not case-normalized.
-        # Local-part casing specifically (not the domain): Pydantic's
-        # EmailStr already lowercases the domain itself, so only a
-        # local-part-only case change actually reaches update_profile()
-        # with a different string.
+    def test_email_case_change_is_not_a_change(self, db_session: Session, make_user):
+        # Addresses are stored in lower case and the request lower-cases its
+        # input, so a case-only edit is the same address: the verification
+        # must survive it.
         base = _unique("case")
         user = make_user(email=f"{base}@example.com", password=_CURRENT_PASSWORD)
-        user.email_verified_at = datetime.now(UTC)
+        verified_at = datetime.now(UTC)
+        user.email_verified_at = verified_at
         db_session.commit()
 
-        _, email_changed = profile_service.update_profile(
+        updated, email_changed = profile_service.update_profile(
             db_session, user, _request(email=f"{base.upper()}@example.com")
         )
-        assert email_changed is True
+        assert email_changed is False
+        assert updated.email == f"{base}@example.com"
+        assert updated.email_verified_at == verified_at
 
     def test_new_password_equal_to_current_is_rejected(
         self, db_session: Session, make_user
@@ -238,3 +246,80 @@ class TestUpdateProfile:
         )
         assert verify_password("EinNeuesPassw0rt", updated.auth_password) is True
         assert verify_password(_CURRENT_PASSWORD, updated.auth_password) is False
+
+
+class TestPasswordChangeRevokesSessions:
+    def _session_ids(self, db_session: Session, user) -> set[str]:
+        return {
+            row.jti
+            for row in db_session.query(PersonalAccessToken)
+            .filter(PersonalAccessToken.user_id == user.id)
+            .all()
+        }
+
+    def _change_password(self, db_session: Session, user, **kwargs):
+        return profile_service.update_profile(
+            db_session,
+            user,
+            _request(
+                change_password=True,
+                password="EinNeuesPassw0rt",
+                password_confirmation="EinNeuesPassw0rt",
+            ),
+            **kwargs,
+        )
+
+    def test_other_sessions_are_deleted_and_the_own_one_is_kept(
+        self, db_session: Session, make_user
+    ):
+        user = make_user(password=_CURRENT_PASSWORD)
+        _token, own_session, _secret = auth_service.create_user_session(
+            db_session, user
+        )
+        _token, other_session, _secret = auth_service.create_user_session(
+            db_session, user
+        )
+
+        self._change_password(db_session, user, current_session_id=own_session)
+
+        remaining = self._session_ids(db_session, user)
+        assert remaining == {own_session}
+        assert other_session not in remaining
+
+    def test_every_session_is_deleted_without_a_current_session(
+        self, db_session: Session, make_user
+    ):
+        user = make_user(password=_CURRENT_PASSWORD)
+        auth_service.create_user_session(db_session, user)
+        auth_service.create_user_session(db_session, user)
+
+        self._change_password(db_session, user)
+
+        assert self._session_ids(db_session, user) == set()
+
+    def test_sessions_of_other_accounts_are_untouched(
+        self, db_session: Session, make_user
+    ):
+        user = make_user(password=_CURRENT_PASSWORD)
+        bystander = make_user()
+        auth_service.create_user_session(db_session, user)
+        _token, bystander_session, _secret = auth_service.create_user_session(
+            db_session, bystander
+        )
+
+        self._change_password(db_session, user)
+
+        assert self._session_ids(db_session, bystander) == {bystander_session}
+
+    def test_sessions_stay_when_the_password_is_not_changed(
+        self, db_session: Session, make_user
+    ):
+        user = make_user(password=_CURRENT_PASSWORD)
+        _token, first, _secret = auth_service.create_user_session(db_session, user)
+        _token, second, _secret = auth_service.create_user_session(db_session, user)
+
+        profile_service.update_profile(
+            db_session, user, _request(), current_session_id=first
+        )
+
+        assert self._session_ids(db_session, user) == {first, second}

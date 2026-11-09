@@ -1,13 +1,19 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import get_verified_user
+from app.api.auth_guards import AuthUser, get_verified_user
 from app.api.job_queue import JobQueue, get_job_queue
+from app.api.query_params import PageDep
+from app.api.rate_limiting import (
+    MAIL_ACTION_LIMIT,
+    MAIL_ACTION_SCOPE,
+    rate_limited_per_user,
+)
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.booking import PerformanceShortOutput
+from app.schemas.pagination import Page
 from app.schemas.support import MessageToContactpersonRequest, RoleWithContactsOutput
 from app.services import support_service
 from app.worker.tasks import send_user_message_email_task
@@ -18,27 +24,32 @@ support_router = APIRouter()
 @support_router.get("/requests-and-bookings")
 def get_my_requests_and_bookings(
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
-) -> list[PerformanceShortOutput]:
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
+    page: PageDep,
+) -> Page[PerformanceShortOutput]:
     """No permission gate beyond being logged in -- every user manages only
     their own requests/bookings."""
-    return support_service.get_my_requests_and_bookings(db, current_user)
+    return support_service.get_my_requests_and_bookings(db, current_user, page).to_page(
+        page
+    )
 
 
 @support_router.get("/contactpersons")
 def get_contactpersons(
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, Depends(get_verified_user)],
+    _current_user: Annotated[AuthUser, Depends(get_verified_user)],
 ) -> list[RoleWithContactsOutput]:
     """No permission gate beyond being logged in."""
     return support_service.list_roles_with_contacts(db)
 
 
 @support_router.post("/message-to-contactperson")
+@rate_limited_per_user(MAIL_ACTION_LIMIT, MAIL_ACTION_SCOPE)
 def send_message_to_contactperson(
+    request: Request,  # noqa: ARG001
     data: MessageToContactpersonRequest,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_verified_user)],
+    current_user: Annotated[AuthUser, Depends(get_verified_user)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """Always responds 200 -- a missing/unverified recipient is a silent

@@ -44,6 +44,24 @@ class TestRecordJobRun:
         run = db_session.execute(select(JobRun)).scalar_one()
         assert run.output is None
 
+    @pytest.mark.parametrize(
+        ("length", "stored_length"),
+        [(50_000, 2000), (2001, 2000), (2000, 2000), (5, 5)],
+    )
+    def test_clips_an_oversized_output(
+        self, db_session: Session, length: int, stored_length: int
+    ):
+        record_job_run(
+            "backup_koofr",
+            datetime.now(UTC),
+            status="failure",
+            output="x" * length,
+        )
+
+        row = db_session.execute(select(JobRun)).scalar_one()
+        assert row.output is not None
+        assert len(row.output) == stored_length
+
     def test_a_db_failure_is_swallowed_and_logged_not_raised(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ):

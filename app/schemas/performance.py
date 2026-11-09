@@ -3,10 +3,18 @@ from datetime import datetime
 from enum import IntEnum
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
-from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
+from app.core.datetime_utils import UtcDatetime, get_app_timezone
+from app.schemas.base import (
+    MAX_CATALOGUE_ENTRIES,
+    MAX_PROPRIUM_ENTRIES,
+    MAX_REHEARSALS,
+    IdNameOutput,
+    LenientUuid,
+    OptionalText,
+    StrictInputModel,
+)
 
 # Pydantic's model-level strict=True (StrictInputModel) rejects ISO-8601
 # datetime STRINGS for a plain `datetime` field -- JSON has no native
@@ -16,7 +24,21 @@ from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
 # would. A per-field `strict=False` override is the narrow, documented
 # escape hatch for exactly this case -- it does NOT loosen anything else
 # (extra="forbid" and every other field's strictness are untouched).
-_LenientDatetime = Annotated[datetime, Field(strict=False)]
+#
+# Schedules are stored as naive wall-clock values in the application time
+# zone: an input with an explicit offset ("...Z", "...+02:00") is converted to
+# that clock first, so every later comparison is naive to naive.
+
+
+def _to_local_wall_clock(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(get_app_timezone()).replace(tzinfo=None)
+
+
+_LenientDatetime = Annotated[
+    datetime, Field(strict=False), AfterValidator(_to_local_wall_clock)
+]
 
 
 class PerformancePositionInput(StrictInputModel):
@@ -25,9 +47,15 @@ class PerformancePositionInput(StrictInputModel):
 
 
 class PerformanceSetupInput(StrictInputModel):
-    instruments: list[PerformancePositionInput] = Field(default_factory=list)
-    voices: list[PerformancePositionInput] = Field(default_factory=list)
-    choirjobs: list[PerformancePositionInput] = Field(default_factory=list)
+    instruments: list[PerformancePositionInput] = Field(
+        default_factory=list[PerformancePositionInput], max_length=MAX_CATALOGUE_ENTRIES
+    )
+    voices: list[PerformancePositionInput] = Field(
+        default_factory=list[PerformancePositionInput], max_length=MAX_CATALOGUE_ENTRIES
+    )
+    choirjobs: list[PerformancePositionInput] = Field(
+        default_factory=list[PerformancePositionInput], max_length=MAX_CATALOGUE_ENTRIES
+    )
 
 
 class PerformanceRehearsalInput(StrictInputModel):
@@ -52,8 +80,13 @@ class PerformanceRequest(StrictInputModel):
     extracost_amount: int | None = Field(default=None, ge=0, le=999)
     extracost_description: OptionalText = None
     setup: PerformanceSetupInput
-    proprium: list[PerformancePropriumEntryInput] = Field(default_factory=list)
-    rehearsals: list[PerformanceRehearsalInput] = Field(default_factory=list)
+    proprium: list[PerformancePropriumEntryInput] = Field(
+        default_factory=list[PerformancePropriumEntryInput],
+        max_length=MAX_PROPRIUM_ENTRIES,
+    )
+    rehearsals: list[PerformanceRehearsalInput] = Field(
+        default_factory=list[PerformanceRehearsalInput], max_length=MAX_REHEARSALS
+    )
 
 
 class PerformanceResponse(BaseModel):
@@ -109,11 +142,6 @@ class PerformanceLocationOutput(BaseModel):
     address: str | None
 
 
-class PositionRefOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class BookingStatus(IntEnum):
     """The 6 states of a user's booking status for one performance. The
     integer value is the wire format."""
@@ -134,7 +162,7 @@ class BookingStatusOutput(BaseModel):
     circular."""
 
     status: BookingStatus
-    position: PositionRefOutput | None = None
+    position: IdNameOutput | None = None
     at: UtcDatetime | None = None
 
 
@@ -192,18 +220,13 @@ class PerformanceFormData(BaseModel):
     deletable: bool
 
 
-class AvailablePositionOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class PerformanceAvailableData(BaseModel):
-    conductors: list[AvailablePositionOutput]
-    instruments: list[AvailablePositionOutput]
-    voices: list[AvailablePositionOutput]
-    choirjobs: list[AvailablePositionOutput]
+    conductors: list[IdNameOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]
+    choirjobs: list[IdNameOutput]
     locations: list[PerformanceLocationOutput]
-    propriumelements: list[AvailablePositionOutput]
+    propriumelements: list[IdNameOutput]
     # Pre-resolved defaults for a NEW performance's Ort/Dirigent fields
     # (None if the configured default row was deleted or, for the
     # conductor, lost its conductor flag -- see get_available_data()).

@@ -7,6 +7,9 @@ from app.db.models.voice import Voice
 if TYPE_CHECKING:
     import uuid
 
+    from sqlalchemy.orm import InstrumentedAttribute
+
+    from app.db.models.ordinariumwork_position import OrdinariumworkPosition
     from app.db.models.position_columns_mixin import PositionColumns
 
 # The three position kinds, shared by Performance/PerformancePosition,
@@ -44,6 +47,17 @@ def position_kwargs(
     mixing in PositionColumns, from a (position_type, position_id) pair --
     e.g. `Booking(**position_kwargs(position_type, position_id), ...)`."""
     return {_POSITION_COLUMN_NAMES[position_type]: position_id}
+
+
+def position_column(
+    model: type[PositionColumns] | type[OrdinariumworkPosition],
+    position_type: PositionType,
+) -> InstrumentedAttribute[uuid.UUID | None]:
+    """The column of `model` that holds a `position_type` reference, for use
+    in a WHERE clause (position_kwargs() builds rows, position_key() reads
+    them). OrdinariumworkPosition has no choirjob_id column, so asking it for
+    "choirjobs" raises AttributeError: callers skip that type beforehand."""
+    return getattr(model, _POSITION_COLUMN_NAMES[position_type])
 
 
 def position_key(row: PositionColumns) -> tuple[PositionType, uuid.UUID]:

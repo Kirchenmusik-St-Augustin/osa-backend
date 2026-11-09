@@ -1,19 +1,29 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import delete, exists, func, select
 
+from app.core.human_names import label_for_name
 from app.core.security import generate_random_password, get_password_hash
 from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.booking_request import BookingRequest
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
+from app.schemas.base import IdLabelOutput
+from app.schemas.user_administration import (
+    UserAdministrationDeletedEntryOutput,
+    UserAdministrationDetailOutput,
+)
 from app.services.errors import GeneralValidationError
+from app.services.pagination import select_page
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Sequence
 
     from sqlalchemy.orm import Session
+
+    from app.schemas.pagination import PagedRows, PageParams
 
 _SEARCH_RESULT_LIMIT = 20
 
@@ -63,22 +73,22 @@ def search_users_including_deleted(db: Session, query: str) -> Sequence[User]:
     combined_name = func.lower(User.surname + ", " + User.givenname)
     stmt = (
         select(User)
-        .where(*[combined_name.like(f"%{word}%") for word in words])
+        .where(*[combined_name.contains(word, autoescape=True) for word in words])
         .order_by(User.surname, User.givenname)
         .limit(_SEARCH_RESULT_LIMIT)
     )
     return db.execute(stmt).scalars().all()
 
 
-def list_deleted_users(db: Session) -> Sequence[User]:
-    """All soft-deleted users, shown directly on the initial (queryless)
+def list_deleted_users(db: Session, page: PageParams) -> PagedRows[User]:
+    """The soft-deleted users, shown directly on the initial (queryless)
     Search page load."""
     stmt = (
         select(User)
         .where(User.deleted_at.is_not(None))
-        .order_by(User.surname, User.givenname)
+        .order_by(User.surname, User.givenname, User.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)
 
 
 def _get_or_404(db: Session, user_id: uuid.UUID) -> User:
@@ -111,13 +121,17 @@ def set_random_password(
     db: Session, user_id: uuid.UUID, current_user_id: uuid.UUID
 ) -> tuple[User, str]:
     """Generates a one-time password, shown ONCE in the response -- never
-    logged, never emailed."""
+    logged, never emailed. All sessions of the account end: an administrator
+    resets a password when the old one may be known to someone else."""
     user = _get_or_404(db, user_id)
     if user_id == current_user_id:
         raise SelfTargetError
 
     plain_password = generate_random_password()
     user.auth_password = get_password_hash(plain_password)
+    db.execute(
+        delete(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+    )
     db.commit()
     return user, plain_password
 
@@ -134,6 +148,31 @@ def is_purgeable(db: Session, user: User) -> bool:
     good; everything else on the account (roles, positions, tokens, OAuth2
     bindings) is cascaded away by the database."""
     return user.deleted_at is not None and not _has_history(db, user.id)
+
+
+def to_search_result(user: User) -> IdLabelOutput:
+    return IdLabelOutput(id=user.id, label=label_for_name(user.surname, user.givenname))
+
+
+def to_deleted_entry(user: User) -> UserAdministrationDeletedEntryOutput:
+    return UserAdministrationDeletedEntryOutput(
+        id=user.id, surname=user.surname, givenname=user.givenname, email=user.email
+    )
+
+
+def to_detail(db: Session, user: User) -> UserAdministrationDetailOutput:
+    return UserAdministrationDetailOutput(
+        id=user.id,
+        surname=user.surname,
+        givenname=user.givenname,
+        email=user.email,
+        phone=user.phone,
+        email_verified_at=user.email_verified_at,
+        auth_locked=user.auth_locked,
+        deleted_at=user.deleted_at,
+        auth_lastsignal=user.auth_lastsignal,
+        purgeable=is_purgeable(db, user),
+    )
 
 
 def purge_user(db: Session, user_id: uuid.UUID) -> None:

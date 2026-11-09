@@ -2,23 +2,16 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, status
-from fastapi.encoders import jsonable_encoder
-from fastapi.exceptions import RequestValidationError
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import ValidationError
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from sqlalchemy.exc import IntegrityError
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
-import app.db.base
+# Imported for its side effect: registers every model with Base.metadata.
 from app.api.exception_handlers import register_exception_handlers
+from app.api.middleware.body_limit import MaxBodySizeMiddleware
 from app.api.middleware.request_logging import RequestLoggingMiddleware
 from app.api.router import api_router
 from app.api.router_includes.go import go_router
-from app.api.system import system_router
+from app.api.system import liveness_router
 from app.core.arq_pool import close_arq_pool
 from app.core.config import get_settings
 from app.core.logging_config import setup_logging
@@ -39,6 +32,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     logger.info("osa-backend shutdown complete.")
 
 
+def _docs_urls(environment: str | None) -> tuple[str | None, str | None, str | None]:
+    """Paths of the interactive documentation (Swagger UI, ReDoc) and of the
+    OpenAPI document. They list every route and schema to anyone who asks, so
+    they exist outside production only."""
+    if environment == "production":
+        return None, None, None
+    return "/docs", "/redoc", "/openapi.json"
+
+
+_DOCS_URL, _REDOC_URL, _OPENAPI_URL = _docs_urls(settings.app_environment)
+
 app = FastAPI(
     title="OSA API",
     description="Backend for the Orchester-Einteilung scheduling system.",
@@ -52,104 +56,15 @@ app = FastAPI(
     # Do NOT also add prefix="/api" to api_router below -- that would
     # double-prefix and 404 everything through Caddy.
     root_path="/api",
+    docs_url=_DOCS_URL,
+    redoc_url=_REDOC_URL,
+    openapi_url=_OPENAPI_URL,
 )
 
 
-async def _validation_error_handler(
-    _request: Request, exc: ValidationError
-) -> JSONResponse:
-    """Give a bare pydantic ValidationError (raised in service code, not
-    FastAPI's request-parsing RequestValidationError) the same
-    {"detail": [...]} shape FastAPI's built-in handler already uses."""
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content=jsonable_encoder({"detail": exc.errors()}),
-    )
-
-
-# Pydantic's own error catalog is English-only -- the project requires
-# fully German validation text for its forms. Only translates the
-# error `type`s Pydantic's built-in validation can actually produce; custom
-# field_validators (added in later Auth-domain schemas) already raise their
-# own German ValueError messages, which Pydantic wraps as "Value error, {msg}"
-# -- those pass through untouched below rather than being overwritten.
-_GERMAN_VALIDATION_MESSAGES: dict[str, str] = {
-    "missing": "Dieses Feld ist erforderlich.",
-    "string_type": "Dieser Wert muss eine Zeichenkette sein.",
-    "int_type": "Dieser Wert muss eine Ganzzahl sein.",
-    "float_type": "Dieser Wert muss eine Zahl sein.",
-    "bool_type": "Dieser Wert muss ein Wahrheitswert sein.",
-    "string_too_short": "Dieser Wert ist zu kurz.",
-    "string_too_long": "Dieser Wert ist zu lang.",
-    "extra_forbidden": "Unbekanntes Feld.",
-}
-
-
-def _translate_validation_error(error: dict[str, object]) -> str:
-    error_type = str(error.get("type", ""))
-    raw_msg = str(error.get("msg", ""))
-    if error_type == "value_error" and raw_msg.startswith("Value error, "):
-        return raw_msg.removeprefix("Value error, ")
-    return _GERMAN_VALIDATION_MESSAGES.get(error_type, raw_msg)
-
-
-async def _request_validation_error_handler(
-    _request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    errors = [
-        {
-            "loc": error.get("loc", []),
-            "msg": _translate_validation_error(error),
-            "type": error.get("type", ""),
-        }
-        for error in exc.errors()
-    ]
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        content=jsonable_encoder({"detail": errors}),
-    )
-
-
-async def _integrity_error_handler(
-    _request: Request, exc: IntegrityError
-) -> JSONResponse:
-    """Safety net for FK/UNIQUE/CHECK constraint violations that reach the
-    database without already having been rejected by a service-layer check
-    (e.g. a race between a dependency check and the delete/insert
-    statement) -- logs the actual constraint detail server-side, never
-    leaks it verbatim to the client."""
-    logger.warning("IntegrityError: %s", exc)
-    return JSONResponse(
-        status_code=status.HTTP_409_CONFLICT,
-        content={
-            "detail": (
-                "Die Änderung verletzt eine Datenbank-Constraint, z. B. "
-                "eine Referenz auf einen nicht existierenden oder noch "
-                "verwendeten Datensatz."
-            )
-        },
-    )
-
-
-async def _unhandled_exception_handler(
-    _request: Request, exc: Exception
-) -> JSONResponse:
-    """Safety net: logs the full traceback server-side, never leaks it."""
-    logger.exception("Unhandled exception: %s", exc)
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Ein unerwarteter Fehler ist aufgetreten."},
-    )
-
-
-app.add_exception_handler(ValidationError, _validation_error_handler)
-app.add_exception_handler(RequestValidationError, _request_validation_error_handler)
-app.add_exception_handler(IntegrityError, _integrity_error_handler)
-app.add_exception_handler(Exception, _unhandled_exception_handler)
 register_exception_handlers(app)
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Same-origin in the default deployment -- never triggers today. Kept
 # real and typed so a future domain split is a pure config change
@@ -165,17 +80,21 @@ app.add_middleware(
 # the outermost layer -- it sees the actual final response, not an
 # intermediate one.
 app.add_middleware(RequestLoggingMiddleware)
+# Registered last, i.e. the outermost layer: an oversized body is rejected
+# before the request logger or any route buffers it in memory.
+app.add_middleware(
+    MaxBodySizeMiddleware, max_body_bytes=settings.max_request_body_bytes
+)
 
-app.include_router(system_router)  # root-level health check, no prefix
+app.include_router(liveness_router)  # root-level health check, no prefix
 app.include_router(api_router)  # every domain router, see app/api/router.py
 # Public, unauthenticated redirect service for the dedicated go.-subdomain
 # (see app.api.router_includes.go's docstring). Mounted directly on `app`
 # under its own "/go" prefix -- NOT nested under api_router, since it has
-# no relation to "/api" at all. This prefix is unreachable through the
-# main app domain's Caddy route (which only forwards "/api/*" to this
-# container); it is only reached via the go.-domain's own Caddy vhost,
-# which rewrites every request to prepend "/go" before proxying to this
-# same backend port -- the mirror image of the "/api" prefix-stripping
-# already used for the main domain. Same process, same port, no second
-# container (consistent with the in-process scheduler precedent).
+# no relation to "/api" at all. The go.-domain's Caddy vhost rewrites every
+# request to prepend "/go" before proxying to this same backend port -- the
+# mirror image of the "/api" prefix-stripping used for the main domain. Through
+# the main domain it is reachable as "/api/go/<path>" too (the main vhost
+# forwards all of "/api/*"); that is the same public redirect, so it is
+# harmless. Same process, same port, no second container.
 app.include_router(go_router, prefix="/go")

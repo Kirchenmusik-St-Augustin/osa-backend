@@ -2,9 +2,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core import mailer
-from app.db.models.sent_email import SentEmail
 from app.schemas.score import ScoreRequest
 from app.services import score_service, statistics_service
+from tests.sent_emails import sent_email
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -12,13 +12,13 @@ if TYPE_CHECKING:
 
 class TestGetStatistics:
     def test_users_excludes_soft_deleted(self, db_session: Session, make_user):
-        before = statistics_service.get_statistics(db_session).users
+        before = statistics_service.get_statistics(db_session, include_email=True).users
         active = make_user()
         deleted = make_user()
         deleted.deleted_at = datetime.now(UTC)
         db_session.commit()
 
-        result = statistics_service.get_statistics(db_session)
+        result = statistics_service.get_statistics(db_session, include_email=True)
 
         assert result.users == before + 1
         assert active.id  # sanity: the active user really got persisted
@@ -30,10 +30,10 @@ class TestGetStatistics:
         # both computed by the exact same mailer.get_kill_switch_status()
         # call -- they must never disagree.
         monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
-        db_session.add(SentEmail(to="a@example.test", created_at=datetime.now(UTC)))
+        db_session.add(sent_email(to="a@example.test", created_at=datetime.now(UTC)))
         db_session.commit()
 
-        result = statistics_service.get_statistics(db_session)
+        result = statistics_service.get_statistics(db_session, include_email=True)
         kill_switch = mailer.get_kill_switch_status(db_session)
 
         assert result.email.active == kill_switch.active
@@ -42,7 +42,9 @@ class TestGetStatistics:
         assert result.email.period_days == kill_switch.period_days
 
     def test_scores_counts_all_score_rows(self, db_session: Session):
-        before = statistics_service.get_statistics(db_session).scores
+        before = statistics_service.get_statistics(
+            db_session, include_email=True
+        ).scores
         defaults = score_service.get_defaults()
         score_service.create_score(
             db_session,
@@ -57,6 +59,14 @@ class TestGetStatistics:
             ),
         )
 
-        result = statistics_service.get_statistics(db_session)
+        result = statistics_service.get_statistics(db_session, include_email=True)
 
         assert result.scores == before + 1
+
+
+class TestEmailBlock:
+    def test_the_mail_block_is_left_out_unless_requested(self, db_session: Session):
+        result = statistics_service.get_statistics(db_session, include_email=False)
+
+        assert result.email is None
+        assert result.users >= 0

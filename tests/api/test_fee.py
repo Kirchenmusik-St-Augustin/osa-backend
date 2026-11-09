@@ -1,5 +1,9 @@
 import uuid
 
+import pytest
+
+from tests.login import login_headers
+
 
 def _unique(base: str = "Fee") -> str:
     return f"{base}-{uuid.uuid4().hex[:8]}"
@@ -8,21 +12,37 @@ def _unique(base: str = "Fee") -> str:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password", roles=roles if roles is not None else ["disponent"]
+    return login_headers(
+        client, make_user, roles=roles if roles is not None else ["disponent"]
     )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+
+
+_MISSING_ID = "00000000-0000-7000-8000-000000000000"
+_FEE_ROUTES = [
+    ("GET", "/fees"),
+    ("POST", "/fees"),
+    ("PUT", f"/fees/{_MISSING_ID}"),
+    ("DELETE", f"/fees/{_MISSING_ID}"),
+]
 
 
 class TestPermissionGuard:
     def test_list_requires_authentication(self, client):
         response = client.get("/fees")
         assert response.status_code == 401
+
+    @pytest.mark.parametrize(("method", "path"), _FEE_ROUTES)
+    def test_every_route_requires_authentication(self, client, method, path):
+        response = client.request(method, path, json={})
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize(("method", "path"), _FEE_ROUTES)
+    def test_every_route_rejects_a_user_without_the_permission(
+        self, client, make_user, method, path
+    ):
+        headers = _auth_headers(client, make_user, roles=[])
+        response = client.request(method, path, json={}, headers=headers)
+        assert response.status_code == 403
 
     def test_list_rejects_non_disponent(self, client, make_user):
         headers = _auth_headers(client, make_user, roles=[])
@@ -51,7 +71,7 @@ class TestCrudRoundtrip:
         assert created["amount"] == 80
 
         list_response = client.get("/fees", headers=headers)
-        assert name in [item["name"] for item in list_response.json()]
+        assert name in [item["name"] for item in list_response.json()["items"]]
 
         new_name = _unique("Konzertmeister")
         update_response = client.put(
@@ -66,7 +86,7 @@ class TestCrudRoundtrip:
         assert delete_response.status_code == 200
 
         final_list = client.get("/fees", headers=headers)
-        assert new_name not in [item["name"] for item in final_list.json()]
+        assert new_name not in [item["name"] for item in final_list.json()["items"]]
 
     def test_update_missing_id_returns_404(self, client, make_user):
         headers = _auth_headers(client, make_user)

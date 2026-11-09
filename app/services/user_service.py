@@ -1,18 +1,19 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.datetime_utils import local_now
-from app.core.human_names import normalize_givenname, normalize_surname
+from app.core.human_names import label_for_name, normalize_givenname, normalize_surname
 from app.db.models.booking import Booking
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.performance import Performance
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
 from app.db.models.user_role import UserRole
+from app.schemas.base import IdLabelOutput, IdNameOutput
 from app.schemas.coreelement import CoreelementType
-from app.schemas.performance import PositionRefOutput
 from app.schemas.user import (
     Oauth2BindingOutput,
     RoleRefOutput,
@@ -48,6 +49,11 @@ _IN_USE_DETAIL = (
 )
 
 
+_EMAIL_OF_ROLE_HOLDER_DETAIL = (
+    "Die E-Mail-Adresse eines Kontos mit Rollen darf nur ein Administrator ändern."
+)
+
+
 class UserNotFoundError(NotFoundError):
     """Raised when `user_id` doesn't exist among non-deleted users (unlike
     the administration domain, which also sees soft-deleted users, see
@@ -78,7 +84,7 @@ def _position_refs_for_user(
     db: Session,
     position_ids: dict[PositionType, set[uuid.UUID]],
     position_type: PositionType,
-) -> list[PositionRefOutput]:
+) -> list[IdNameOutput]:
     ids = position_ids[position_type]
     if not ids:
         return []
@@ -90,7 +96,7 @@ def _position_refs_for_user(
         .scalars()
         .all()
     )
-    return [PositionRefOutput(id=row.id, name=row.name) for row in rows]
+    return [IdNameOutput(id=row.id, name=row.name) for row in rows]
 
 
 def _is_deletable(db: Session, user_id: uuid.UUID) -> bool:
@@ -186,12 +192,16 @@ def search_users(db: Session, query: str) -> Sequence[User]:
         select(User)
         .where(
             User.deleted_at.is_(None),
-            *[combined_name.like(f"%{word}%") for word in words],
+            *[combined_name.contains(word, autoescape=True) for word in words],
         )
         .order_by(User.surname, User.givenname)
         .limit(_SEARCH_RESULT_LIMIT)
     )
     return db.execute(stmt).scalars().all()
+
+
+def to_search_result(user: User) -> IdLabelOutput:
+    return IdLabelOutput(id=user.id, label=label_for_name(user.surname, user.givenname))
 
 
 def get_user(db: Session, user_id: uuid.UUID) -> UserResponse:
@@ -207,14 +217,14 @@ def get_form_options(db: Session) -> UserFormOptionsOutput:
     HTTP endpoints, which would wrongly require instrumentMaintain/
     voiceMaintain/... instead of userMaintain for a Disponent."""
 
-    def _refs(type_: CoreelementType) -> list[PositionRefOutput]:
+    def _refs(type_: CoreelementType) -> list[IdNameOutput]:
         # active_only=True: an archived Instrument/Voice/Choirjob must not
         # be offered for a NEW assignment here. A user who already has one
         # assigned still sees it correctly -- get_user()/the User's own
         # `instruments`/`voices`/`choirjobs` are resolved separately, by
         # id, not through this picker list.
         return [
-            PositionRefOutput(id=item.id, name=item.name)
+            IdNameOutput(id=item.id, name=item.name)
             for item in coreelement_service.list_coreelements(
                 db, type_, active_only=True
             )
@@ -360,15 +370,25 @@ def update_user(
         raise AdministratorProtectedError
 
     errors = _validate(db, data, exclude_id=user_id)
+    email_changed = data.email != user.email
+    # The password reset mails a link to the address on file, so whoever can
+    # set the address of an account can take it over. Accounts with roles
+    # carry rights that only administrators may hand out; a disponent must
+    # not be able to reach them through the address.
+    if email_changed and user.roles and not current_user.administrator:
+        errors.append(FieldError("email", _EMAIL_OF_ROLE_HOLDER_DETAIL))
     if errors:
         raise UserValidationError(errors)
 
     # Asymmetric with profile_service.update_profile() by design: an admin
     # changing someone ELSE's email resets verification but does NOT send a
     # new verification mail -- only the user's own Selfadmin-Profil edit
-    # does that.
-    if data.email != user.email:
+    # does that. Existing sessions end with the old address.
+    if email_changed:
         user.email_verified_at = None
+        db.execute(
+            delete(PersonalAccessToken).where(PersonalAccessToken.user_id == user.id)
+        )
 
     user.surname = normalize_surname(data.surname)
     user.givenname = normalize_givenname(data.givenname)

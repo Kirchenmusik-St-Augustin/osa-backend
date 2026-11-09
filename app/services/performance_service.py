@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, extract, func, select
+from sqlalchemy import delete, func, select
 
 from app.core.config import get_settings
 from app.core.datetime_utils import local_now
@@ -20,9 +20,9 @@ from app.db.models.performance_rehearsal import PerformanceRehearsal
 from app.db.models.propriumelement import Propriumelement
 from app.db.models.propriumwork import Propriumwork
 from app.db.models.voice import Voice
+from app.schemas.base import IdNameOutput
 from app.schemas.coreelement import CoreelementType
 from app.schemas.performance import (
-    AvailablePositionOutput,
     PerformanceAvailableData,
     PerformanceCalendarItem,
     PerformanceFormData,
@@ -80,7 +80,7 @@ class PerformanceNotFoundError(NotFoundError):
 
 class PerformanceValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as auth_service.RegistrationConflictError."""
+    failing field."""
 
 
 class PerformanceInPastError(ForbiddenError):
@@ -128,19 +128,23 @@ def _validate_positions(
 ) -> list[FieldError]:
     model = POSITION_MODELS[position_type]
     errors: list[FieldError] = []
-    seen_ids: set[uuid.UUID] = set()
+    requested_ids: list[uuid.UUID] = []
     for item in items:
-        if item.id in seen_ids:
+        if item.id in requested_ids:
             errors.append(FieldError("setup", f"{position_type}: doppelter Eintrag."))
             continue
-        seen_ids.add(item.id)
-        exists = db.execute(
-            select(model.id).where(model.id == item.id)
-        ).scalar_one_or_none()
-        if exists is None:
-            errors.append(
-                FieldError("setup", f"{position_type}: Element nicht gefunden.")
-            )
+        requested_ids.append(item.id)
+    if not requested_ids:
+        return errors
+    # One query for the whole list instead of one per position.
+    known_ids = set(
+        db.execute(select(model.id).where(model.id.in_(requested_ids))).scalars()
+    )
+    errors.extend(
+        FieldError("setup", f"{position_type}: Element nicht gefunden.")
+        for position_id in requested_ids
+        if position_id not in known_ids
+    )
     return errors
 
 
@@ -173,13 +177,21 @@ def _validate_proprium(db: Session, data: PerformanceRequest) -> list[FieldError
     return errors
 
 
-def _validate_rehearsals(data: PerformanceRequest) -> list[FieldError]:
+def _validate_rehearsals(
+    data: PerformanceRequest, kept_schedules: frozenset[datetime]
+) -> list[FieldError]:
+    """`kept_schedules`: rehearsals the performance already has. Only new or
+    moved rehearsals must lie in the future -- one that merely stays in the
+    list after its date has passed must not block every later edit."""
     errors: list[FieldError] = []
     tomorrow_start = _tomorrow_start()
     schedule = data.schedule
     for rehearsal in data.rehearsals:
         rehearsal_schedule = rehearsal.schedule
-        if rehearsal_schedule < tomorrow_start:
+        if (
+            rehearsal_schedule < tomorrow_start
+            and rehearsal_schedule not in kept_schedules
+        ):
             errors.append(FieldError("rehearsals", _REHEARSAL_TOO_EARLY))
         if rehearsal_schedule > schedule:
             errors.append(FieldError("rehearsals", _REHEARSAL_AFTER_PERFORMANCE))
@@ -213,12 +225,20 @@ def _validate_collision(
 
 
 def _validate(
-    db: Session, data: PerformanceRequest, exclude_id: uuid.UUID | None
+    db: Session,
+    data: PerformanceRequest,
+    exclude_id: uuid.UUID | None,
+    *,
+    unchanged_schedule: datetime | None = None,
+    kept_rehearsals: frozenset[datetime] = frozenset(),
 ) -> list[FieldError]:
+    """`unchanged_schedule` / `kept_rehearsals`: the stored dates of the
+    performance being updated. The 'earliest tomorrow' rule applies to a date
+    that is being set, not to one that is merely resubmitted unchanged."""
     errors: list[FieldError] = []
     schedule = data.schedule
 
-    if schedule < _tomorrow_start():
+    if schedule < _tomorrow_start() and schedule != unchanged_schedule:
         errors.append(FieldError("schedule", _SCHEDULE_TOO_EARLY))
 
     if (
@@ -254,7 +274,7 @@ def _validate(
     errors.extend(_validate_positions(db, data.setup.voices, "voices"))
     errors.extend(_validate_positions(db, data.setup.choirjobs, "choirjobs"))
     errors.extend(_validate_proprium(db, data))
-    errors.extend(_validate_rehearsals(data))
+    errors.extend(_validate_rehearsals(data, kept_rehearsals))
     errors.extend(_validate_collision(db, data, exclude_id))
 
     return errors
@@ -265,7 +285,7 @@ def _sync_positions(
 ) -> tuple[
     set[tuple[PositionType, uuid.UUID]], dict[tuple[PositionType, uuid.UUID], int]
 ]:
-    """Returns (removed_keys, old_quantities) for booking_service.reconcile_setup_change
+    """Returns (removed_keys, old_quantities) for cast_service.reconcile_setup_change
     -- old_quantities covers only positions that existed for THIS performance before the
     update, not every Instrument/Voice/Choirjob row system-wide: a position never
     previously configured here cannot have any pre-existing bookings to reconcile
@@ -357,7 +377,6 @@ def _sync_rehearsals(
             PerformanceRehearsal.performance_id == performance_id
         )
     )
-    now = datetime.now(UTC)
     seen_schedules: set[datetime] = set()
     for rehearsal in data.rehearsals:
         schedule = rehearsal.schedule
@@ -369,7 +388,6 @@ def _sync_rehearsals(
                 performance_id=performance_id,
                 schedule=schedule,
                 comment=rehearsal.comment,
-                created_at=now,
             )
         )
 
@@ -590,7 +608,7 @@ def get_rehearsals(
 @dataclass(frozen=True)
 class PerformanceBatchEntry:
     """Everything list_performances_for_month() and
-    booking_service.get_upcoming_requests_and_bookings_for_user() both need
+    booking_listing_service.get_upcoming_requests_and_bookings_for_user() both need
     to enrich a raw Performance row -- extracted so the two N+1-safe batch
     loaders share ONE implementation instead of duplicating it."""
 
@@ -612,7 +630,7 @@ def load_performance_batch_data(
     Rehearsals across an arbitrary list of Performances -- a fixed number
     of queries regardless of list length, the shared building block behind
     both list_performances_for_month() (month-filtered) and
-    booking_service's user-scoped equivalent."""
+    booking_listing_service's user-scoped equivalent."""
     if not performances:
         return {}
 
@@ -675,18 +693,22 @@ def load_performance_batch_data(
 def list_performances_for_month(
     db: Session, year: int, month: int, user_id: uuid.UUID
 ) -> Sequence[PerformanceCalendarItem]:
-    """Real indexed DB query (dialect-portable year/month extract() match)
-    -- relies on `schedule` always being
-    written as a naive local wall-clock value (Settings.app_timezone, see
-    app.core.datetime_utils.local_now()), never UTC-converted, so a plain
-    year+month match is reliable. extract() compiles to each dialect's
-    native EXTRACT/date-part function, portable across database engines."""
+    """Range query on `schedule` (the column's index can serve it, unlike an
+    EXTRACT over the column) -- relies on `schedule` always being written as
+    a naive local wall-clock value (Settings.app_timezone, see
+    app.core.datetime_utils.local_now()), never UTC-converted."""
+    month_start = datetime(year, month, 1)  # noqa: DTZ001 -- naive local wall clock
+    next_month_start = (
+        datetime(year + 1, 1, 1)  # noqa: DTZ001
+        if month == 12
+        else datetime(year, month + 1, 1)  # noqa: DTZ001
+    )
     performances = (
         db.execute(
             select(Performance)
             .where(
-                extract("year", Performance.schedule) == year,
-                extract("month", Performance.schedule) == month,
+                Performance.schedule >= month_start,
+                Performance.schedule < next_month_start,
             )
             .order_by(Performance.schedule)
         )
@@ -698,12 +720,12 @@ def list_performances_for_month(
 
     batch = load_performance_batch_data(db, performances)
 
-    # Narrow, function-local import: booking_service imports
+    # Narrow, function-local import: booking_common imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
     # module level, so a module-level import here would be circular. The
     # calendar's self-service badge/trigger needs the real status per row,
     # batched N+1-safe across the whole month.
-    from app.services.booking_service import (  # noqa: PLC0415
+    from app.services.booking_status_service import (  # noqa: PLC0415
         user_booking_status_for_performances,
     )
 
@@ -853,18 +875,12 @@ def get_available_data(db: Session) -> PerformanceAvailableData:
     )
 
     return PerformanceAvailableData(
-        conductors=[
-            AvailablePositionOutput(id=a.id, name=label_for(a)) for a in conductors
-        ],
-        instruments=[
-            AvailablePositionOutput(id=i.id, name=i.name) for i in instruments
-        ],
-        voices=[AvailablePositionOutput(id=v.id, name=v.name) for v in voices],
-        choirjobs=[AvailablePositionOutput(id=c.id, name=c.name) for c in choirjobs],
+        conductors=[IdNameOutput(id=a.id, name=label_for(a)) for a in conductors],
+        instruments=[IdNameOutput(id=i.id, name=i.name) for i in instruments],
+        voices=[IdNameOutput(id=v.id, name=v.name) for v in voices],
+        choirjobs=[IdNameOutput(id=c.id, name=c.name) for c in choirjobs],
         locations=[_location_output(location) for location in locations],
-        propriumelements=[
-            AvailablePositionOutput(id=p.id, name=p.name) for p in propriumelements
-        ],
+        propriumelements=[IdNameOutput(id=p.id, name=p.name) for p in propriumelements],
         default_location_id=default_location_id,
         default_conductor_id=default_conductor_id,
     )
@@ -901,7 +917,19 @@ def update_performance(
 ) -> PerformanceResponse:
     performance = _get_or_404(db, performance_id)
     _ensure_not_past(performance)
-    errors = _validate(db, data, exclude_id=performance_id)
+    errors = _validate(
+        db,
+        data,
+        exclude_id=performance_id,
+        unchanged_schedule=performance.schedule,
+        kept_rehearsals=frozenset(
+            db.execute(
+                select(PerformanceRehearsal.schedule).where(
+                    PerformanceRehearsal.performance_id == performance_id
+                )
+            ).scalars()
+        ),
+    )
     if errors:
         raise PerformanceValidationError(errors)
 
@@ -919,12 +947,12 @@ def update_performance(
     _sync_proprium(db, performance_id, data)
     _sync_rehearsals(db, performance_id, data)
 
-    # Narrow, function-local import: booking_service imports
+    # Narrow, function-local import: booking_common imports
     # PerformanceInPastError/PerformanceNotFoundError from this module at
     # module level, so a module-level import here would be circular. Cast
     # reconciliation: purges bookings on removed positions and re-evaluates
     # promote/demote on every remaining position against its old quantity.
-    from app.services.booking_service import reconcile_setup_change  # noqa: PLC0415
+    from app.services.cast_service import reconcile_setup_change  # noqa: PLC0415
 
     reconcile_setup_change(db, performance_id, removed_keys, old_quantities)
 
@@ -934,7 +962,7 @@ def update_performance(
 
 def _has_bookings_or_requests(db: Session, performance_id: uuid.UUID) -> bool:
     """Queries the Booking/BookingRequest models directly (not
-    booking_service) since that's all this needs, avoiding the circular
+    the booking modules) since that's all this needs, avoiding the circular
     import update_performance's reconcile_setup_change call already has to
     work around."""
     booking_count = db.execute(

@@ -124,7 +124,7 @@ class TestSendMessageToContactperson:
         self, db_session: Session, make_user
     ):
         sender = make_user()
-        recipient = make_user(email="kontakt@example.test")
+        recipient = make_user(email="kontakt@example.test", roles=[_unique("kontakt")])
         recipient.email_verified_at = datetime.now(UTC)
         db_session.commit()
 
@@ -137,6 +137,35 @@ class TestSendMessageToContactperson:
         assert to_emails == ["kontakt@example.test"]
         assert sender_name == f"{sender.surname}, {sender.givenname}"
         assert message == "Bitte um Rückruf."
+
+    def test_silent_noop_for_a_member_who_is_not_a_contact_person(
+        self, db_session: Session, make_user
+    ):
+        sender = make_user()
+        member = make_user(email="mitglied@example.test")
+        member.email_verified_at = datetime.now(UTC)
+        db_session.commit()
+
+        result = support_service.send_message_to_contactperson(
+            db_session, sender, self._data(recipient_id=member.id)
+        )
+
+        assert result is None
+
+    def test_silent_noop_for_a_deleted_contact_person(
+        self, db_session: Session, make_user
+    ):
+        sender = make_user()
+        contact = make_user(email="alt@example.test", roles=[_unique("kontakt")])
+        contact.email_verified_at = datetime.now(UTC)
+        contact.deleted_at = datetime.now(UTC)
+        db_session.commit()
+
+        result = support_service.send_message_to_contactperson(
+            db_session, sender, self._data(recipient_id=contact.id)
+        )
+
+        assert result is None
 
     def test_silent_noop_for_unverified_recipient(self, db_session: Session, make_user):
         sender = make_user()

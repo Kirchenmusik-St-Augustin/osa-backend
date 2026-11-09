@@ -1,4 +1,4 @@
-"""Exercises main.py's global exception handlers on a throwaway app.
+"""Exercises the global exception handlers on a throwaway app.
 
 Starlette's ServerErrorMiddleware re-raises the original exception under
 TestClient's default raise_server_exceptions=True regardless of a
@@ -9,17 +9,13 @@ app.
 """
 
 from fastapi import FastAPI
-from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError
 
-from main import (
-    _integrity_error_handler,
-    _request_validation_error_handler,
-    _translate_validation_error,
-    _unhandled_exception_handler,
-    _validation_error_handler,
+from app.api.exception_handlers import (
+    register_exception_handlers,
+    translate_validation_error,
 )
 
 
@@ -41,12 +37,7 @@ class _ModelWithCustomValidator(BaseModel):
 
 def _make_test_app() -> FastAPI:
     test_app = FastAPI()
-    test_app.add_exception_handler(ValidationError, _validation_error_handler)
-    test_app.add_exception_handler(
-        RequestValidationError, _request_validation_error_handler
-    )
-    test_app.add_exception_handler(IntegrityError, _integrity_error_handler)
-    test_app.add_exception_handler(Exception, _unhandled_exception_handler)
+    register_exception_handlers(test_app)
 
     @test_app.get("/raise-validation-error")
     def _raise_validation_error() -> None:
@@ -119,7 +110,7 @@ def test_request_validation_error_preserves_custom_german_message():
 
 
 def test_translate_validation_error_strips_value_error_prefix():
-    message = _translate_validation_error(
+    message = translate_validation_error(
         {"type": "value_error", "msg": "Value error, Eigene deutsche Meldung."}
     )
 
@@ -127,8 +118,24 @@ def test_translate_validation_error_strips_value_error_prefix():
 
 
 def test_translate_validation_error_falls_back_to_raw_msg_for_unknown_type():
-    message = _translate_validation_error(
+    message = translate_validation_error(
         {"type": "some_unmapped_type", "msg": "raw text"}
     )
 
     assert message == "raw text"
+
+
+def test_validation_errors_never_echo_the_offending_input():
+    # A request body and a model validated inside service code share one
+    # handler; neither may hand the submitted value (a password, a database
+    # row's data) back to the caller.
+    client = TestClient(_make_test_app(), raise_server_exceptions=False)
+
+    body_response = client.post("/custom-validator-body", json={"password": "s3cr3t"})
+    service_response = client.get("/raise-validation-error")
+
+    for response in (body_response, service_response):
+        assert response.status_code == 422
+        assert "s3cr3t" not in response.text
+        for error in response.json()["detail"]:
+            assert set(error) == {"loc", "msg", "type"}

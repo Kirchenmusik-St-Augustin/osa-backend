@@ -61,14 +61,16 @@ max-complexity = 8
 [tool.ruff.lint.flake8-type-checking]
 # Python 3.14's deferred annotation evaluation (PEP 649) makes the TC
 # rules assume it's always safe to hide an annotation-only import behind
-# `if TYPE_CHECKING:` -- but these three base classes all build their
+# `if TYPE_CHECKING:` -- but these base classes all build their
 # runtime behavior (SQLAlchemy's mapper configuration, Pydantic's
 # validator schema) by resolving every field's annotation to a real
 # object at class-definition time, deferred evaluation or not. Hiding a
 # field's type behind TYPE_CHECKING still breaks that resolution with a
-# NameError, just later than under eager evaluation.
+# NameError, just later than under eager evaluation. StrictInputModel is listed
+# because ruff does not follow a base class through its parent.
 runtime-evaluated-base-classes = [
     "app.db.database.Base", "pydantic.BaseModel", "pydantic_settings.BaseSettings",
+    "app.schemas.base.StrictInputModel",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -114,12 +116,6 @@ runtime-evaluated-base-classes = [
 "app/services/housekeeping_jobs.py" = ["TID251"]
 "app/services/job_run_service.py" = ["TID251"]
 "app/api/middleware/request_logging.py" = ["TID251"]
-# Different reason from the SessionLocal exceptions above: this file
-# spreads the *entire* current environment (`{**os.environ, "PGPASSWORD":
-# ...}`) to build a pg_dump/pg_restore subprocess env — a legitimate use
-# of the whole os.environ mapping, not a single named config value that
-# belongs in Settings.
-"app/services/backup_service.py" = ["TID251"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -129,7 +125,7 @@ line-ending = "auto"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=app --cov=scripts --cov=main --cov-report=term-missing --cov-report=xml --cov-fail-under=81"
+addopts = "--cov=app --cov=scripts --cov=main --cov-report=term-missing --cov-report=xml --cov-report=json --cov-fail-under=97"
 filterwarnings = [
     "error",
     "default::DeprecationWarning",
@@ -138,6 +134,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["app", "scripts", "main.py"]
+branch = true
 omit = [
     "alembic/*",
     "tests/*",
@@ -152,8 +149,18 @@ exclude_lines = [
     "pass",
 ]
 
+[tool.coverage_gate]
+# Per-metric minimums in percent, enforced by scripts/check_coverage_gate.py
+# after pytest. They sit slightly below the measured values (statements
+# 99.15, branches 95.74, functions 99.15), so a real drop fails the pipeline
+# but normal refactoring does not. The combined --cov-fail-under in
+# [tool.pytest.ini_options] is the coarse safety net, this table the fine one.
+statements = 98.0
+branches = 94.0
+functions = 98.0
+
 [tool.pyright]
-include = ["app", "scripts"]
+include = ["app", "scripts", "main.py"]
 exclude = [
     "alembic",
     "**/__pycache__",
@@ -164,9 +171,9 @@ typeCheckingMode = "strict"
 useLibraryCodeForTypes = true
 reportMissingTypeStubs = false
 
-reportUnknownMemberType = false
-reportUnknownVariableType = false
-reportUnknownArgumentType = false
+reportUnknownMemberType = true
+reportUnknownVariableType = true
+reportUnknownArgumentType = true
 
 # --- DEAD CODE & UNREACHABLE (Pyright) ---
 reportUnreachable = "error"

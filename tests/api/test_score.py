@@ -1,6 +1,7 @@
 import uuid
 
 from app.services import score_service
+from tests.login import login_headers
 
 
 def _unique(base: str = "Werk") -> str:
@@ -21,14 +22,9 @@ def _payload(**overrides: object) -> dict[str, object]:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password", roles=roles if roles is not None else ["scores"]
+    return login_headers(
+        client, make_user, roles=roles if roles is not None else ["scores"]
     )
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 class TestPermissionGuard:
@@ -108,17 +104,61 @@ class TestCrudRoundtrip:
         assert response.status_code == 404
 
 
+class TestSearchLabels:
+    def test_versions_of_one_work_read_differently_in_the_hit_list(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        werk = _unique("Kirchensonate")
+        for verz in ("KV 329", "KV 328"):
+            client.post(
+                "/scores",
+                json=_payload(werk=werk, surname="Mozart", verz=verz),
+                headers=headers,
+            )
+
+        response = client.get("/scores/search", params={"q": werk}, headers=headers)
+
+        labels = sorted(item["label"] for item in response.json())
+        assert labels == [
+            f"MOZART: {werk} - KV 328",
+            f"MOZART: {werk} - KV 329",
+        ]
+
+
 class TestValidation:
-    def test_duplicate_werk_within_same_scope_returns_422(self, client, make_user):
+    def test_the_same_work_can_be_created_twice(self, client, make_user):
         headers = _auth_headers(client, make_user)
         werk = _unique()
-        client.post(
-            "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
+
+        responses = [
+            client.post(
+                "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
+            )
+            for _ in range(2)
+        ]
+
+        assert [response.status_code for response in responses] == [201, 201]
+        assert responses[0].json()["id"] != responses[1].json()["id"]
+
+    def test_a_card_with_an_identical_sibling_can_be_saved(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        werk = _unique()
+        ids = [
+            client.post(
+                "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
+            ).json()["id"]
+            for _ in range(2)
+        ]
+
+        response = client.put(
+            f"/scores/{ids[0]}",
+            json=_payload(werk=werk, surname="Bach", boxnr="2.13"),
+            headers=headers,
         )
-        response = client.post(
-            "/scores", json=_payload(werk=werk, surname="Bach"), headers=headers
-        )
-        assert response.status_code == 422
+
+        assert response.status_code == 200
+        assert response.json()["fields"]["boxnr"] == "2.13"
 
     def test_invalid_select_value_returns_422(self, client, make_user):
         headers = _auth_headers(client, make_user)

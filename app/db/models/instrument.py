@@ -1,3 +1,4 @@
+from sqlalchemy import true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -13,4 +14,4 @@ class Instrument(CoreelementColumns, Base):
 
     __tablename__ = "instruments"
 
-    active: Mapped[bool] = mapped_column(default=True)
+    active: Mapped[bool] = mapped_column(default=True, server_default=true())

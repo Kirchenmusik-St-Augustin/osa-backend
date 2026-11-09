@@ -7,12 +7,15 @@ from app.db.models.artist import Artist
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
 from app.db.models.propriumwork import Propriumwork
+from app.schemas.artist import ArtistResponse
+from app.schemas.base import IdLabelOutput
 from app.services.errors import (
     DomainValidationError,
     FieldError,
     GeneralValidationError,
     NotFoundError,
 )
+from app.services.pagination import select_page
 
 if TYPE_CHECKING:
     import uuid
@@ -21,8 +24,9 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.schemas.artist import ArtistRequest
+    from app.schemas.pagination import PagedRows, PageParams
 
-_NAME_MIN_LENGTH = 3
+_NAME_MIN_LENGTH = 1
 _NAME_MAX_LENGTH = 32
 _SEARCH_RESULT_LIMIT = 20
 _IN_USE_DETAIL = "Das Element kann nicht gelöscht werden, da es noch in Verwendung ist."
@@ -34,7 +38,7 @@ class ArtistNotFoundError(NotFoundError):
 
 class ArtistValidationError(DomainValidationError):
     """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as auth_service.RegistrationConflictError."""
+    failing field."""
 
 
 class ArtistInUseError(GeneralValidationError):
@@ -51,9 +55,36 @@ def label_for(artist: Artist) -> str:
     return label_for_name(artist.surname or "", artist.givenname)
 
 
+def to_response(artist: Artist) -> ArtistResponse:
+    return ArtistResponse(
+        id=artist.id,
+        surname=artist.surname or "",
+        givenname=artist.givenname or "",
+        description=artist.description,
+        birthyear=artist.birthyear,
+        deathyear=artist.deathyear,
+        composer=artist.composer,
+        conductor=artist.conductor,
+    )
+
+
+def to_search_result(artist: Artist) -> IdLabelOutput:
+    return IdLabelOutput(id=artist.id, label=label_for(artist))
+
+
 def _name_year_range_error(field: str, value: int | None) -> FieldError | None:
     if value is not None and not 1000 <= value <= 9999:
         return FieldError(field, "Muss eine vierstellige Jahreszahl sein.")
+    return None
+
+
+def _death_before_birth_error(
+    birthyear: int | None, deathyear: int | None
+) -> FieldError | None:
+    if birthyear is not None and deathyear is not None and deathyear < birthyear:
+        return FieldError(
+            "deathyear", "Das Sterbejahr darf nicht vor dem Geburtsjahr liegen."
+        )
     return None
 
 
@@ -74,12 +105,15 @@ def _validate(
         for year_error in (
             _name_year_range_error("birthyear", data.birthyear),
             _name_year_range_error("deathyear", data.deathyear),
+            _death_before_birth_error(data.birthyear, data.deathyear),
         )
         if year_error
     )
 
     stmt = select(Artist.id).where(
-        func.lower(Artist.surname) == data.surname.lower(),
+        # The stored surname is the normalized form ("ß" becomes "SS"), so
+        # the typed name has to be compared in that form.
+        func.lower(Artist.surname) == normalize_surname(data.surname).lower(),
         func.lower(Artist.givenname) == data.givenname.lower(),
     )
     if exclude_id is not None:
@@ -100,7 +134,7 @@ def _get_or_404(db: Session, artist_id: uuid.UUID) -> Artist:
     return artist
 
 
-def list_composer_artists(db: Session) -> Sequence[Artist]:
+def list_composer_artists(db: Session, page: PageParams) -> PagedRows[Artist]:
     """Dropdown source for Ordinariumwork/Propriumwork's "Komponist" select
     -- embedded directly in those entities' form payloads rather than
     gated by the artist maintain permission itself (see artistMaintain/
@@ -109,9 +143,9 @@ def list_composer_artists(db: Session) -> Sequence[Artist]:
     stmt = (
         select(Artist)
         .where(Artist.composer.is_(True))
-        .order_by(Artist.surname, Artist.givenname)
+        .order_by(Artist.surname, Artist.givenname, Artist.id)
     )
-    return db.execute(stmt).scalars().all()
+    return select_page(db, stmt, page)
 
 
 def search_artists(db: Session, query: str) -> Sequence[Artist]:
@@ -124,7 +158,7 @@ def search_artists(db: Session, query: str) -> Sequence[Artist]:
     combined_name = func.lower(Artist.surname + " " + Artist.givenname)
     stmt = (
         select(Artist)
-        .where(*[combined_name.like(f"%{word}%") for word in words])
+        .where(*[combined_name.contains(word, autoescape=True) for word in words])
         .order_by(Artist.surname, Artist.givenname)
         .limit(_SEARCH_RESULT_LIMIT)
     )

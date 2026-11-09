@@ -5,14 +5,7 @@ from pydantic import BaseModel
 
 from app.core.datetime_utils import UtcDatetime
 from app.core.json_types import JsonObject, JsonValue
-
-
-class RequestLogUserSummaryOutput(BaseModel):
-    """One user row nested under RequestLogDayGroupOutput.users below --
-    users who were active on that day."""
-
-    id: uuid.UUID
-    label: str
+from app.schemas.base import IdLabelOutput
 
 
 class RequestLogDayGroupOutput(BaseModel):
@@ -21,7 +14,8 @@ class RequestLogDayGroupOutput(BaseModel):
     had at least one RequestLog entry, with the users active on that day."""
 
     day: date
-    users: list[RequestLogUserSummaryOutput]
+    # The users who were active on that day.
+    users: list[IdLabelOutput]
 
 
 class RequestLogEntryOutput(BaseModel):

@@ -2,9 +2,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
 from sqlalchemy import select
 
+from app.core.datetime_utils import get_app_timezone
 from app.db.models.performance import Performance
+from tests.login import login_headers
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -17,20 +20,15 @@ def _unique(base: str = "Name") -> str:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None, administrator: bool = False
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password",
+    return login_headers(
+        client,
+        make_user,
         roles=roles if roles is not None else ["planner"],
         administrator=administrator,
     )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
-def _make_composer(client, headers) -> int:
+def _make_composer(client, headers) -> str:
     response = client.post(
         "/artists",
         json={
@@ -47,7 +45,7 @@ def _make_composer(client, headers) -> int:
     return response.json()["id"]
 
 
-def _make_ordinariumwork(client, headers, composer_id: int) -> int:
+def _make_ordinariumwork(client, headers, composer_id: str) -> str:
     response = client.post(
         "/ordinariumworks",
         json={
@@ -63,7 +61,7 @@ def _make_ordinariumwork(client, headers, composer_id: int) -> int:
     return response.json()["id"]
 
 
-def _make_location(client, make_user) -> int:
+def _make_location(client, make_user) -> str:
     admin_headers = _auth_headers(client, make_user, administrator=True)
     response = client.post(
         "/coreelements/location",
@@ -73,7 +71,7 @@ def _make_location(client, make_user) -> int:
     return response.json()["id"]
 
 
-def _move_to_past(db_session: Session, performance_id: int) -> None:
+def _move_to_past(db_session: Session, performance_id: str) -> None:
     """There is no API path to move an existing performance's schedule
     into the past (updates are themselves schedule-validated) -- forcing
     it directly at the DB layer mirrors the equivalent service-level test.
@@ -84,14 +82,14 @@ def _move_to_past(db_session: Session, performance_id: int) -> None:
     session bound to its own connection would be isolated behind the
     test's still-open outer transaction and never see this row at all."""
     performance = db_session.execute(
-        select(Performance).where(Performance.id == performance_id)
+        select(Performance).where(Performance.id == uuid.UUID(performance_id))
     ).scalar_one()
     performance.schedule = datetime.now(UTC) - timedelta(days=1)
     db_session.commit()
 
 
 def _base_payload(
-    location_id: int, ordinariumwork_id: int, **overrides: object
+    location_id: str, ordinariumwork_id: str, **overrides: object
 ) -> dict:
     payload: dict[str, object] = {
         "schedule": (datetime.now(UTC) + timedelta(days=2)).strftime(
@@ -131,7 +129,9 @@ class TestPermissionGuard:
     def test_create_requires_performance_maintain(self, client, make_user):
         headers = _auth_headers(client, make_user, roles=[])
         response = client.post(
-            "/performances", json=_base_payload(1, 1), headers=headers
+            "/performances",
+            json=_base_payload(str(uuid.uuid4()), str(uuid.uuid4())),
+            headers=headers,
         )
         assert response.status_code == 403
 
@@ -280,6 +280,112 @@ class TestValidation:
         response = client.post("/performances", json=payload, headers=headers)
 
         assert response.status_code == 422
+
+
+class TestOffsetAwareSchedule:
+    """Schedules are stored as naive wall-clock values in the application
+    time zone, so an input that carries an explicit offset is converted to
+    that clock at the schema boundary."""
+
+    @staticmethod
+    def _midnight_utc_in_30_days() -> datetime:
+        return (datetime.now(UTC) + timedelta(days=30)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+    @pytest.mark.parametrize(("suffix", "offset_hours"), [("Z", 0), ("+02:00", 2)])
+    def test_offset_aware_schedule_is_converted_to_the_local_wall_clock(
+        self, client, make_user, suffix, offset_hours
+    ):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        utc_moment = self._midnight_utc_in_30_days()
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=utc_moment.strftime("%Y-%m-%dT%H:%M:%S") + suffix,
+        )
+
+        response = client.post("/performances", json=payload, headers=headers)
+
+        assert response.status_code == 201
+        stored = datetime.fromisoformat(response.json()["schedule"])
+        assert stored.tzinfo is None
+        expected_utc = utc_moment - timedelta(hours=offset_hours)
+        assert stored == expected_utc.astimezone(get_app_timezone()).replace(
+            tzinfo=None
+        )
+
+    def test_naive_schedule_is_stored_as_typed(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        typed = self._midnight_utc_in_30_days().replace(hour=10, tzinfo=None)
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=typed.strftime("%Y-%m-%dT%H:%M:%S"),
+        )
+
+        response = client.post("/performances", json=payload, headers=headers)
+
+        assert response.status_code == 201
+        assert datetime.fromisoformat(response.json()["schedule"]) == typed
+
+    def test_offset_aware_rehearsal_is_converted_to_the_local_wall_clock(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        utc_moment = self._midnight_utc_in_30_days()
+        rehearsal_moment = utc_moment - timedelta(days=1)
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=utc_moment.strftime("%Y-%m-%dT%H:%M:%S") + "Z",
+            rehearsals=[
+                {
+                    "schedule": rehearsal_moment.strftime("%Y-%m-%dT%H:%M:%S")
+                    + "+00:00",
+                    "comment": None,
+                }
+            ],
+        )
+
+        create_response = client.post("/performances", json=payload, headers=headers)
+
+        assert create_response.status_code == 201
+        form_response = client.get(
+            f"/performances/{create_response.json()['id']}/form", headers=headers
+        )
+        stored = datetime.fromisoformat(
+            form_response.json()["rehearsals"][0]["schedule"]
+        )
+        assert stored.tzinfo is None
+        assert stored == rehearsal_moment.astimezone(get_app_timezone()).replace(
+            tzinfo=None
+        )
+
+    def test_offset_aware_schedule_before_tomorrow_returns_422(self, client, make_user):
+        headers = _auth_headers(client, make_user)
+        composer_id = _make_composer(client, headers)
+        work_id = _make_ordinariumwork(client, headers, composer_id)
+        location_id = _make_location(client, make_user)
+        payload = _base_payload(
+            location_id,
+            work_id,
+            schedule=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S") + "Z",
+        )
+
+        response = client.post("/performances", json=payload, headers=headers)
+
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["body", "schedule"]
 
 
 class TestQueryCount:

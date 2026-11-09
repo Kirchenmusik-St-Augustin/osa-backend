@@ -8,6 +8,7 @@ from app.db.models.choirjob import Choirjob
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from tests.login import login_headers
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -20,17 +21,12 @@ def _unique(base: str = "User") -> str:
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None, administrator: bool = False
 ) -> dict[str, str]:
-    user = make_user(
-        password="correct-password",
+    return login_headers(
+        client,
+        make_user,
         roles=roles if roles is not None else ["disponent"],
         administrator=administrator,
     )
-    response = client.post(
-        "/auth/login",
-        data={"username": user.email, "password": "correct-password"},
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
 
 
 def _make_choirjob(db_session: Session) -> Choirjob:
@@ -225,6 +221,35 @@ class TestQuirks:
         fields = {error["loc"][1] for error in response.json()["detail"]}
         assert fields == {"surname", "givenname"}
 
+    def test_disponent_cannot_change_the_email_of_an_account_with_roles(
+        self, client, make_user
+    ):
+        headers = _auth_headers(client, make_user)
+        holder = make_user(
+            email=f"{_unique('holder').lower()}@example.com", roles=[_unique("billing")]
+        )
+
+        response = client.put(
+            f"/users/{holder.id}",
+            json={
+                "givenname": holder.givenname,
+                "surname": holder.surname,
+                "email": f"{_unique('mine').lower()}@example.com",
+                "phone": None,
+                "auth_locked": False,
+                "instruments": [],
+                "voices": [],
+                "choirjobs": [],
+                "roles": [],
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        error = response.json()["detail"][0]
+        assert error["loc"][-1] == "email"
+        assert "nur ein Administrator" in error["msg"]
+
     def test_administrator_target_cannot_be_updated(self, client, make_user):
         headers = _auth_headers(client, make_user, administrator=True)
         target_admin = make_user(administrator=True)
@@ -363,4 +388,41 @@ class TestRequestsAndBookings:
         )
 
         assert response.status_code == 200
-        assert [item["id"] for item in response.json()] == [str(performance.id)]
+        assert [item["id"] for item in response.json()["items"]] == [
+            str(performance.id)
+        ]
+
+    def test_returns_the_requested_page_and_the_total(
+        self, client, make_user, make_instrument, db_session
+    ):
+        headers = _auth_headers(client, make_user)
+        target = make_user()
+        instrument = make_instrument()
+        now = datetime.now(UTC)
+        performance_ids = sorted(
+            str(_make_past_performance(db_session).id) for _ in range(2)
+        )
+        for performance_id in performance_ids:
+            db_session.add(
+                Booking(
+                    performance_id=uuid.UUID(performance_id),
+                    user_id=target.id,
+                    instrument_id=instrument.id,
+                    fee=80,
+                    order=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        db_session.commit()
+
+        response = client.get(
+            f"/users/{target.id}/requests-and-bookings",
+            params={"limit": 1, "offset": 0},
+            headers=headers,
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert len(body["items"]) == 1
+        assert (body["total"], body["limit"], body["offset"]) == (2, 1, 0)

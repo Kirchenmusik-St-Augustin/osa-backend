@@ -8,6 +8,7 @@ from app.db.models.instrument import Instrument
 from app.db.models.location import Location
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from tests.login import DEFAULT_PASSWORD, login_as
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -20,14 +21,10 @@ def _unique(base: str) -> str:
 
 
 def _auth_headers(
-    client, make_user, *, password: str = "correct-password"
+    client, make_user, *, password: str = DEFAULT_PASSWORD
 ) -> tuple[dict[str, str], User]:
     user = make_user(password=password)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": password}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}, user
+    return login_as(client, user, password), user
 
 
 def _make_instrument(db_session: Session) -> Instrument:
@@ -84,7 +81,7 @@ class TestPermissionGuard:
     def test_message_to_contactperson_requires_authentication(self, client):
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": 1, "message": "Hallo!"},
+            json={"recipient_id": str(uuid.uuid4()), "message": "Hallo!"},
         )
         assert response.status_code == 401
 
@@ -94,7 +91,7 @@ class TestGetMyRequestsAndBookings:
         headers, _user = _auth_headers(client, make_user)
         response = client.get("/support/requests-and-bookings", headers=headers)
         assert response.status_code == 200
-        assert response.json() == []
+        assert response.json()["items"] == []
 
     def test_includes_own_booking(self, client, make_user, db_session):
         headers, user = _auth_headers(client, make_user)
@@ -116,7 +113,43 @@ class TestGetMyRequestsAndBookings:
 
         response = client.get("/support/requests-and-bookings", headers=headers)
         assert response.status_code == 200
-        assert [item["id"] for item in response.json()] == [str(performance.id)]
+        assert [item["id"] for item in response.json()["items"]] == [
+            str(performance.id)
+        ]
+
+    def test_returns_the_requested_page_and_the_total(
+        self, client, make_user, db_session
+    ):
+        headers, user = _auth_headers(client, make_user)
+        instrument = _make_instrument(db_session)
+        now = datetime.now(UTC)
+        performance_ids = sorted(
+            str(_make_performance(db_session).id) for _ in range(2)
+        )
+        for performance_id in performance_ids:
+            db_session.add(
+                Booking(
+                    performance_id=uuid.UUID(performance_id),
+                    user_id=user.id,
+                    instrument_id=instrument.id,
+                    fee=80,
+                    order=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        db_session.commit()
+
+        response = client.get(
+            "/support/requests-and-bookings",
+            params={"limit": 1, "offset": 1},
+            headers=headers,
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert [item["id"] for item in body["items"]] == [performance_ids[1]]
+        assert (body["total"], body["limit"], body["offset"]) == (2, 1, 1)
 
 
 class TestGetContactpersons:
@@ -162,7 +195,9 @@ class TestSendMessageToContactperson:
         self, client, make_user, db_session, fake_arq_pool
     ):
         headers, _sender = _auth_headers(client, make_user)
-        recipient = make_user(email=f"{_unique('kontakt')}@example.test")
+        recipient = make_user(
+            email=f"{_unique('kontakt')}@example.test", roles=[_unique("kontakt")]
+        )
 
         response = client.post(
             "/support/message-to-contactperson",
@@ -175,6 +210,21 @@ class TestSendMessageToContactperson:
         args = fake_arq_pool.enqueue_job.call_args.args
         assert args[0] == "send_user_message_email_task"
         assert args[1] == [recipient.email]
+
+    def test_silent_noop_for_a_member_without_a_role_still_returns_200(
+        self, client, make_user, fake_arq_pool
+    ):
+        headers, _sender = _auth_headers(client, make_user)
+        member = make_user(email=f"{_unique('mitglied')}@example.test")
+
+        response = client.post(
+            "/support/message-to-contactperson",
+            json={"recipient_id": str(member.id), "message": "Bitte um Rückruf."},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        fake_arq_pool.enqueue_job.assert_not_called()
 
     def test_silent_noop_for_unverified_recipient_still_returns_200(
         self, client, make_user, fake_arq_pool
@@ -209,11 +259,28 @@ class TestSendMessageToContactperson:
         assert response.status_code == 200
         fake_arq_pool.enqueue_job.assert_not_called()
 
+    def test_a_message_of_blanks_is_refused_and_no_mail_is_queued(
+        self, client, make_user, fake_arq_pool
+    ):
+        headers, _sender = _auth_headers(client, make_user)
+        recipient = make_user(
+            email=f"{_unique('kontakt')}@example.test", roles=[_unique("kontakt")]
+        )
+
+        response = client.post(
+            "/support/message-to-contactperson",
+            json={"recipient_id": str(recipient.id), "message": "     "},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        fake_arq_pool.enqueue_job.assert_not_called()
+
     def test_rejects_message_shorter_than_three_chars(self, client, make_user):
         headers, _sender = _auth_headers(client, make_user)
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": 1, "message": "Hi"},
+            json={"recipient_id": str(uuid.uuid4()), "message": "Hi"},
             headers=headers,
         )
         assert response.status_code == 422
@@ -222,7 +289,11 @@ class TestSendMessageToContactperson:
         headers, _sender = _auth_headers(client, make_user)
         response = client.post(
             "/support/message-to-contactperson",
-            json={"recipient_id": 1, "message": "Hallo!", "extra": "nope"},
+            json={
+                "recipient_id": str(uuid.uuid4()),
+                "message": "Hallo!",
+                "extra": "nope",
+            },
             headers=headers,
         )
         assert response.status_code == 422

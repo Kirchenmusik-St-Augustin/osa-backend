@@ -3,7 +3,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import LenientUuid, StrictInputModel
+from app.schemas.base import (
+    MAX_CATALOGUE_ENTRIES,
+    MAX_RECIPIENTS,
+    IdNameOutput,
+    LenientUuid,
+    MessageText,
+    StrictInputModel,
+)
 from app.schemas.fee import FeeResponse
 from app.schemas.performance import (
     BookingStatusOutput,
@@ -13,10 +20,6 @@ from app.schemas.performance import (
     PerformanceSetupOutput,
 )
 
-# Field names are snake_case throughout. `for` (the field name of a
-# booking-status "for" position) is a reserved Python keyword, renamed to
-# `position`.
-
 
 class CastMemberInput(StrictInputModel):
     id: LenientUuid
@@ -25,13 +28,21 @@ class CastMemberInput(StrictInputModel):
 
 class CastSetupItemInput(StrictInputModel):
     id: LenientUuid
-    cast: list[CastMemberInput] = Field(default_factory=list)
+    cast: list[CastMemberInput] = Field(
+        default_factory=list[CastMemberInput], max_length=MAX_CATALOGUE_ENTRIES
+    )
 
 
 class CastSectionInput(StrictInputModel):
-    instruments: list[CastSetupItemInput] = Field(default_factory=list)
-    voices: list[CastSetupItemInput] = Field(default_factory=list)
-    choirjobs: list[CastSetupItemInput] = Field(default_factory=list)
+    instruments: list[CastSetupItemInput] = Field(
+        default_factory=list[CastSetupItemInput], max_length=MAX_CATALOGUE_ENTRIES
+    )
+    voices: list[CastSetupItemInput] = Field(
+        default_factory=list[CastSetupItemInput], max_length=MAX_CATALOGUE_ENTRIES
+    )
+    choirjobs: list[CastSetupItemInput] = Field(
+        default_factory=list[CastSetupItemInput], max_length=MAX_CATALOGUE_ENTRIES
+    )
 
 
 class NotBookedEntryInput(StrictInputModel):
@@ -40,7 +51,9 @@ class NotBookedEntryInput(StrictInputModel):
 
 class CastSaveRequest(StrictInputModel):
     cast: CastSectionInput = Field(default_factory=CastSectionInput)
-    not_booked: list[NotBookedEntryInput] = Field(default_factory=list)
+    not_booked: list[NotBookedEntryInput] = Field(
+        default_factory=list[NotBookedEntryInput], max_length=MAX_RECIPIENTS
+    )
 
 
 class CastMemberOutput(BaseModel):
@@ -65,14 +78,9 @@ class CastSectionOutput(BaseModel):
     choirjobs: list[CastSetupItemOutput]
 
 
-class NotBookedOutput(BaseModel):
-    id: uuid.UUID
-    name: str
-
-
 class CastFormData(BaseModel):
     cast: CastSectionOutput
-    not_booked: list[NotBookedOutput]
+    not_booked: list[IdNameOutput]
 
 
 class BookableUserOutput(BaseModel):
@@ -222,5 +230,5 @@ class MessageRecipientOutput(BaseModel):
 
 
 class SendMessageRequest(StrictInputModel):
-    recipient_ids: list[LenientUuid] = Field(min_length=1)
-    message: str = Field(min_length=1, max_length=2000)
+    recipient_ids: list[LenientUuid] = Field(min_length=1, max_length=MAX_RECIPIENTS)
+    message: MessageText

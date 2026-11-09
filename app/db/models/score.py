@@ -1,26 +1,25 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, FetchedValue, func
+from sqlalchemy import CheckConstraint, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 # Every numeric column below is either a physical count (how many
 # copies/parts/instrument-headcount slots the archive card lists) or a
-# year (geboren/gestorben/jahr) -- negative values are never meaningful
-# for either. All 42 are already validated `Field(ge=0, ...)` at the
-# Pydantic layer (app/schemas/score.py); these CHECK constraints close
-# the same "validated at the API, never enforced in the database" gap the
-# money-column CHECKs closed for fees/bookings/performances. NULL passes
-# every one of these CHECKs unconditionally (standard SQL), which is what
-# keeps geboren/gestorben/jahr's now-nullable "no year entered" state
-# valid alongside the required counts.
+# year (geboren/gestorben/jahr). A count is never negative, a year is a
+# real year of at least 1: "nothing entered" is NULL, never 0. Both rules
+# are already validated at the Pydantic layer (app/schemas/score.py);
+# these CHECK constraints close the same "validated at the API, never
+# enforced in the database" gap the money-column CHECKs closed for
+# fees/bookings/performances. NULL passes every one of these CHECKs
+# unconditionally (standard SQL), which is what keeps geboren/gestorben/
+# jahr's nullable "no year entered" state valid alongside the required
+# counts.
+_YEAR_CHECKS: tuple[str, ...] = ("geboren", "gestorben", "jahr")
 _COUNT_CHECKS: tuple[str, ...] = (
-    "geboren",
-    "gestorben",
-    "jahr",
     "part1anz",
     "part2anz",
     "klausz1anz",
@@ -69,7 +68,7 @@ _COUNT_CHECKS: tuple[str, ...] = (
 # default `sa.Enum(SomeEnum)` sends each member's NAME to Postgres, not its
 # `.value`, unless `values_callable=...` is also supplied).
 # soinstr1art..soinstr4art deliberately do NOT use this type: despite the
-# "art" name, they are free-text fields (see app.services.score_fields) and
+# "art" name, they are free-text fields (see app.schemas.score_fields) and
 # stay plain varchar.
 _ART_ENUM = Enum("Original", "Kopie", "Original/Kopie", name="score_art")
 
@@ -105,7 +104,7 @@ _SPARTE_ENUM = Enum(
 )
 
 
-class Score(Base):
+class Score(TimestampColumns, Base):
     """A physical sheet-music archive card catalog (NOT a digital/PDF
     archive: no file storage anywhere in this domain), one row per work.
     The field config (see app.services.score_service.SCORE_FIELDS, the
@@ -118,11 +117,6 @@ class Score(Base):
     `inhalt`/`sparte`/the 12 `*art` columns are native Postgres ENUMs --
     `Mapped[str]` keeps every string comparison/lookup on these columns
     working.
-
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python.
 
     Deliberately still a single flat table, not normalized into child
     tables for the holdings groups (part1/part2/klausz1/klausz2/
@@ -141,9 +135,15 @@ class Score(Base):
     domains use, keeping this table fully self-contained."""
 
     __tablename__ = "scores"
-    __table_args__ = tuple(
-        CheckConstraint(f"{column} >= 0", name=f"scores_{column}_check")
-        for column in _COUNT_CHECKS
+    __table_args__ = (
+        *(
+            CheckConstraint(f"{column} > 0", name=f"scores_{column}_check")
+            for column in _YEAR_CHECKS
+        ),
+        *(
+            CheckConstraint(f"{column} >= 0", name=f"scores_{column}_check")
+            for column in _COUNT_CHECKS
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -253,10 +253,3 @@ class Score(Base):
     # -- Remarks --
     bemerkung: Mapped[str | None] = mapped_column()
     zusatznoten: Mapped[str | None] = mapped_column()
-
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )

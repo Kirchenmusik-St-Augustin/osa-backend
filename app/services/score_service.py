@@ -4,33 +4,24 @@ from sqlalchemy import func, select
 
 from app.core.human_names import label_for_name, normalize_givenname, normalize_surname
 from app.db.models.score import Score
-from app.schemas.score import (
-    ScoreFieldConfig,
-    ScoreRequest,
-    ScoreResponse,
-    ScoreSearchResult,
-)
-from app.services.errors import DomainValidationError, FieldError, NotFoundError
-from app.services.score_fields import SCORE_FIELDS
+from app.schemas.base import IdLabelOutput
+from app.schemas.score import ScoreFieldConfig, ScoreRequest, ScoreResponse
+from app.schemas.score_fields import SCORE_FIELDS
+from app.services.errors import NotFoundError
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from sqlalchemy.orm import Session
 
-    from app.services.score_fields import ScoreFieldSpec
+    from app.schemas.score_fields import ScoreFieldSpec
 
 _SEARCH_RESULT_LIMIT = 50
 
 
 class ScoreNotFoundError(NotFoundError):
     """Raised when `score_id` doesn't exist."""
-
-
-class ScoreValidationError(DomainValidationError):
-    """Field-level validation failures, one (field, message) pair per
-    failing field -- same pattern as fee_service.FeeValidationError."""
 
 
 def get_fields_config() -> dict[str, ScoreFieldConfig]:
@@ -121,52 +112,7 @@ def _get_or_404(db: Session, score_id: uuid.UUID) -> Score:
     return score
 
 
-def _werk_taken(
-    db: Session,
-    *,
-    werk: str,
-    surname: str | None,
-    givenname: str | None,
-    teil: str | None,
-    exclude_id: uuid.UUID | None,
-) -> bool:
-    """Compound-unique rule: `werk` must be unique WITHIN the (surname,
-    givenname, teil) scope, not globally. SQLAlchemy's `== None` below
-    compiles to `IS NULL`, so a duplicate `werk` is also detected when
-    surname/givenname/teil are all blank (a rare blank-composer case that a
-    literal `= NULL` comparison would never match)."""
-    stmt = select(Score.id).where(
-        Score.werk == werk,
-        Score.surname == surname,
-        Score.givenname == givenname,
-        Score.teil == teil,
-    )
-    if exclude_id is not None:
-        stmt = stmt.where(Score.id != exclude_id)
-    return db.execute(stmt).scalar_one_or_none() is not None
-
-
-def _validate(
-    db: Session, data: ScoreRequest, exclude_id: uuid.UUID | None
-) -> list[FieldError]:
-    errors: list[FieldError] = []
-    if _werk_taken(
-        db,
-        werk=data.werk,
-        surname=_normalized_name(data.surname, normalize_surname),
-        givenname=_normalized_name(data.givenname, normalize_givenname),
-        teil=data.teil,
-        exclude_id=exclude_id,
-    ):
-        errors.append(
-            FieldError(
-                "werk", "Name, Komponist und Werkteil müssen zusammen eindeutig sein"
-            )
-        )
-    return errors
-
-
-def search_scores(db: Session, query: str) -> list[ScoreSearchResult]:
+def search_scores(db: Session, query: str) -> list[IdLabelOutput]:
     """Filtered in the database (not in memory). Every whitespace-separated
     word in `query` must appear somewhere in "surname givenname werk teil".
     `coalesce()` on every nullable column -- SQL `||` yields NULL if any
@@ -186,14 +132,16 @@ def search_scores(db: Session, query: str) -> list[ScoreSearchResult]:
     )
     stmt = (
         select(Score)
-        .where(*[combined.like(f"%{word}%") for word in words])
-        .order_by(Score.surname)
+        .where(*[combined.contains(word, autoescape=True) for word in words])
+        # werk, teil and id make the order of hits with the same composer
+        # stable, so versions of one work keep their place between searches.
+        .order_by(Score.surname, Score.werk, Score.teil, Score.id)
         .limit(_SEARCH_RESULT_LIMIT)
     )
     scores = db.execute(stmt).scalars().all()
     return [
-        ScoreSearchResult(id=score.id, label=_label_for_score(score))
-        for score in scores
+        IdLabelOutput(id=score.id, label=label)
+        for score, label in zip(scores, _disambiguated_labels(scores), strict=True)
     ]
 
 
@@ -205,15 +153,88 @@ def _label_for_score(score: Score) -> str:
     return label
 
 
+def _catalogue_number(score: Score) -> str:
+    return score.verz or ""
+
+
+def _box(score: Score) -> str:
+    return f"Box {score.boxnr}" if score.boxnr else ""
+
+
+def _year(score: Score) -> str:
+    return str(score.jahr) if score.jahr is not None else ""
+
+
+def _genre(score: Score) -> str:
+    return score.sparte or ""
+
+
+def _entered_on(score: Score) -> str:
+    return f"erfasst am {score.created_at:%d.%m.%Y}"
+
+
+# What tells apart cards of the same work, in the order it is tried: the
+# archive holds several versions of one work (catalogue number, box, year,
+# genre differ), which would otherwise read identically in the hit list.
+_DISAMBIGUATION_FIELDS: tuple[Callable[[Score], str], ...] = (
+    _catalogue_number,
+    _box,
+    _year,
+    _genre,
+)
+
+
+def _distinguishing_suffixes(group: Sequence[Score]) -> list[str]:
+    """For cards whose label is identical: a field only counts when it
+    differs within the group, and fields are added until every card is
+    unique. The entry date is the last resort, and only when it differs;
+    cards that nothing can tell apart keep the plain label."""
+    chosen: list[Callable[[Score], str]] = []
+
+    def _values(score: Score) -> tuple[str, ...]:
+        return tuple(field(score) for field in chosen)
+
+    def _unique() -> bool:
+        return len({_values(score) for score in group}) == len(group)
+
+    for field in _DISAMBIGUATION_FIELDS:
+        if len({field(score) for score in group}) < 2:
+            continue
+        chosen.append(field)
+        if _unique():
+            break
+    if not _unique() and len({_entered_on(score) for score in group}) > 1:
+        chosen.append(_entered_on)
+    return [", ".join(part for part in _values(score) if part) for score in group]
+
+
+def _disambiguated_labels(scores: Sequence[Score]) -> list[str]:
+    """The search labels, with a suffix only for hits that would otherwise
+    read exactly like another hit of the same result list."""
+    labels = [_label_for_score(score) for score in scores]
+    positions_by_label: dict[str, list[int]] = {}
+    for position, label in enumerate(labels):
+        positions_by_label.setdefault(label, []).append(position)
+    for label, positions in positions_by_label.items():
+        if len(positions) < 2:
+            continue
+        suffixes = _distinguishing_suffixes(
+            [scores[position] for position in positions]
+        )
+        for position, suffix in zip(positions, suffixes, strict=True):
+            if suffix:
+                labels[position] = f"{label} - {suffix}"
+    return labels
+
+
 def get_score(db: Session, score_id: uuid.UUID) -> ScoreResponse:
     return _to_response(_get_or_404(db, score_id))
 
 
 def create_score(db: Session, data: ScoreRequest) -> ScoreResponse:
-    errors = _validate(db, data, exclude_id=None)
-    if errors:
-        raise ScoreValidationError(errors)
-
+    """No uniqueness rule on work, composer and part: the archive holds
+    several versions of one work (each its own card, identified by its id),
+    mirroring the historically grown paper archive."""
     score = Score()
     _apply_fields(score, data)
     db.add(score)
@@ -223,10 +244,6 @@ def create_score(db: Session, data: ScoreRequest) -> ScoreResponse:
 
 def update_score(db: Session, score_id: uuid.UUID, data: ScoreRequest) -> ScoreResponse:
     score = _get_or_404(db, score_id)
-    errors = _validate(db, data, exclude_id=score_id)
-    if errors:
-        raise ScoreValidationError(errors)
-
     _apply_fields(score, data)
     db.commit()
     return _to_response(score)

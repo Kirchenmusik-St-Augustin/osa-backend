@@ -18,22 +18,27 @@ def _count(db: Session, model: type) -> int:
     return db.execute(select(func.count()).select_from(model)).scalar_one()
 
 
-def get_statistics(db: Session) -> StatisticsOutput:
-    """Six raw row counts. `users` excludes soft-deleted rows."""
+def _email_status(db: Session) -> StatisticsEmailOutput:
+    kill_switch = mailer.get_kill_switch_status(db)
+    return StatisticsEmailOutput(
+        active=kill_switch.active,
+        period_days=kill_switch.period_days,
+        threshold=kill_switch.threshold,
+        sent=kill_switch.sent,
+    )
+
+
+def get_statistics(db: Session, *, include_email: bool) -> StatisticsOutput:
+    """Five raw row counts (`users` excludes soft-deleted rows) and, for
+    callers allowed to see mail operations, the kill-switch status."""
     users = db.execute(
         select(func.count()).select_from(User).where(User.deleted_at.is_(None))
     ).scalar_one()
-    kill_switch = mailer.get_kill_switch_status(db)
     return StatisticsOutput(
         users=users,
         performances=_count(db, Performance),
         ordinariumworks=_count(db, Ordinariumwork),
         propriumworks=_count(db, Propriumwork),
         scores=_count(db, Score),
-        email=StatisticsEmailOutput(
-            active=kill_switch.active,
-            period_days=kill_switch.period_days,
-            threshold=kill_switch.threshold,
-            sent=kill_switch.sent,
-        ),
+        email=_email_status(db) if include_email else None,
     )

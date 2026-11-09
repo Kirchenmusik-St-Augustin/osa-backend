@@ -124,6 +124,30 @@ class TestSearchPropriumworks:
     def test_empty_query_returns_empty(self, db_session: Session):
         assert propriumwork_service.search_propriumworks(db_session, "") == []
 
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, wildcard: str
+    ):
+        artist_id = _make_artist(db_session)
+        propriumwork_service.create_propriumwork(
+            db_session, _request(artist_id, name=_unique("Introitus"))
+        )
+
+        assert propriumwork_service.search_propriumworks(db_session, wildcard) == []
+
+    def test_an_underscore_finds_a_work_name_that_contains_one(
+        self, db_session: Session
+    ):
+        artist_id = _make_artist(db_session)
+        marker = _unique("Intro_itus")
+        propriumwork_service.create_propriumwork(
+            db_session, _request(artist_id, name=marker)
+        )
+
+        results = propriumwork_service.search_propriumworks(db_session, "intro_i")
+
+        assert [marker in result.label for result in results] == [True]
+
     def test_matches_by_work_name(self, db_session: Session):
         artist_id = _make_artist(db_session)
         marker = _unique("Introitus")
@@ -182,6 +206,25 @@ class TestCreatePropriumwork:
             propriumwork_service.create_propriumwork(
                 db_session, _request(artist_id, name=name)
             )
+
+    def test_reports_every_failing_work_field(self, db_session: Session):
+        # Built without validation: the request schema already refuses these
+        # values, the service check is the second line of defence.
+        data = PropriumworkRequest.model_construct(
+            name="ab",
+            description=None,
+            artist_id=uuid.uuid4(),
+            duration=0,
+            demanding=False,
+        )
+
+        errors = propriumwork_service._validate(db_session, data, None)
+
+        assert [field for field, _message in errors] == [
+            "name",
+            "artist_id",
+            "duration",
+        ]
 
     def test_rejects_out_of_range_duration(self):
         # Same tightening as test_rejects_short_name, for

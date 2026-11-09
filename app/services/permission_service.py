@@ -14,6 +14,14 @@ class PermissionRule:
     condition: Callable[[set[str], bool], bool]
 
 
+# Role names that the rules below test by value. Renaming or deleting one of
+# these roles silently changes what every holder may do, and a role created
+# later under the old name would hand the permission to new users; the
+# generic role editor therefore refuses both (see coreelement_service).
+PERMISSION_ROLE_NAMES = frozenset(
+    {"billing", "disponent", "planner", "scores", "shorturls"}
+)
+
 # One centralized, testable permission matrix. `role_names` is the set of Role.name
 # values currently assigned to the user (planner/disponent/billing/scores/
 # shorturls); `is_administrator` is the separate `users.administrator`
@@ -119,6 +127,11 @@ PERMISSION_RULES: list[PermissionRule] = [
         condition=lambda _roles, is_admin: is_admin,
     ),
     PermissionRule(
+        permission="schedulerTrigger",
+        description="administrator-Flag",
+        condition=lambda _roles, is_admin: is_admin,
+    ),
+    PermissionRule(
         permission="performanceMaintain",
         description=(
             "Rolle 'planner' oder 'disponent' "
@@ -163,6 +176,10 @@ def calculate_permissions(user: User) -> list[str]:
         for rule in PERMISSION_RULES
         if rule.condition(role_names, user.administrator)
     ]
+
+
+def has_permission(user: User, permission: str) -> bool:
+    return permission in calculate_permissions(user)
 
 
 def get_permission_rules_display() -> list[dict[str, str]]:

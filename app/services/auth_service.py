@@ -1,4 +1,7 @@
+import secrets
 from datetime import UTC, datetime, timedelta
+from enum import Enum
+from functools import cache
 from typing import TYPE_CHECKING, Literal, NoReturn, cast
 from urllib.parse import urlencode
 
@@ -6,6 +9,7 @@ import jwt
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings, require_setting
@@ -35,24 +39,47 @@ from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
-from app.services.errors import DomainValidationError, FieldError
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Mapping
+
+    # Return type of the overridden transport call; google-auth names it only
+    # with a leading underscore.
+    from google.auth.transport.requests import (
+        _Response as GoogleResponse,  # pyright: ignore[reportPrivateUsage]
+    )
 
     from app.core.json_types import JsonObject
     from app.schemas.auth import RegisterRequest
 
-# Login lockout: 5 failed attempts per 60s window.
+# Login lockout, two independent limits on the failures logged in auth_logs:
+# 5 per 60 s for one email from one IP, and 20 per 15 min for one email from
+# any IP (guessing spread over many addresses stays bounded per account).
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_THROTTLE_WINDOW_SECONDS = 60
+MAX_LOGIN_ATTEMPTS_PER_ACCOUNT = 20
+ACCOUNT_THROTTLE_WINDOW_SECONDS = 900
+
 
 AuthFailureReason = Literal["unknown_email", "wrong_password", "account_locked"]
+# The events the application writes; the database type also holds a few that
+# only rows from earlier years carry (see app.db.models.auth_log).
+AuthEvent = Literal["Login", "Failed", "Lockout", "Logout", "Verified", "PasswordReset"]
+
+# Upper bounds for what an unauthenticated client can make us store.
+_MAX_LOGGED_EMAIL_LENGTH = 254
+_MAX_LOGGED_USER_AGENT_LENGTH = 512
+_MAX_LOGGED_IP_LENGTH = 45
+
+
+def _clipped(value: str | None, limit: int) -> str | None:
+    return value[:limit] if value else value
 
 
 def log_auth_event(
     db: Session,
-    event: str,
+    event: AuthEvent,
     email: str | None,
     *,
     ip_address: str | None = None,
@@ -66,83 +93,111 @@ def log_auth_event(
         AuthLog(
             event=event,
             fired_at=datetime.now(UTC),
-            ip_address=ip_address,
-            user_agent=user_agent,
-            email=email,
+            ip_address=_clipped(ip_address, _MAX_LOGGED_IP_LENGTH),
+            user_agent=_clipped(user_agent, _MAX_LOGGED_USER_AGENT_LENGTH),
+            email=_clipped(email, _MAX_LOGGED_EMAIL_LENGTH),
             payload=payload or {},
         )
     )
     db.commit()
 
 
-def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None:
-    """Returns seconds remaining if the email+IP pair is currently
-    rate-limited, None if the login attempt may proceed.
-
-    Asymmetric semantics (hit on failure, cleared on success, key =
-    lower(email)+ip) implemented as a derived query over AuthLog instead of
-    a separate counter/cache -- deliberately a sliding 60s window bounded by
-    the most recent successful login for this exact key. No new table,
-    reuses the audit trail as the source of truth (lean, DRY)."""
+def _retry_after_seconds(
+    db: Session,
+    normalized_email: str,
+    ip_address: str | None,
+    *,
+    max_attempts: int,
+    window_seconds: int,
+) -> int | None:
+    """Seconds until the failures inside the sliding window drop below
+    `max_attempts`, None if the limit is not reached. The window starts at
+    the most recent successful login for the same key. `ip_address=None`
+    counts the email from every address."""
     now = datetime.now(UTC)
-    window_start = now - timedelta(seconds=LOGIN_THROTTLE_WINDOW_SECONDS)
-    normalized_email = email.lower()
+    key = [func.lower(AuthLog.email) == normalized_email]
+    if ip_address is not None:
+        key.append(AuthLog.ip_address == ip_address)
 
     last_success_stmt = (
         select(AuthLog.fired_at)
-        .where(
-            AuthLog.event == "Login",
-            func.lower(AuthLog.email) == normalized_email,
-            AuthLog.ip_address == ip_address,
-        )
+        .where(AuthLog.event == "Login", *key)
         .order_by(AuthLog.fired_at.desc())
         .limit(1)
     )
     last_success = ensure_tz_aware(db.execute(last_success_stmt).scalar_one_or_none())
 
+    window_start = now - timedelta(seconds=window_seconds)
     effective_start = window_start
     if last_success is not None and last_success > effective_start:
         effective_start = last_success
 
     failed_stmt = (
         select(AuthLog.fired_at)
-        .where(
-            AuthLog.event == "Failed",
-            func.lower(AuthLog.email) == normalized_email,
-            AuthLog.ip_address == ip_address,
-            AuthLog.fired_at > effective_start,
-        )
+        .where(AuthLog.event == "Failed", *key, AuthLog.fired_at > effective_start)
         .order_by(AuthLog.fired_at.asc())
     )
     raw_failed_times = db.execute(failed_stmt).scalars().all()
-    failed_times = [ensure_tz_aware(t) for t in raw_failed_times if t is not None]
+    failed_times = [ensure_tz_aware(t) for t in raw_failed_times]
 
-    if len(failed_times) < MAX_LOGIN_ATTEMPTS:
+    if len(failed_times) < max_attempts:
         return None
 
-    oldest_relevant = failed_times[-MAX_LOGIN_ATTEMPTS]
-    retry_after = (
-        oldest_relevant + timedelta(seconds=LOGIN_THROTTLE_WINDOW_SECONDS) - now
-    )
+    oldest_relevant = failed_times[-max_attempts]
+    retry_after = oldest_relevant + timedelta(seconds=window_seconds) - now
     return max(1, int(retry_after.total_seconds()))
+
+
+def check_login_throttle(db: Session, email: str, ip_address: str) -> int | None:
+    """Returns the seconds to wait if the email+IP pair or the email alone is
+    currently rate-limited, None if the login attempt may proceed. Derived
+    from the AuthLog audit trail instead of a separate counter (lean, DRY)."""
+    normalized_email = email.lower()
+    waits = [
+        wait
+        for wait in (
+            _retry_after_seconds(
+                db,
+                normalized_email,
+                ip_address,
+                max_attempts=MAX_LOGIN_ATTEMPTS,
+                window_seconds=LOGIN_THROTTLE_WINDOW_SECONDS,
+            ),
+            _retry_after_seconds(
+                db,
+                normalized_email,
+                None,
+                max_attempts=MAX_LOGIN_ATTEMPTS_PER_ACCOUNT,
+                window_seconds=ACCOUNT_THROTTLE_WINDOW_SECONDS,
+            ),
+        )
+        if wait is not None
+    ]
+    return max(waits, default=None)
+
+
+@cache
+def _unmatchable_password_hash() -> str:
+    return get_password_hash(secrets.token_urlsafe(16))
 
 
 def authenticate_user(
     db: Session, email: str, password: str
 ) -> tuple[User | None, AuthFailureReason | Literal["ok"]]:
-    """Case-sensitive email match (no case-insensitive collation on
-    `users.email`) -- deliberately NOT lowercased here, unlike the throttle
-    key above."""
+    """Emails are stored and compared lower-case. An unknown account or one
+    without a local password still pays for one bcrypt verification, so the
+    response time does not reveal whether the address is registered."""
     result = db.execute(
         select(User)
         .options(selectinload(User.roles))
-        .where(User.email == email, User.deleted_at.is_(None))
+        .where(User.email == email.lower(), User.deleted_at.is_(None))
     )
     user = result.scalar_one_or_none()
 
-    if user is None:
-        return None, "unknown_email"
-    if not user.auth_password or not verify_password(password, user.auth_password):
+    if user is None or not user.auth_password:
+        verify_password(password, _unmatchable_password_hash())
+        return None, "unknown_email" if user is None else "wrong_password"
+    if not verify_password(password, user.auth_password):
         return None, "wrong_password"
     if user.auth_locked:
         return None, "account_locked"
@@ -161,8 +216,7 @@ def create_user_session(db: Session, user: User) -> tuple[str, str, str]:
     db.add(
         PersonalAccessToken(
             user_id=user.id,
-            name="session",
-            token=session_id,
+            jti=session_id,
             refresh_token_hash=hash_refresh_secret(refresh_secret),
             last_used_at=now,
         )
@@ -189,8 +243,13 @@ def _invalidate_session(
 def refresh_session(
     db: Session, session_id: str, refresh_secret: str
 ) -> tuple[str, str]:
+    # The row stays locked until the rotation is committed: a second refresh
+    # with the same cookie waits here and then fails the secret check, instead
+    # of both passing it and the loser being logged out as token reuse.
     result = db.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == session_id)
+        select(PersonalAccessToken)
+        .where(PersonalAccessToken.jti == session_id)
+        .with_for_update()
     )
     session = result.scalar_one_or_none()
     if session is None:
@@ -243,7 +302,7 @@ def logout_user(db: Session, token: str) -> None:
         return
 
     result = db.execute(
-        select(PersonalAccessToken).where(PersonalAccessToken.token == token_id)
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == token_id)
     )
     session = result.scalar_one_or_none()
     if session is None:
@@ -263,55 +322,60 @@ def logout_user(db: Session, token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-class RegistrationConflictError(DomainValidationError):
-    """Field-level conflicts (email or name-combo already taken), surfaced
-    to the router as a 422 in the same {"detail": [...]} shape FastAPI's
-    own validation errors use."""
+class RegistrationConflict(Enum):
+    """Why a registration created no account. The client never learns which
+    one it was (that would tell an anonymous visitor who is a member): the
+    router answers every outcome alike and tells the owner of the address by
+    mail instead."""
+
+    # An active account already uses the address.
+    ACCOUNT_EXISTS = "account_exists"
+    # The name is taken, or the address belongs to a deleted account: the
+    # disposition has to sort it out.
+    ENTRY_EXISTS = "entry_exists"
 
 
-def check_registration_conflicts(
+def find_registration_conflict(
     db: Session, *, surname: str, givenname: str, email: str
-) -> None:
+) -> RegistrationConflict | None:
     """Case-insensitive duplicate check, including soft-deleted users (User.deleted_at
     is deliberately NOT filtered out), so a deleted user's name/email can't be silently
     reused for a new registration."""
-    errors: list[FieldError] = []
+    email_owner = db.execute(
+        select(User.deleted_at).where(func.lower(User.email) == email.lower())
+    ).first()
+    if email_owner is not None and email_owner.deleted_at is None:
+        return RegistrationConflict.ACCOUNT_EXISTS
+    if email_owner is not None:
+        return RegistrationConflict.ENTRY_EXISTS
 
     name_taken = db.execute(
         select(User.id).where(
-            func.lower(User.surname) == surname.lower(),
+            # Compared in the stored (normalized) form: "ß" becomes "SS".
+            func.lower(User.surname) == normalize_surname(surname).lower(),
             func.lower(User.givenname) == givenname.lower(),
         )
     ).first()
-    if name_taken is not None:
-        msg = "Die Kombination von Vor- und Nachname ist vergeben."
-        errors.append(FieldError("givenname", msg))
-        errors.append(FieldError("surname", msg))
-
-    email_taken = db.execute(
-        select(User.id).where(func.lower(User.email) == email.lower())
-    ).first()
-    if email_taken is not None:
-        msg = "Die E-Mail-Adresse wird bereits für ein bestehendes Konto verwendet."
-        errors.append(FieldError("email", msg))
-
-    if errors:
-        raise RegistrationConflictError(errors)
+    return RegistrationConflict.ENTRY_EXISTS if name_taken is not None else None
 
 
-def register_user(db: Session, data: RegisterRequest) -> User:
-    """Persists the new User row. Auto-login is the router's job via
-    create_user_session(), not this function's."""
-    check_registration_conflicts(
+def register_user(db: Session, data: RegisterRequest) -> User | RegistrationConflict:
+    """Persists the new User row, or returns the conflict that prevented it.
+    The password is hashed before the conflict check, so every outcome pays
+    for one bcrypt hash and the response time does not tell the cases apart."""
+    password_hash = get_password_hash(data.password)
+    conflict = find_registration_conflict(
         db, surname=data.surname, givenname=data.givenname, email=data.email
     )
+    if conflict is not None:
+        return conflict
 
     user = User(
         surname=normalize_surname(data.surname),
         givenname=normalize_givenname(data.givenname),
         email=data.email.lower(),
         phone=data.phone,
-        auth_password=get_password_hash(data.password),
+        auth_password=password_hash,
     )
     db.add(user)
     db.commit()
@@ -342,6 +406,14 @@ def build_verification_email_url(user: User) -> str:
     return f"{base_url}?{urlencode({'token': token})}"
 
 
+class VerificationLinkAlreadyUsedError(ValueError):
+    """The verification link was already redeemed (the e-mail address is
+    verified); the router answers 400 without creating a session."""
+
+    def __init__(self) -> None:
+        super().__init__("Der Bestätigungslink wurde bereits verwendet.")
+
+
 def verify_email(db: Session, token: str) -> User:
     settings = get_settings()
     invalid_msg = "Der Bestätigungslink ist ungültig oder abgelaufen."
@@ -359,9 +431,13 @@ def verify_email(db: Session, token: str) -> User:
         # Email changed since the link was issued.
         raise ValueError(invalid_msg)
 
-    if user.email_verified_at is None:
-        user.email_verified_at = datetime.now(UTC)
-        db.commit()
+    if user.email_verified_at is not None:
+        # The link is a one-time proof of mailbox ownership. Accepting it
+        # again would let anyone who sees the mail (forwarding, shared
+        # mailbox, mail logs) obtain a fresh session until it expires.
+        raise VerificationLinkAlreadyUsedError
+    user.email_verified_at = datetime.now(UTC)
+    db.commit()
     return user
 
 
@@ -376,21 +452,24 @@ def request_password_reset(db: Session, email: str) -> str | None:
     enumeration), only queuing the actual mail when a token comes back."""
     normalized_email = email.lower()
     user = db.execute(
-        select(User).where(func.lower(User.email) == normalized_email)
+        select(User).where(
+            func.lower(User.email) == normalized_email, User.deleted_at.is_(None)
+        )
     ).scalar_one_or_none()
     if user is None:
         return None
 
-    db.execute(
-        delete(PasswordResetToken).where(PasswordResetToken.email == normalized_email)
-    )
-
     token = generate_reset_token()
-    db.add(
-        PasswordResetToken(
-            email=normalized_email,
-            token=hash_reset_token(token),
-            created_at=datetime.now(UTC),
+    hashed_token = hash_reset_token(token)
+    # One statement instead of delete-then-insert: two concurrent requests for
+    # the same address cannot both insert, and the loser must not fail with a
+    # constraint error (a 500 here would reveal that the address is registered).
+    db.execute(
+        pg_insert(PasswordResetToken)
+        .values(email=normalized_email, token=hashed_token)
+        .on_conflict_do_update(
+            index_elements=[PasswordResetToken.email],
+            set_={"token": hashed_token, "created_at": func.now()},
         )
     )
     db.commit()
@@ -423,7 +502,7 @@ def execute_password_reset(
     if reset_row is None or not verify_reset_token(token, reset_row.token):
         raise ValueError(invalid_token_msg)
 
-    created_at = ensure_tz_aware(reset_row.created_at) or datetime.now(UTC)
+    created_at = ensure_tz_aware(reset_row.created_at)
     if datetime.now(UTC) - created_at > timedelta(
         minutes=settings.password_reset_ttl_minutes
     ):
@@ -432,7 +511,9 @@ def execute_password_reset(
         raise ValueError(invalid_token_msg)
 
     user = db.execute(
-        select(User).where(func.lower(User.email) == normalized_email)
+        select(User).where(
+            func.lower(User.email) == normalized_email, User.deleted_at.is_(None)
+        )
     ).scalar_one_or_none()
     if user is None:
         msg = (
@@ -465,9 +546,69 @@ class OauthBindingNotFoundError(Exception):
     the router maps both cases to an identical 404 (no ID enumeration)."""
 
 
+_GOOGLE_ISSUERS = frozenset({"accounts.google.com", "https://accounts.google.com"})
+_GOOGLE_REQUEST_TIMEOUT_SECONDS = 5
+_GOOGLE_INVALID_TOKEN_MESSAGE = "Ungültiger oder abgelaufener Google-Token."  # noqa: S105
+
+
+class _BoundedGoogleRequest(google_requests.Request):
+    """google-auth hands every certificate download a 120 second timeout;
+    this transport caps it, so a slow or unreachable Google endpoint cannot
+    hold a request thread for two minutes."""
+
+    def __call__(
+        self,
+        url: str,
+        method: str = "GET",
+        body: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: int = _GOOGLE_REQUEST_TIMEOUT_SECONDS,
+        **kwargs: object,
+    ) -> GoogleResponse:
+        return super().__call__(  # pyright: ignore[reportUnknownMemberType]
+            url,
+            method,
+            body,
+            headers,
+            min(timeout, _GOOGLE_REQUEST_TIMEOUT_SECONDS),
+            **kwargs,
+        )
+
+
+@cache
+def _google_request() -> _BoundedGoogleRequest:
+    return _BoundedGoogleRequest()
+
+
+def _reject_implausible_google_token(credential: str, client_id: str) -> None:
+    """Offline plausibility check (algorithm, issuer, audience, expiry) before
+    the signature check, which downloads Google's certificates on every call:
+    without it any unauthenticated garbage string would cost an outbound
+    request."""
+    try:
+        header = jwt.get_unverified_header(credential)
+        claims = jwt.decode(
+            credential,
+            options={
+                "verify_signature": False,
+                "verify_exp": True,
+                "verify_aud": False,
+            },
+        )
+    except jwt.PyJWTError:
+        raise ValueError(_GOOGLE_INVALID_TOKEN_MESSAGE) from None
+    if (
+        header.get("alg") != "RS256"
+        or claims.get("iss") not in _GOOGLE_ISSUERS
+        or claims.get("aud") != client_id
+    ):
+        raise ValueError(_GOOGLE_INVALID_TOKEN_MESSAGE)
+
+
 def _verify_google_id_token(credential: str) -> JsonObject:
     settings = get_settings()
     client_id = require_setting(settings.google_client_id, "GOOGLE_CLIENT_ID")
+    _reject_implausible_google_token(credential, client_id)
     try:
         # google-auth's verify_oauth2_token() is untyped (effectively
         # returns Any) -- cast at this boundary once, then narrow each
@@ -475,14 +616,13 @@ def _verify_google_id_token(credential: str) -> JsonObject:
         return cast(
             "JsonObject",
             dict(
-                google_id_token.verify_oauth2_token(
-                    credential, google_requests.Request(), client_id
+                google_id_token.verify_oauth2_token(  # pyright: ignore[reportUnknownMemberType]
+                    credential, _google_request(), client_id
                 )
             ),
         )
     except ValueError:
-        msg = "Ungültiger oder abgelaufener Google-Token."
-        raise ValueError(msg) from None
+        raise ValueError(_GOOGLE_INVALID_TOKEN_MESSAGE) from None
 
 
 def _string_claim(payload: JsonObject, key: str, *, default: str | None = None) -> str:

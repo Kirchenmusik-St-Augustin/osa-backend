@@ -5,12 +5,14 @@ directly) -- it is the only path that keeps the lru_cache and its per-test
 reset fixture (see tests/conftest.py) in sync.
 
 Tier 1 (boot-critical, validated in _validate_tier1 below): APP_ENVIRONMENT,
-CORS_ORIGINS, DATABASE_URL, SECRET_KEY.
+CORS_ORIGINS, DATABASE_URL, SECRET_KEY. _validate_values then refuses a
+wildcard CORS origin, an unknown APP_TIMEZONE and, on qa and production, a
+missing VALKEY_PASSWORD.
 
-Tier 2 (optional, defaults applied, no boot-time validation): session/JWT
-lifetimes, mail sender identity, registration/mail-kill-switch tuning,
-default Performance location/conductor, Valkey connection details for the
-arq job queue -- sane defaults so a deployment that never touches these
+Tier 2 (optional, defaults applied, numeric values bounded by their Field):
+session/JWT lifetimes, mail sender identity, registration/mail-kill-switch
+tuning, default Performance location/conductor, Valkey connection details for
+the arq job queue -- sane defaults so a deployment that never touches these
 features still boots.
 
 Tier 3 (feature-required, no default -- checked at first actual use via
@@ -25,12 +27,22 @@ normal RuntimeError instead of exiting the process.
 import sys
 import uuid
 from functools import lru_cache
-from typing import NoReturn
+from typing import Literal, NoReturn
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _VALID_ENVIRONMENTS = frozenset({"development", "test", "qa", "production"})
+
+# The template value of SECRET_KEY in the example env files used to be a
+# 49-character placeholder, which passes the length check: a copied template
+# must never boot with a publicly known signing key.
+_TEMPLATE_PLACEHOLDER_MARKER = "changeme"
+
+# Stages whose Valkey sidecar always runs with a password: a missing
+# VALKEY_PASSWORD there is a deployment mistake, not an unauthenticated setup.
+_VALKEY_PASSWORD_REQUIRED = frozenset({"qa", "production"})
 
 
 def _fail(message: str) -> NoReturn:
@@ -40,24 +52,50 @@ def _fail(message: str) -> NoReturn:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(extra="ignore")
+    # env_ignore_empty: a blank value in an environment file behaves like an
+    # unset one everywhere (a blank SMTP_PORT would otherwise fail integer
+    # parsing, and a blank GOOGLE_CLIENT_ID or KOOFR_USER would count as set).
+    model_config = SettingsConfigDict(extra="ignore", env_ignore_empty=True)
 
     app_environment: str | None = Field(
         default=None, validation_alias="APP_ENVIRONMENT"
     )
     cors_origins: str | None = Field(default=None, validation_alias="CORS_ORIGINS")
-    database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
-    secret_key: str | None = Field(default=None, validation_alias="SECRET_KEY")
+    # Credentials are SecretStr so that repr(), logging or an error report that
+    # includes the settings object never prints them; read the value with
+    # get_secret_value() at the single place that needs it.
+    database_url: SecretStr | None = Field(
+        default=None, validation_alias="DATABASE_URL"
+    )
+    secret_key: SecretStr | None = Field(default=None, validation_alias="SECRET_KEY")
 
     # Tier 2 -- optional with defaults, no boot-time validation.
+    # No endpoint accepts uploads, so 1 MiB is far above any legitimate request.
+    max_request_body_bytes: int = Field(
+        default=1_048_576, ge=1, validation_alias="MAX_REQUEST_BODY_BYTES"
+    )
+    # SameSite attribute of the refresh cookie. The frontend and /api share one
+    # site in every deployment, where "strict" keeps the browser from attaching
+    # the cookie to any cross-site request; only a frontend and an API on
+    # different registrable domains need "none" (the origin check on /refresh
+    # stays as the second layer either way).
+    refresh_cookie_samesite: Literal["strict", "lax", "none"] = Field(
+        default="strict", validation_alias="REFRESH_COOKIE_SAMESITE"
+    )
+    # bcrypt work factor for new password hashes (stored hashes keep their
+    # own). Production never hashes below 12, whatever is configured (see
+    # app.core.security); the test suite runs at the minimum of 4.
+    bcrypt_rounds: int = Field(
+        default=12, ge=4, le=16, validation_alias="BCRYPT_ROUNDS"
+    )
     session_lifetime_minutes: int = Field(
-        default=15, validation_alias="SESSION_LIFETIME_MINUTES"
+        default=15, ge=1, le=1440, validation_alias="SESSION_LIFETIME_MINUTES"
     )
     session_idle_timeout_minutes: int = Field(
-        default=120, validation_alias="SESSION_IDLE_TIMEOUT_MINUTES"
+        default=120, ge=1, validation_alias="SESSION_IDLE_TIMEOUT_MINUTES"
     )
     refresh_token_lifetime_days: int = Field(
-        default=7, validation_alias="REFRESH_TOKEN_LIFETIME_DAYS"
+        default=7, ge=1, le=90, validation_alias="REFRESH_TOKEN_LIFETIME_DAYS"
     )
     # Single source of truth for interpreting/comparing naive wall-clock
     # columns like Performance.schedule (see
@@ -67,8 +105,8 @@ class Settings(BaseSettings):
     # change, not a code change.
     app_timezone: str = Field(default="Europe/Vienna", validation_alias="APP_TIMEZONE")
     # Bare hostname of the dedicated short-URL redirect subdomain. A real
-    # setting (not a literal) so dev ("go.hochamt.at.dev.schimpl.cc") vs.
-    # prod ("go.hochamt.at") is a config difference only -- see
+    # setting (not a literal) so a development hostname vs. the production
+    # "go.hochamt.at" is a config difference only -- see
     # app.services.shorturl_service and the dedicated go.-domain Caddy vhost
     # that actually routes traffic there.
     shorturl_domain: str = Field(
@@ -96,24 +134,27 @@ class Settings(BaseSettings):
     smtp_from_name: str = Field(
         default="Kirchenmusik St. Augustin", validation_alias="SMTP_FROM_NAME"
     )
-    # "null" (not "") mirrors the historical env convention: an explicit
-    # sentinel meaning "no SMTP auth", checked via `.lower() != "null"`.
-    smtp_user: str = Field(default="null", validation_alias="SMTP_USER")
-    smtp_password: str = Field(default="null", validation_alias="SMTP_PASSWORD")
+    # Unset (or blank, see env_ignore_empty) means the SMTP server needs no
+    # authentication; the mailer logs in only when both values are present, and
+    # _validate_values refuses a configuration that sets just one of them.
+    smtp_user: str | None = Field(default=None, validation_alias="SMTP_USER")
+    smtp_password: SecretStr | None = Field(
+        default=None, validation_alias="SMTP_PASSWORD"
+    )
     mail_disponent: str = Field(
         default="einteilung@hochamt.at", validation_alias="MAIL_DISPONENT"
     )
     mail_kill_switch_period_days: int = Field(
-        default=30, validation_alias="MAIL_KILL_SWITCH_PERIOD_DAYS"
+        default=30, ge=1, validation_alias="MAIL_KILL_SWITCH_PERIOD_DAYS"
     )
     mail_kill_switch_threshold: int = Field(
-        default=950, validation_alias="MAIL_KILL_SWITCH_THRESHOLD"
+        default=950, ge=1, validation_alias="MAIL_KILL_SWITCH_THRESHOLD"
     )
     email_verification_ttl_minutes: int = Field(
-        default=60, validation_alias="EMAIL_VERIFICATION_TTL_MINUTES"
+        default=60, ge=1, validation_alias="EMAIL_VERIFICATION_TTL_MINUTES"
     )
     password_reset_ttl_minutes: int = Field(
-        default=60, validation_alias="PASSWORD_RESET_TTL_MINUTES"
+        default=60, ge=1, validation_alias="PASSWORD_RESET_TTL_MINUTES"
     )
 
     # Tier 2 (Koofr WebDAV backup target + retention, default 4 weeks). Do
@@ -126,7 +167,7 @@ class Settings(BaseSettings):
         default="Koofr/Backups/osa-db", validation_alias="KOOFR_BACKUP_PATH"
     )
     koofr_backup_retention_days: int = Field(
-        default=28, validation_alias="KOOFR_BACKUP_RETENTION_DAYS"
+        default=28, ge=1, validation_alias="KOOFR_BACKUP_RETENTION_DAYS"
     )
     # Job-registration gate (app.worker.cron_config.build_cron_catalog()) -- two
     # independent conditions (APP_ENVIRONMENT == "production" AND this
@@ -137,17 +178,20 @@ class Settings(BaseSettings):
     backup_enabled: bool = Field(default=True, validation_alias="BACKUP_ENABLED")
     # Nighttime slot, Europe/Vienna wall-clock via Settings.app_timezone
     # (see app.worker.cron_config.build_cron_catalog()).
-    backup_hour: int = Field(default=3, validation_alias="BACKUP_HOUR")
-    backup_minute: int = Field(default=0, validation_alias="BACKUP_MINUTE")
+    backup_hour: int = Field(default=3, ge=0, le=23, validation_alias="BACKUP_HOUR")
+    backup_minute: int = Field(default=0, ge=0, le=59, validation_alias="BACKUP_MINUTE")
 
     # Tier 2 (arq/Valkey job queue) -- pod-internal only (see osa-deploy's
     # osa-backend-valkey quadlet, no PublishPort=), so 127.0.0.1 is always
     # correct in every real deployment; only the password genuinely varies
     # per stage. None means "no password" -- valid for an unauthenticated
-    # local-dev Valkey that never sets VALKEY_PASSWORD at all.
+    # local-dev Valkey that never sets VALKEY_PASSWORD at all, refused on qa
+    # and production (see _validate_tier1).
     valkey_host: str = Field(default="127.0.0.1", validation_alias="VALKEY_HOST")
-    valkey_port: int = Field(default=6379, validation_alias="VALKEY_PORT")
-    valkey_password: str | None = Field(
+    valkey_port: int = Field(
+        default=6379, ge=1, le=65535, validation_alias="VALKEY_PORT"
+    )
+    valkey_password: SecretStr | None = Field(
         default=None, validation_alias="VALKEY_PASSWORD"
     )
     valkey_database: int = Field(default=0, validation_alias="VALKEY_DATABASE")
@@ -166,7 +210,9 @@ class Settings(BaseSettings):
         default=None, validation_alias="FRONTEND_RESET_PASSWORD_URL"
     )
     koofr_user: str | None = Field(default=None, validation_alias="KOOFR_USER")
-    koofr_password: str | None = Field(default=None, validation_alias="KOOFR_PASSWORD")
+    koofr_password: SecretStr | None = Field(
+        default=None, validation_alias="KOOFR_PASSWORD"
+    )
 
     @model_validator(mode="after")
     def _validate_tier1(self) -> Settings:
@@ -181,8 +227,34 @@ class Settings(BaseSettings):
             _fail("DATABASE_URL is not set.")
         if not self.secret_key:
             _fail("SECRET_KEY is not set.")
-        if len(self.secret_key) < 32:
+        secret_key = self.secret_key.get_secret_value()
+        if len(secret_key) < 32:
             _fail("SECRET_KEY must be at least 32 characters long.")
+        if _TEMPLATE_PLACEHOLDER_MARKER in secret_key.lower():
+            _fail("SECRET_KEY still contains the template placeholder.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_values(self) -> Settings:
+        if "*" in self.cors_origins_list:
+            _fail(
+                "CORS_ORIGINS must list explicit origins: a wildcard combined "
+                "with credentials makes the CORS middleware reflect any origin."
+            )
+        try:
+            ZoneInfo(self.app_timezone)
+        except ZoneInfoNotFoundError, ValueError:
+            _fail(f"APP_TIMEZONE='{self.app_timezone}' is not a known IANA zone.")
+        if (
+            self.app_environment in _VALKEY_PASSWORD_REQUIRED
+            and not self.valkey_password
+        ):
+            _fail("VALKEY_PASSWORD is required on qa and production.")
+        if (self.smtp_user is None) != (self.smtp_password is None):
+            _fail(
+                "SMTP_USER and SMTP_PASSWORD must be set together or both left "
+                "unset: a single one would silently send without authentication."
+            )
         return self
 
     @property

@@ -25,6 +25,11 @@ system for the church musicians of Kirchenmusik St. Augustin.
   `~/.config/containers/systemd/osa/osa-backend/` on the dev host)
 - Python dev dependencies are installed inside the container
   (`requirements-dev.txt`)
+- Both lock files (`requirements.lock`, `requirements-dev.lock`) carry the
+  hashes of every release file, and the image build and the pipeline install
+  them with hash checking. Regenerate them with the command in their header
+  (it includes `--generate-hashes`); a lock without hashes fails the tests
+  and the build.
 
 ### After cloning
 
@@ -44,7 +49,9 @@ podman exec osa-backend pytest --tb=short -q
 
 The test suite runs against a dedicated PostgreSQL database
 (`TEST_DATABASE_URL`, falling back to `DATABASE_URL`), schema built from
-the real Alembic migrations — never against the production database. See
+the real Alembic migrations — never against the production database. The
+suite refuses to start unless that database is local (`localhost`,
+`127.0.0.1` or `::1`) and named `osa_test` or `test`. See
 `tests/conftest.py`'s module docstring for the full isolation model
 (per-test transaction + savepoint).
 
@@ -78,6 +85,13 @@ generate a new migration after changing a model:
 ```bash
 podman exec osa-backend alembic revision --autogenerate -m "describe the change"
 ```
+
+`alembic` takes `DATABASE_URL` from the application settings, so it needs the
+same boot-critical variables as the app (`APP_ENVIRONMENT`, `CORS_ORIGINS`,
+`SECRET_KEY`); the container and the pipeline provide them. `alembic check`
+(also run by the pipeline after `alembic upgrade head`) fails when a model
+and the migrated schema have drifted apart, for example an index that a
+migration created but no model declares.
 
 Always review the generated migration before committing it — autogenerate
 can miss things Alembic doesn't detect on its own (renamed columns,
@@ -117,6 +131,13 @@ render, and `require_setting()` (see `app/core/config.py`) only raises if
 `/auth/google/callback`/`/auth/google/link` are somehow called anyway,
 never at boot.
 
+Two Tier 2 variables change security behaviour: `BCRYPT_ROUNDS` (work factor
+of new password hashes, default 12; production never hashes below 12, the test
+suite sets 4) and `REFRESH_COOKIE_SAMESITE` (`strict` by default, also
+`lax` or `none`; use `none` only when the frontend and the API are served from
+different registrable domains, the origin check on `/auth/refresh` applies
+either way).
+
 ## Scheduler
 
 Background jobs run in a dedicated arq worker container
@@ -135,7 +156,7 @@ can never drift apart.
 | `purge_stale_booking_requests` | hourly | all | Deletes stale open booking requests for past performances. |
 | `notify_upcoming_booking_status` | daily 05:00 | `production` only | Sends combined booking-status change mails. |
 | `purge_expired_password_reset_tokens` | weekly, Sun 02:00 | `production` only | Sweeps abandoned password-reset tokens. |
-| `purge_old_request_logs` | daily 23:00 | `production` only | Deletes request-log rows older than 40 days. |
+| `purge_old_request_logs` | daily 23:00 | `production` only | Deletes request-log rows older than 40 days and the user agents no log refers to, auth logs and sent mails older than a year, and sessions past their lifetime or idle for too long. |
 | `backup_koofr` | daily, `BACKUP_HOUR`:`BACKUP_MINUTE` (default 03:00, `APP_TIMEZONE`) | `production` only (+ `BACKUP_ENABLED`) | `pg_dump` snapshot → Koofr WebDAV upload, then deletes backups older than `KOOFR_BACKUP_RETENTION_DAYS`. |
 | `downsync` | daily, one hour after `backup_koofr` (`BACKUP_HOUR + 1`:`BACKUP_MINUTE`) | non-`production` only | Restores this stage's local database from the latest production backup. |
 
@@ -162,10 +183,13 @@ run of one of this worker's own cron jobs, `[triggered]` for any job
 fired on demand via `enqueue_job()` (registration/verification/
 password-reset/notification mails). The manual "Trigger backup now" /
 "Trigger downsync now" admin actions (`POST
-/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) call
-`run_backup()`/`run_restore()` directly and synchronously, bypassing
-`enqueue_job()` entirely — they never go through arq at all, so they
-never appear in the `arq.worker` log, tagged or not.
+/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) only
+queue a job for the worker and answer `202 Accepted`; the web process
+never runs `pg_dump`/`pg_restore` itself. They are queued under the id of
+the scheduled job (`backup_koofr`, `downsync`), so a trigger is dropped
+while that job is still queued or running, and the outcome appears as the
+job's last run on the scheduler page and as a `[triggered]` line in the
+`arq.worker` log.
 
 ## Scripts
 
@@ -185,9 +209,24 @@ podman exec -it osa-backend python scripts/restore_db.py --force
 ```
 
 `restore_db.py` refuses to run under `APP_ENVIRONMENT=production` without
-`--force` — a restore overwrites the live database. See
+`--force`, because a restore overwrites the live database. Before it starts, the
+script names the target database and the backup and asks for the database
+name to be typed; `--yes` skips that question for unattended use. See
 [`osa-deploy`'s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy) for the full disaster
 recovery runbook.
+
+## Reporting a vulnerability
+
+Please do not open a public issue for a security problem. Report it
+privately instead:
+
+- through GitHub's private vulnerability reporting: the "Security and
+  quality" tab of this repository, then "Report a vulnerability", or
+- by e-mail to einteilung@hochamt.at.
+
+Please include the affected version or commit, the steps to reproduce and
+the impact you expect. We answer as soon as possible and keep you informed
+while the problem is fixed.
 
 ## Branching
 
@@ -244,6 +283,11 @@ Besetzungssystem für die Kirchenmusiker von Kirchenmusik St. Augustin.
   `~/.config/containers/systemd/osa/osa-backend/` auf der Dev-Umgebung)
 - Die Python-Dev-Abhängigkeiten sind im Container bereits installiert
   (`requirements-dev.txt`)
+- Beide Lock-Dateien (`requirements.lock`, `requirements-dev.lock`) enthalten
+  die Hashes jeder Release-Datei, Image-Build und Pipeline installieren sie mit
+  Hash-Prüfung. Neu erzeugen mit dem Befehl in ihrem Kopf (er enthält
+  `--generate-hashes`); eine Lock-Datei ohne Hashes lässt Tests und Build
+  scheitern.
 
 ### Nach dem Klonen
 
@@ -264,7 +308,8 @@ podman exec osa-backend pytest --tb=short -q
 Die Testsuite läuft gegen eine dedizierte PostgreSQL-Datenbank
 (`TEST_DATABASE_URL`, fällt auf `DATABASE_URL` zurück), Schema kommt aus
 den echten Alembic-Migrationen — niemals gegen die Produktions-Datenbank.
-Volles Isolationsmodell (Transaktion+Savepoint pro Test) siehe
+Die Suite startet nur, wenn diese Datenbank lokal liegt (`localhost`,
+`127.0.0.1` oder `::1`) und `osa_test` oder `test` heißt. Volles Isolationsmodell (Transaktion+Savepoint pro Test) siehe
 `tests/conftest.py`s Modul-Docstring.
 
 Coverage-Erhebung kostet spürbar mehr Zeit (`coverage.py`- +
@@ -298,6 +343,13 @@ nötig. Neue Migration nach einer Modell-Änderung erzeugen:
 ```bash
 podman exec osa-backend alembic revision --autogenerate -m "Änderung beschreiben"
 ```
+
+`alembic` bezieht `DATABASE_URL` aus den Anwendungs-Settings und braucht daher
+dieselben boot-kritischen Variablen wie die App (`APP_ENVIRONMENT`,
+`CORS_ORIGINS`, `SECRET_KEY`); Container und Pipeline stellen sie bereit.
+`alembic check` (läuft in der Pipeline nach `alembic upgrade head`) schlägt
+fehl, wenn Modell und migriertes Schema auseinanderlaufen, zum Beispiel bei
+einem Index, den eine Migration angelegt hat, den aber kein Modell deklariert.
 
 Die generierte Migration immer vor dem Committen durchlesen — Autogenerate
 erkennt nicht alles zuverlässig selbst (umbenannte Spalten, manche
@@ -340,6 +392,13 @@ vorhanden: der Button im Frontend rendert nicht, und `require_setting()`
 `/auth/google/callback`/`/auth/google/link` trotzdem irgendwie aufgerufen
 werden — nie beim Boot.
 
+Zwei Variablen der Stufe 2 ändern das Sicherheitsverhalten: `BCRYPT_ROUNDS`
+(Work-Faktor neuer Passwort-Hashes, Default 12; Production hasht nie unter
+12, die Testsuite setzt 4) und `REFRESH_COOKIE_SAMESITE` (Default `strict`,
+außerdem `lax` oder `none`; `none` nur, wenn Frontend und API auf
+verschiedenen registrierbaren Domains liegen, die Origin-Prüfung auf
+`/auth/refresh` gilt in jedem Fall).
+
 ## Scheduler
 
 Hintergrund-Jobs laufen in einem dedizierten arq-Worker-Container
@@ -358,7 +417,7 @@ definiert, geteilt von der tatsächlichen arq-Registrierung
 | `purge_stale_booking_requests` | stündlich | alle | Löscht veraltete offene Buchungsanfragen zu vergangenen Aufführungen. |
 | `notify_upcoming_booking_status` | täglich 05:00 | nur `production` | Versendet gebündelte Buchungsstatus-Änderungsmails. |
 | `purge_expired_password_reset_tokens` | wöchentlich, So 02:00 | nur `production` | Räumt verwaiste Passwort-Reset-Tokens auf. |
-| `purge_old_request_logs` | täglich 23:00 | nur `production` | Löscht Request-Log-Zeilen älter als 40 Tage. |
+| `purge_old_request_logs` | täglich 23:00 | nur `production` | Löscht Request-Log-Zeilen älter als 40 Tage und die User-Agents, auf die kein Log mehr verweist, Auth-Logs und gesendete Mails älter als ein Jahr sowie Sessions, die ihre Lebensdauer überschritten haben oder zu lange ungenutzt waren. |
 | `backup_koofr` | täglich, `BACKUP_HOUR`:`BACKUP_MINUTE` (Default 03:00, `APP_TIMEZONE`) | nur `production` (+ `BACKUP_ENABLED`) | `pg_dump`-Snapshot → Koofr-WebDAV-Upload, löscht danach Backups älter als `KOOFR_BACKUP_RETENTION_DAYS`. |
 | `downsync` | täglich, eine Stunde nach `backup_koofr` (`BACKUP_HOUR + 1`:`BACKUP_MINUTE`) | nur außerhalb `production` | Ersetzt die lokale Datenbank dieser Stage durch das letzte Production-Backup. |
 
@@ -387,10 +446,14 @@ eigenen Cron-Jobs dieses Workers, `[triggered]` für jeden on-demand per
 `enqueue_job()` ausgelösten Job (Registrierungs-/Verifizierungs-/
 Passwort-Reset-/Benachrichtigungsmails). Die manuellen Admin-Aktionen
 „Backup jetzt auslösen“ / „Downsync jetzt auslösen“ (`POST
-/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) rufen
-`run_backup()`/`run_restore()` direkt und synchron auf, ohne
-`enqueue_job()` — sie laufen komplett an arq vorbei und erscheinen daher
-nie im `arq.worker`-Log, weder getaggt noch ungetaggt.
+/administrator/scheduler/backup/trigger`, `.../downsync/trigger`) stellen
+nur einen Job für den Worker in die Warteschlange und antworten mit
+`202 Accepted`; der Web-Prozess führt `pg_dump`/`pg_restore` nie selbst
+aus. Sie laufen unter der ID des geplanten Jobs (`backup_koofr`,
+`downsync`), ein Auslöser wird also verworfen, solange dieser Job noch in
+der Warteschlange liegt oder läuft; das Ergebnis erscheint als letzter
+Lauf des Jobs auf der Scheduler-Seite und als `[triggered]`-Zeile im
+`arq.worker`-Log.
 
 ## Skripte
 
@@ -410,9 +473,24 @@ podman exec -it osa-backend python scripts/restore_db.py --force
 ```
 
 `restore_db.py` verweigert sich unter `APP_ENVIRONMENT=production` ohne
-`--force` — ein Restore überschreibt die Live-Datenbank. Das vollständige
-Disaster-Recovery-Runbook steht in
+`--force`, denn ein Restore überschreibt die Live-Datenbank. Vor dem Start nennt
+das Skript die Ziel-Datenbank und das Backup und verlangt, dass der Name der
+Datenbank eingetippt wird; `--yes` überspringt diese Rückfrage für den
+unbeaufsichtigten Betrieb. Das vollständige Disaster-Recovery-Runbook steht in
 [`osa-deploy`s README](https://github.com/Kirchenmusik-St-Augustin/osa-deploy).
+
+## Sicherheitslücke melden
+
+Bitte kein öffentliches Issue für ein Sicherheitsproblem eröffnen, sondern
+es privat melden:
+
+- über die private Schwachstellenmeldung von GitHub: Reiter "Security and
+  quality" dieses Repositorys, dann "Report a vulnerability", oder
+- per E-Mail an einteilung@hochamt.at.
+
+Bitte die betroffene Version oder den Commit, die Schritte zur
+Reproduktion und die erwartete Auswirkung angeben. Wir antworten so
+schnell wie möglich und halten dich über die Behebung auf dem Laufenden.
 
 ## Branching
 

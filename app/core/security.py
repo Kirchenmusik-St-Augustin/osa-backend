@@ -4,25 +4,28 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import bcrypt
 import jwt
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from app.core.config import get_settings
+from app.core.config import get_settings, require_setting
 
 logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 
-# Settings._validate_tier1 already exits the process if secret_key is unset,
-# so by the time get_settings() returns, it is guaranteed non-None.
-SECRET_KEY = cast("str", _settings.secret_key)
+# Settings._validate_tier1 already exits the process if secret_key is unset;
+# require_setting() only narrows the type for the checker.
+SECRET_KEY = require_setting(_settings.secret_key, "SECRET_KEY").get_secret_value()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = _settings.session_lifetime_minutes
 SESSION_IDLE_TIMEOUT_MINUTES = _settings.session_idle_timeout_minutes
 REFRESH_TOKEN_LIFETIME_DAYS = _settings.refresh_token_lifetime_days
+
+
+# bcrypt hashes at most 72 bytes of input; python-bcrypt raises for more.
+_BCRYPT_MAX_PASSWORD_BYTES = 72
 
 
 def verify_password(plain_password: str, hashed_password: str | None) -> bool:
@@ -31,23 +34,43 @@ def verify_password(plain_password: str, hashed_password: str | None) -> bool:
     Both prefixes denote the exact same algorithm revision for any password
     that doesn't hit the historical 8-bit-vs-7-bit-high-bit edge case, so
     normalizing the prefix before verifying is safe and lets every user with
-    a `$2y$` hash log in unchanged."""
+    a `$2y$` hash log in unchanged.
+
+    A password that bcrypt cannot hash (over 72 bytes, or not encodable) can
+    never match a stored hash, so it is refused up front without logging:
+    the login form has no length limit, and every such request would
+    otherwise write a stack trace."""
+    if not hashed_password:
+        return False
     try:
-        if not hashed_password:
-            return False
-        if hashed_password.startswith("$2y$"):
-            hashed_password = hashed_password.replace("$2y$", "$2b$", 1)
         password_bytes = plain_password.encode("utf-8")
-        hash_bytes = hashed_password.encode("utf-8")
-        return bcrypt.checkpw(password_bytes, hash_bytes)
+    except UnicodeEncodeError:
+        return False
+    if len(password_bytes) > _BCRYPT_MAX_PASSWORD_BYTES:
+        return False
+    if hashed_password.startswith("$2y$"):
+        hashed_password = hashed_password.replace("$2y$", "$2b$", 1)
+    try:
+        return bcrypt.checkpw(password_bytes, hashed_password.encode("utf-8"))
     except ValueError:
         logger.exception("Bcrypt verification error")
         return False
 
 
+_MIN_PRODUCTION_BCRYPT_ROUNDS = 12
+
+
+def _bcrypt_rounds() -> int:
+    """Production never hashes below the minimum, so a wrong value in an
+    environment file cannot weaken real hashes."""
+    if _settings.app_environment == "production":
+        return max(_settings.bcrypt_rounds, _MIN_PRODUCTION_BCRYPT_ROUNDS)
+    return _settings.bcrypt_rounds
+
+
 def get_password_hash(password: str) -> str:
     password_bytes = password.encode("utf-8")
-    salt = bcrypt.gensalt(rounds=12)
+    salt = bcrypt.gensalt(rounds=_bcrypt_rounds())
     return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 
@@ -121,8 +144,14 @@ def parse_refresh_cookie(cookie_value: str) -> tuple[str, str]:
 
 
 _EMAIL_VERIFICATION_SALT = "email-verification"
+# The access tokens are signed with SECRET_KEY itself, so the verification
+# links use a key derived per purpose: leaking one signature scheme does not
+# expose the other.
+_email_verification_key = hashlib.sha256(
+    b"email-verification:" + SECRET_KEY.encode()
+).hexdigest()
 _email_verification_serializer = URLSafeTimedSerializer(
-    SECRET_KEY, salt=_EMAIL_VERIFICATION_SALT
+    _email_verification_key, salt=_EMAIL_VERIFICATION_SALT
 )
 
 

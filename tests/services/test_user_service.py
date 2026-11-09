@@ -14,11 +14,13 @@ from app.db.models.location import Location
 from app.db.models.oauth2_binding import Oauth2Binding
 from app.db.models.ordinariumwork import Ordinariumwork
 from app.db.models.performance import Performance
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.role import Role
 from app.db.models.user import User
 from app.db.models.voice import Voice
 from app.schemas.user import UserRequest
-from app.services import user_position_service, user_service
+from app.services import auth_service, user_service
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -166,6 +168,26 @@ class TestSearchUsers:
     def test_empty_query_returns_no_results(self, db_session: Session):
         assert user_service.search_users(db_session, "   ") == []
 
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, make_user, wildcard: str
+    ):
+        make_user()
+
+        assert user_service.search_users(db_session, wildcard) == []
+
+    def test_an_underscore_finds_a_name_that_contains_one(
+        self, db_session: Session, make_user
+    ):
+        marker = _unique("Zwe_tschke")
+        user = make_user()
+        user.surname = marker
+        db_session.commit()
+
+        results = user_service.search_users(db_session, "we_t")
+
+        assert [u.id for u in results] == [user.id]
+
     def test_excludes_soft_deleted_users(self, db_session: Session, make_user):
         marker = _unique("Geloescht")
         user = make_user()
@@ -201,13 +223,13 @@ class TestGetUser:
         second.order = 0
         db_session.commit()
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
             position_id=first.id,
         )
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
@@ -226,7 +248,7 @@ class TestGetUser:
         already-assigned user's position vanish or break."""
         instrument = _make_instrument(db_session)
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
@@ -276,7 +298,7 @@ class TestDeletable:
         # Instrument/Voice/Choirjob qualifications never block delete.
         instrument = _make_instrument(db_session)
         user = make_user()
-        user_position_service.create_user_position(
+        create_user_position(
             db_session,
             user_id=user.id,
             position_type="instruments",
@@ -358,6 +380,33 @@ class TestCreateUser:
         )
         assert response.surname == surname.upper()
         assert response.givenname == "Max"
+
+    def test_email_is_stored_in_lower_case(self, db_session: Session, make_user):
+        admin = make_user(administrator=True)
+        response = user_service.create_user(
+            db_session, _request(email=f"{_unique('Mixed')}@Example.AT"), admin
+        )
+        assert response.email == response.email.lower()
+        assert response.email.endswith("@example.at")
+
+    def test_update_stores_the_email_in_lower_case(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        created = user_service.create_user(
+            db_session, _request(email=f"{_unique('first')}@example.at"), admin
+        )
+        updated = user_service.update_user(
+            db_session,
+            created.id,
+            _request(
+                surname=created.surname,
+                givenname=created.givenname,
+                email=f"{_unique('Second')}@Example.AT",
+            ),
+            admin,
+        )
+        assert updated.email == updated.email.lower()
 
     def test_email_is_optional(self, db_session: Session, make_user):
         admin = make_user(administrator=True)
@@ -498,6 +547,119 @@ class TestUpdateUser:
         )
         assert response.email_verified_at is not None
 
+    def _role_holder(self, make_user):
+        return make_user(
+            email=f"{_unique('holder')}@example.com", roles=[_unique("billing")]
+        )
+
+    def _session_ids(self, db_session: Session, user) -> set[str]:
+        return {
+            row.jti
+            for row in db_session.query(PersonalAccessToken)
+            .filter(PersonalAccessToken.user_id == user.id)
+            .all()
+        }
+
+    def test_disponent_cannot_change_the_email_of_an_account_with_roles(
+        self, db_session: Session, make_user
+    ):
+        disponent = make_user(roles=["disponent"])
+        holder = self._role_holder(make_user)
+
+        with pytest.raises(user_service.UserValidationError) as exc_info:
+            user_service.update_user(
+                db_session,
+                holder.id,
+                _request(email=f"{_unique('mine')}@example.com"),
+                disponent,
+            )
+
+        assert exc_info.value.errors == [
+            (
+                "email",
+                (
+                    "Die E-Mail-Adresse eines Kontos mit Rollen darf nur ein "
+                    "Administrator ändern."
+                ),
+            )
+        ]
+
+    def test_disponent_can_change_the_email_of_an_ordinary_member(
+        self, db_session: Session, make_user
+    ):
+        disponent = make_user(roles=["disponent"])
+        member = make_user(email=f"{_unique('member')}@example.com")
+        new_email = f"{_unique('new')}@example.com"
+
+        response = user_service.update_user(
+            db_session, member.id, _request(email=new_email), disponent
+        )
+
+        assert response.email == new_email
+
+    def test_disponent_can_edit_other_fields_of_an_account_with_roles(
+        self, db_session: Session, make_user
+    ):
+        disponent = make_user(roles=["disponent"])
+        holder = self._role_holder(make_user)
+
+        response = user_service.update_user(
+            db_session,
+            holder.id,
+            _request(email=holder.email, phone="+43 660 1234567"),
+            disponent,
+        )
+
+        assert response.phone == "+43 660 1234567"
+        assert response.email == holder.email
+
+    def test_administrator_can_change_the_email_of_an_account_with_roles(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        holder = self._role_holder(make_user)
+        new_email = f"{_unique('new')}@example.com"
+
+        response = user_service.update_user(
+            db_session, holder.id, _request(email=new_email), admin
+        )
+
+        assert response.email == new_email
+
+    def test_changing_the_email_ends_every_session_of_the_account(
+        self, db_session: Session, make_user
+    ):
+        admin = make_user(administrator=True)
+        user = make_user(email=f"{_unique('old')}@example.com")
+        bystander = make_user()
+        auth_service.create_user_session(db_session, user)
+        auth_service.create_user_session(db_session, user)
+        _token, bystander_session, _secret = auth_service.create_user_session(
+            db_session, bystander
+        )
+
+        user_service.update_user(
+            db_session,
+            user.id,
+            _request(email=f"{_unique('new')}@example.com"),
+            admin,
+        )
+
+        assert self._session_ids(db_session, user) == set()
+        assert self._session_ids(db_session, bystander) == {bystander_session}
+
+    def test_sessions_stay_when_the_email_is_kept(self, db_session: Session, make_user):
+        admin = make_user(administrator=True)
+        email = f"{_unique('same')}@example.com"
+        user = make_user(email=email)
+        _token, session_id, _secret = auth_service.create_user_session(db_session, user)
+
+        user_service.update_user(
+            db_session, user.id, _request(email=email, phone="+43 660 1234567"), admin
+        )
+
+        assert self._session_ids(db_session, user) == {session_id}
+
     def test_disponent_cannot_assign_roles(self, db_session: Session, make_user):
         disponent = make_user(roles=["disponent"])
         user = make_user()
@@ -583,3 +745,13 @@ class TestDeleteUser:
         assert deleted.deleted_at is not None
         with pytest.raises(user_service.UserNotFoundError):
             user_service.get_user(db_session, user.id)
+
+
+class TestToSearchResult:
+    def test_label_is_surname_comma_givenname(self, make_user):
+        user = make_user()
+
+        result = user_service.to_search_result(user)
+
+        assert result.id == user.id
+        assert result.label == f"{user.surname}, {user.givenname}"

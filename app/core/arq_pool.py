@@ -19,6 +19,7 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
 from app.core.config import get_settings
+from app.core.job_serialization import dumps_job, loads_job
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,11 @@ def build_redis_settings() -> RedisSettings:
     dedicated worker container) -- both must resolve to the same Valkey
     instance, so the connection parameters live in exactly one place."""
     settings = get_settings()
+    password = settings.valkey_password
     return RedisSettings(
         host=settings.valkey_host,
         port=settings.valkey_port,
-        password=settings.valkey_password,
+        password=password.get_secret_value() if password else None,
         database=settings.valkey_database,
     )
 
@@ -52,7 +54,11 @@ async def get_arq_pool() -> ArqRedis:
         return _pool
     async with _pool_lock:
         if _pool is None:
-            _pool = await create_pool(build_redis_settings())
+            _pool = await create_pool(
+                build_redis_settings(),
+                job_serializer=dumps_job,
+                job_deserializer=loads_job,
+            )
             logger.info("ARQ pool created (enqueue side).")
     return _pool
 

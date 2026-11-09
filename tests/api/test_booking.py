@@ -5,10 +5,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.db.models.performance import Performance
-from app.services.user_position_service import create_user_position
+from tests.login import DEFAULT_PASSWORD, login_as
+from tests.user_positions import create_user_position
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from app.db.models.user import User
 
 
 def _unique(base: str = "Name") -> str:
@@ -17,20 +20,14 @@ def _unique(base: str = "Name") -> str:
 
 def _auth_headers(
     client, make_user, *, roles: list[str] | None = None, administrator: bool = False
-) -> dict[str, str]:
+) -> tuple[dict[str, str], User]:
     user = make_user(
-        password="correct-password",
-        roles=roles if roles is not None else ["disponent"],
-        administrator=administrator,
+        password=DEFAULT_PASSWORD, roles=roles, administrator=administrator
     )
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": "correct-password"}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}, user
+    return login_as(client, user), user
 
 
-def _make_composer(client, headers) -> int:
+def _make_composer(client, headers) -> str:
     response = client.post(
         "/artists",
         json={
@@ -47,7 +44,7 @@ def _make_composer(client, headers) -> int:
     return response.json()["id"]
 
 
-def _make_ordinariumwork(client, headers, composer_id: int) -> int:
+def _make_ordinariumwork(client, headers, composer_id: str) -> str:
     response = client.post(
         "/ordinariumworks",
         json={
@@ -63,7 +60,7 @@ def _make_ordinariumwork(client, headers, composer_id: int) -> int:
     return response.json()["id"]
 
 
-def _make_location(client, make_user) -> int:
+def _make_location(client, make_user) -> str:
     admin_headers, _user = _auth_headers(client, make_user, administrator=True)
     response = client.post(
         "/coreelements/location",
@@ -73,7 +70,7 @@ def _make_location(client, make_user) -> int:
     return response.json()["id"]
 
 
-def _make_instrument(client, make_user) -> int:
+def _make_instrument(client, make_user) -> str:
     admin_headers, _user = _auth_headers(client, make_user, administrator=True)
     response = client.post(
         "/coreelements/instrument",
@@ -84,8 +81,8 @@ def _make_instrument(client, make_user) -> int:
 
 
 def _make_performance(
-    client, make_user, headers, *, instrument_id: int, quantity: int = 1
-) -> int:
+    client, make_user, headers, *, instrument_id: str, quantity: int = 1
+) -> str:
     composer_id = _make_composer(client, headers)
     work_id = _make_ordinariumwork(client, headers, composer_id)
     location_id = _make_location(client, make_user)
@@ -114,7 +111,7 @@ def _make_performance(
     return response.json()["id"]
 
 
-def _move_to_past(db_session: Session, performance_id: int) -> None:
+def _move_to_past(db_session: Session, performance_id: str) -> None:
     # Uses the test's own db_session (not an independent Session(engine))
     # so the mutation is visible to the SAME session client's requests are
     # routed through via conftest.py's override_get_db() -- a separate
@@ -122,34 +119,34 @@ def _move_to_past(db_session: Session, performance_id: int) -> None:
     # test's still-open outer transaction and never see this row at all
     # (or worse, deadlock against it, see the migration plan's M5 section).
     performance = db_session.execute(
-        select(Performance).where(Performance.id == performance_id)
+        select(Performance).where(Performance.id == uuid.UUID(performance_id))
     ).scalar_one()
     performance.schedule = datetime.now(UTC) - timedelta(days=1)
     db_session.commit()
 
 
-def _qualify(db_session: Session, user_id: int, instrument_id: int) -> None:
+def _qualify(db_session: Session, user_id: uuid.UUID, instrument_id: str) -> None:
     create_user_position(
         db_session,
         user_id=user_id,
         position_type="instruments",
-        position_id=instrument_id,
+        position_id=uuid.UUID(instrument_id),
     )
 
 
 class TestPermissionGuards:
     def test_cast_requires_authentication(self, client):
-        response = client.get("/performances/1/cast")
+        response = client.get(f"/performances/{uuid.uuid4()}/cast")
         assert response.status_code == 401
 
     def test_cast_rejects_non_disponent(self, client, make_user):
         headers, _ = _auth_headers(client, make_user, roles=["planner"])
-        response = client.get("/performances/1/cast", headers=headers)
+        response = client.get(f"/performances/{uuid.uuid4()}/cast", headers=headers)
         assert response.status_code == 403
 
     def test_billing_rejects_non_billing_role(self, client, make_user):
         headers, _ = _auth_headers(client, make_user, roles=["disponent"])
-        response = client.get("/performances/1/billing", headers=headers)
+        response = client.get(f"/performances/{uuid.uuid4()}/billing", headers=headers)
         assert response.status_code == 403
 
     def test_requests_and_bookings_accepts_planner(self, client, make_user):
@@ -356,6 +353,24 @@ class TestBillingNoPastLock:
         assert response.json()["billing"]["sum"] >= 0
 
 
+def _book(client, headers, performance_id, instrument_id, user) -> None:
+    response = client.post(
+        f"/performances/{performance_id}/cast",
+        json={
+            "cast": {
+                "instruments": [
+                    {"id": instrument_id, "cast": [{"id": str(user.id), "fee": 80}]}
+                ],
+                "voices": [],
+                "choirjobs": [],
+            },
+            "not_booked": [],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+
 class TestMessageToCast:
     def test_send_message_returns_ok_for_verified_recipient(
         self, client, make_user, db_session, fake_arq_pool
@@ -368,6 +383,8 @@ class TestMessageToCast:
         recipient = make_user()
         recipient.email_verified_at = datetime.now(UTC)
         db_session.commit()
+        _qualify(db_session, recipient.id, instrument_id)
+        _book(client, headers, performance_id, instrument_id, recipient)
 
         response = client.post(
             f"/performances/{performance_id}/message-to-cast/send",
@@ -381,6 +398,27 @@ class TestMessageToCast:
             fake_arq_pool.enqueue_job.call_args.args[0]
             == "send_user_message_email_task"
         )
+
+    def test_send_message_returns_422_for_a_user_who_is_not_booked(
+        self, client, make_user, db_session, fake_arq_pool
+    ):
+        headers, _ = _auth_headers(client, make_user, roles=["disponent"])
+        instrument_id = _make_instrument(client, make_user)
+        performance_id = _make_performance(
+            client, make_user, headers, instrument_id=instrument_id
+        )
+        outsider = make_user()
+        outsider.email_verified_at = datetime.now(UTC)
+        db_session.commit()
+
+        response = client.post(
+            f"/performances/{performance_id}/message-to-cast/send",
+            json={"recipient_ids": [str(outsider.id)], "message": "Hallo!"},
+            headers=headers,
+        )
+
+        assert response.status_code == 422
+        fake_arq_pool.enqueue_job.assert_not_called()
 
     def test_send_message_returns_422_when_no_recipient_verified(
         self, client, make_user

@@ -14,7 +14,7 @@ def normalize_givenname(value: str) -> str:
 def label_for_name(surname: str, givenname: str | None) -> str:
     """Display name as "SURNAME, Givenname" -- same format as
     artist_service.label_for(), but taking plain fields instead of an Artist
-    instance so it works for User too (booking_service needs a display name
+    instance so it works for User too (the booking services need a display name
     for both Artists (conductors) and Users (cast members))."""
     if not givenname:
         return surname

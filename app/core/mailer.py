@@ -10,21 +10,24 @@ see pyproject.toml's per-file-ignores).
 
 import logging
 import smtplib
+import ssl
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
-from jinja2 import Environment, FileSystemLoader
-from sqlalchemy import select
+from jinja2 import Environment, FileSystemLoader, Template
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import get_settings, require_setting
 from app.core.datetime_utils import local_now
 from app.db.database import SessionLocal
 from app.db.models.sent_email import SentEmail
+from app.schemas.performance import BookingStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -38,8 +41,17 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "email"
 # real mailbox (stored HTML-injection into the disponent's inbox).
 _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=True)
 
+# smtplib has no timeout by default, so a stalled relay would block a worker
+# thread until the job timeout.
+_SMTP_TIMEOUT_SECONDS = 30
 
-def _format_short_date(value: datetime) -> str:
+# Templates whose body carries a one-time link (a bearer credential until it
+# expires): the copy stored in `sent_emails` keeps everything but the link.
+_LINK_BEARING_TEMPLATES = frozenset({"verify-email", "password-reset"})
+_REMOVED_LINK_PLACEHOLDER = "[Link entfernt]"
+
+
+def _format_short_datetime(value: datetime) -> str:
     # Day WITHOUT leading zeros, month WITH leading zeros (unlike
     # `_format_notification_timestamp`, where neither has any) -- easy to
     # conflate. Rendered in Python rather than as a Jinja template
@@ -47,7 +59,7 @@ def _format_short_date(value: datetime) -> str:
     # globals cleanly, and every other value already reaches these templates
     # pre-formatted the same way (see e.g. send_password_reset_email's
     # `count=`).
-    return f"{value.day}. {value.month:02d}. {value.year}"
+    return f"{value.day}. {value.month:02d}. {value.year}, {value:%H:%M}"
 
 
 def _format_ymd_timestamp(now: datetime) -> str:
@@ -57,12 +69,6 @@ def _format_ymd_timestamp(now: datetime) -> str:
 def _format_notification_timestamp(now: datetime) -> str:
     # Day/month without leading zeros, unlike strftime's %d/%m.
     return f"{now.day}. {now.month}. {now.year}, {now.strftime('%H:%M')}"
-
-
-def _count_recipients(value: str | None) -> int:
-    if not value:
-        return 0
-    return len([part for part in value.split(",") if part.strip()])
 
 
 @dataclass(frozen=True)
@@ -97,11 +103,11 @@ def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
         window_start = datetime.now(UTC) - timedelta(
             days=settings.mail_kill_switch_period_days
         )
-        rows = db.execute(
-            select(SentEmail.to, SentEmail.cc, SentEmail.bcc).where(
+        total_recipients = db.execute(
+            select(func.coalesce(func.sum(SentEmail.recipient_count), 0)).where(
                 SentEmail.created_at >= window_start
             )
-        ).all()
+        ).scalar_one()
     except SQLAlchemyError:
         logger.exception("Failed to evaluate mail kill switch; treating as active.")
         return MailKillSwitchStatus(
@@ -110,12 +116,6 @@ def get_kill_switch_status(db: Session) -> MailKillSwitchStatus:
             threshold=settings.mail_kill_switch_threshold,
             sent=settings.mail_kill_switch_threshold,
         )
-    total_recipients = sum(
-        _count_recipients(row.to)
-        + _count_recipients(row.cc)
-        + _count_recipients(row.bcc)
-        for row in rows
-    )
     return MailKillSwitchStatus(
         active=total_recipients >= settings.mail_kill_switch_threshold,
         period_days=settings.mail_kill_switch_period_days,
@@ -132,19 +132,35 @@ def _build_from_header() -> tuple[str, str]:
     )
 
 
+def _login_if_configured(server: smtplib.SMTP) -> None:
+    """Authenticate only when both credentials are configured; a relay that
+    needs no authentication is configured by leaving them unset."""
+    settings = get_settings()
+    if settings.smtp_user is None or settings.smtp_password is None:
+        return
+    server.login(settings.smtp_user, settings.smtp_password.get_secret_value())
+
+
 def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
     settings = get_settings()
     smtp_host = require_setting(settings.smtp_host, "SMTP_HOST")
     smtp_port = require_setting(settings.smtp_port, "SMTP_PORT")
     from_email = settings.smtp_from_email
+    # Verify the server certificate and host name: smtplib's own default
+    # context does neither, which would let anyone on the network path read
+    # the credentials and the mail.
+    tls_context = ssl.create_default_context()
 
     if smtp_port == 465:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
-            if settings.smtp_user.lower() != "null":
-                server.login(settings.smtp_user, settings.smtp_password)
+        with smtplib.SMTP_SSL(
+            smtp_host, smtp_port, timeout=_SMTP_TIMEOUT_SECONDS, context=tls_context
+        ) as server:
+            _login_if_configured(server)
             server.sendmail(from_email, recipients, msg.as_string())
     else:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
+        with smtplib.SMTP(
+            smtp_host, smtp_port, timeout=_SMTP_TIMEOUT_SECONDS
+        ) as server:
             server.ehlo()
             if not server.has_extn("STARTTLS"):
                 msg_text = (
@@ -153,11 +169,27 @@ def _send_message(msg: MIMEMultipart, recipients: list[str]) -> None:
                     "plaintext."
                 )
                 raise RuntimeError(msg_text)
-            server.starttls()
+            server.starttls(context=tls_context)
             server.ehlo()
-            if settings.smtp_user.lower() != "null":
-                server.login(settings.smtp_user, settings.smtp_password)
+            _login_if_configured(server)
             server.sendmail(from_email, recipients, msg.as_string())
+
+
+def _storable_body(
+    template: Template,
+    html_content: str,
+    template_key: str,
+    context: dict[str, object],
+) -> str:
+    """The mail body as it is persisted in `sent_emails`. For link-bearing
+    templates the template is rendered again with a placeholder instead of
+    the one-time URL, so the log table, the admin viewer, the SQL browser and
+    the database backups never hold a usable verification or password-reset
+    link (a token at rest is a risk, which is why password_reset_tokens
+    keeps only a hash)."""
+    if template_key not in _LINK_BEARING_TEMPLATES:
+        return html_content
+    return template.render(**{**context, "url": _REMOVED_LINK_PLACEHOLDER})
 
 
 def _log_sent_email(
@@ -179,7 +211,7 @@ def _log_sent_email(
                     bcc=to_str if use_bcc else None,
                     subject=subject,
                     body=html_body,
-                    headers=template_key,
+                    template_key=template_key,
                     mailer="smtp",
                 )
             )
@@ -221,7 +253,8 @@ def _send_templated_email(
         )
         return
 
-    html_content = _jinja_env.get_template(template_name).render(**context)
+    template = _jinja_env.get_template(template_name)
+    html_content = template.render(**context)
     _from_email, from_header = _build_from_header()
 
     msg = MIMEMultipart("alternative")
@@ -238,7 +271,13 @@ def _send_templated_email(
     msg.attach(MIMEText(html_content, "html", "utf-8"))
 
     _send_message(msg, to_emails)
-    _log_sent_email(to_str, subject, html_content, template_key, use_bcc=use_bcc)
+    _log_sent_email(
+        to_str,
+        subject,
+        _storable_body(template, html_content, template_key, context),
+        template_key,
+        use_bcc=use_bcc,
+    )
 
 
 def send_verification_email(to_email: str, verify_url: str) -> None:
@@ -261,6 +300,44 @@ def send_password_reset_email(to_email: str, reset_url: str) -> None:
         "password-reset",
         url=reset_url,
         count=settings.password_reset_ttl_minutes,
+    )
+
+
+def _frontend_page_url(page: str) -> str:
+    # All frontend pages share one origin, and the verification link setting is
+    # the one every deployment configures already: the other pages are derived
+    # from it instead of adding one variable per page.
+    verify_url = require_setting(
+        get_settings().frontend_verify_email_url, "FRONTEND_VERIFY_EMAIL_URL"
+    )
+    return urljoin(verify_url, f"/{page}")
+
+
+def send_registration_account_exists_email(to_email: str) -> None:
+    """Sent instead of a verification mail when someone registers with an
+    address that already has an account."""
+    _send_templated_email(
+        [to_email],
+        "Registrierung mit bereits bekannter Adresse",
+        "registration_account_exists.html",
+        "registration-account-exists",
+        login_url=_frontend_page_url("login"),
+        forgot_password_url=_frontend_page_url("forgot-password"),
+    )
+
+
+def send_registration_entry_exists_email(
+    to_email: str, *, givenname: str, surname: str
+) -> None:
+    """Sent instead of a verification mail when the name is already taken
+    (or the address belongs to a deleted account) and no account was created."""
+    _send_templated_email(
+        [to_email],
+        "Registrierung: Name bereits vorhanden",
+        "registration_entry_exists.html",
+        "registration-entry-exists",
+        name=f"{givenname} {surname}",
+        disponent_email=get_settings().mail_disponent,
     )
 
 
@@ -301,7 +378,7 @@ class BookingStatusMailEntry:
 
 
 def _booking_status_entry_context(entry: BookingStatusMailEntry) -> dict[str, object]:
-    return {**asdict(entry), "schedule": _format_short_date(entry.schedule)}
+    return {**asdict(entry), "schedule": _format_short_datetime(entry.schedule)}
 
 
 def send_booking_status_email(
@@ -334,12 +411,23 @@ class BookingCanceledMailEntry:
     previous_status: int
     position_name: str
 
+    @property
+    def previous_status_label(self) -> str:
+        labels: dict[int, str] = {
+            BookingStatus.STANDBY: "Standby",
+            BookingStatus.BOOKED: "Gebucht",
+        }
+        return labels.get(
+            self.previous_status, f"[unbekannter Status: {self.previous_status}]"
+        )
+
 
 def send_booked_or_standby_canceled_email(
     to_emails: list[str], canceling_user_name: str, entry: BookingCanceledMailEntry
 ) -> None:
-    """Cancellation notice -- sent synchronously to every `disponent` user when someone
-    self-cancels a booking/standby (booking_service.change_user_request_status)."""
+    """Cancellation notice -- sent synchronously to every `disponent` user when
+    someone self-cancels a booking/standby
+    (booking_status_service.change_user_request_status)."""
     now = local_now()
     subject = f"Eine Buchung wurde storniert! ({_format_ymd_timestamp(now)})"
     _send_templated_email(
@@ -348,7 +436,11 @@ def send_booked_or_standby_canceled_email(
         "booked_or_standby_canceled.html",
         "booked-or-standby-canceled",
         canceling_user_name=canceling_user_name,
-        entry={**asdict(entry), "schedule": _format_short_date(entry.schedule)},
+        entry={
+            **asdict(entry),
+            "schedule": _format_short_datetime(entry.schedule),
+            "previous_status_label": entry.previous_status_label,
+        },
     )
 
 
@@ -357,7 +449,7 @@ def send_user_message_email(
 ) -> None:
     """Free-text message mail, used by both the Selfadmin/Support "message a
     contact person" feature and MessageToCast (see
-    booking_service.send_message_to_cast). Sent via Bcc (data protection):
+    message_service.send_message_to_cast). Sent via Bcc (data protection):
     `to_emails` here is a disponent-picked, potentially large group of
     musicians/singers who don't necessarily know each other and have no
     reason to see one another's address, unlike e.g. the small, fixed

@@ -8,6 +8,7 @@ from app.core.datetime_utils import local_now
 from app.db.models.location import Location
 from app.schemas.artist import ArtistRequest
 from app.schemas.ordinariumwork import OrdinariumworkRequest, OrdinariumworkSetupInput
+from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
 from app.schemas.performance import PerformanceRequest, PerformanceSetupInput
 from app.schemas.propriumwork import PropriumworkRequest
 from app.services import (
@@ -19,6 +20,9 @@ from app.services import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_ALL_ROWS = PageParams(limit=MAX_PAGE_SIZE, offset=0)
 
 
 def _unique(base: str = "Name") -> str:
@@ -53,7 +57,7 @@ class TestListComposerArtists:
             _request(surname=_unique("Conductor"), composer=False, conductor=True),
         )
 
-        results = artist_service.list_composer_artists(db_session)
+        results = artist_service.list_composer_artists(db_session, _ALL_ROWS).rows
 
         ids = [artist.id for artist in results]
         assert composer.id in ids
@@ -63,6 +67,26 @@ class TestListComposerArtists:
 class TestSearchArtists:
     def test_empty_query_returns_empty(self, db_session: Session):
         assert artist_service.search_artists(db_session, "") == []
+
+    @pytest.mark.parametrize("wildcard", ["%", "_", "\\"])
+    def test_wildcard_characters_match_only_literally(
+        self, db_session: Session, wildcard: str
+    ):
+        artist_service.create_artist(
+            db_session, _request(surname=_unique("Zzq"), givenname="Wolfgang")
+        )
+
+        assert artist_service.search_artists(db_session, wildcard) == []
+
+    def test_an_underscore_finds_a_name_that_contains_one(self, db_session: Session):
+        marker = _unique("Zz_q")
+        artist_service.create_artist(
+            db_session, _request(surname=marker, givenname="Wolfgang")
+        )
+
+        results = artist_service.search_artists(db_session, "_q-")
+
+        assert [a.surname for a in results] == [marker.upper()]
 
     def test_matches_by_surname_or_givenname(self, db_session: Session):
         marker = _unique("Zzq")
@@ -99,12 +123,29 @@ class TestCreateArtist:
 
         assert (artist.surname, artist.givenname) == ("MUSTER", "Mary Jane")
 
-    def test_rejects_short_surname(self):
-        # Now caught by ArtistRequest's own Field(min_length=3) before the
-        # service's _validate() ever runs -- the schema boundary was
-        # tightened to match the service's pre-existing 3-32 constant.
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
-            _request(surname="ab")
+    def test_rejects_a_blank_surname(self):
+        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own validation error
+            _request(surname="   ")
+
+    def test_accepts_a_surname_of_two_characters(self, db_session: Session):
+        artist = artist_service.create_artist(
+            db_session, _request(surname="li", givenname=_unique("Given"))
+        )
+
+        assert artist.surname == "LI"
+
+    def test_rejects_a_duplicate_that_differs_only_by_padding(
+        self, db_session: Session
+    ):
+        surname, givenname = _unique("Pad"), _unique("Ded")
+        artist_service.create_artist(
+            db_session, _request(surname=surname, givenname=givenname)
+        )
+
+        with pytest.raises(artist_service.ArtistValidationError):
+            artist_service.create_artist(
+                db_session, _request(surname=f" {surname} ", givenname=f"{givenname} ")
+            )
 
     def test_rejects_duplicate_surname_givenname_combination(self, db_session: Session):
         surname, givenname = _unique("Dup"), _unique("Licate")
@@ -115,6 +156,24 @@ class TestCreateArtist:
         with pytest.raises(artist_service.ArtistValidationError) as exc_info:
             artist_service.create_artist(
                 db_session, _request(surname=surname, givenname=givenname)
+            )
+
+        assert exc_info.value.errors == [
+            ("surname", "Die Kombination von Vor- und Nachname ist vergeben."),
+            ("givenname", "Die Kombination von Vor- und Nachname ist vergeben."),
+        ]
+
+    def test_a_name_with_a_sharp_s_is_recognised_as_taken(self, db_session: Session):
+        # The stored surname is "STRAUSS": comparing the typed "Strauß" against
+        # it would find nothing and end in the generic constraint error.
+        givenname = _unique("Johann")
+        artist_service.create_artist(
+            db_session, _request(surname="Strauß", givenname=givenname)
+        )
+
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
+            artist_service.create_artist(
+                db_session, _request(surname="Strauß", givenname=givenname)
             )
 
         assert exc_info.value.errors == [
@@ -136,6 +195,47 @@ class TestCreateArtist:
         )
 
         assert (artist.birthyear, artist.deathyear) == (1756, 1791)
+
+    def test_rejects_a_death_year_before_the_birth_year(self, db_session: Session):
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
+            artist_service.create_artist(
+                db_session, _request(birthyear=1850, deathyear=1750)
+            )
+
+        assert exc_info.value.errors == [
+            ("deathyear", "Das Sterbejahr darf nicht vor dem Geburtsjahr liegen.")
+        ]
+
+    def test_accepts_the_same_year_for_birth_and_death(self, db_session: Session):
+        artist = artist_service.create_artist(
+            db_session, _request(birthyear=1756, deathyear=1756)
+        )
+
+        assert (artist.birthyear, artist.deathyear) == (1756, 1756)
+
+    @pytest.mark.parametrize(("birthyear", "deathyear"), [(1850, None), (None, 1750)])
+    def test_a_single_year_is_not_compared(
+        self, db_session: Session, birthyear: int | None, deathyear: int | None
+    ):
+        artist = artist_service.create_artist(
+            db_session, _request(birthyear=birthyear, deathyear=deathyear)
+        )
+
+        assert (artist.birthyear, artist.deathyear) == (birthyear, deathyear)
+
+    def test_update_rejects_a_death_year_before_the_birth_year(
+        self, db_session: Session
+    ):
+        artist = artist_service.create_artist(
+            db_session, _request(birthyear=1756, deathyear=1791)
+        )
+
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
+            artist_service.update_artist(
+                db_session, artist.id, _request(birthyear=1800, deathyear=1791)
+            )
+
+        assert [field for field, _ in exc_info.value.errors] == ["deathyear"]
 
 
 class TestUpdateArtist:

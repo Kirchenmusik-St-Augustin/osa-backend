@@ -49,6 +49,15 @@ def job_client(pool: _Pool, handler_thread_ids: list[int]) -> TestClient:
         job_queue.enqueue(sample_job, "a@example.test", Redacted("s3cret"))
         return {"status": "ok"}
 
+    @test_app.post("/send-once")
+    def send_once(
+        job_queue: Annotated[JobQueue, Depends(get_job_queue)],
+    ) -> dict[str, str]:
+        job_queue.enqueue_once(
+            sample_job, "fixed-id", "a@example.test", Redacted("s3cret")
+        )
+        return {"status": "ok"}
+
     return TestClient(test_app)
 
 
@@ -102,3 +111,75 @@ def test_non_redis_errors_are_not_swallowed(job_client: TestClient, pool: _Pool)
 
     with pytest.raises(RuntimeError, match="programming error"):
         job_client.post("/send")
+
+
+def test_enqueue_without_a_job_id_passes_no_queue_option(
+    job_client: TestClient, pool: _Pool
+):
+    job_client.post("/send")
+
+    assert pool.enqueue_job.await_args is not None
+    assert pool.enqueue_job.await_args.kwargs == {}
+
+
+def test_enqueue_once_dispatches_the_job_under_its_fixed_id(
+    job_client: TestClient, pool: _Pool
+):
+    pool.enqueue_job.return_value = object()
+
+    response = job_client.post("/send-once")
+
+    assert response.status_code == 200
+    pool.enqueue_job.assert_awaited_once_with(
+        "sample_job", "a@example.test", Redacted("s3cret"), _job_id="fixed-id"
+    )
+
+
+def test_enqueue_once_logs_a_dropped_duplicate_without_arguments(
+    job_client: TestClient, pool: _Pool, caplog: pytest.LogCaptureFixture
+):
+    pool.enqueue_job.return_value = None
+
+    with caplog.at_level(logging.INFO, logger="app.api.job_queue"):
+        response = job_client.post("/send-once")
+
+    assert response.status_code == 200
+    assert "already queued or running" in caplog.text
+    assert "fixed-id" in caplog.text
+    assert "a@example.test" not in caplog.text
+    assert "s3cret" not in caplog.text
+
+
+def test_enqueue_once_stays_silent_when_the_job_was_queued(
+    job_client: TestClient, pool: _Pool, caplog: pytest.LogCaptureFixture
+):
+    pool.enqueue_job.return_value = object()
+
+    with caplog.at_level(logging.INFO, logger="app.api.job_queue"):
+        job_client.post("/send-once")
+
+    assert "already queued" not in caplog.text
+
+
+def test_enqueue_once_logs_a_redis_failure_and_does_not_fail_the_response(
+    job_client: TestClient, pool: _Pool, caplog: pytest.LogCaptureFixture
+):
+    pool.enqueue_job.side_effect = RedisConnectionError("valkey unreachable")
+
+    with caplog.at_level(logging.INFO, logger="app.api.job_queue"):
+        response = job_client.post("/send-once")
+
+    assert response.status_code == 200
+    assert "the job is lost" in caplog.text
+    assert "already queued" not in caplog.text
+
+
+def test_enqueue_without_a_job_id_never_reports_a_dropped_duplicate(
+    job_client: TestClient, pool: _Pool, caplog: pytest.LogCaptureFixture
+):
+    pool.enqueue_job.return_value = None
+
+    with caplog.at_level(logging.INFO, logger="app.api.job_queue"):
+        job_client.post("/send")
+
+    assert "already queued" not in caplog.text

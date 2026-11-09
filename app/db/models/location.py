@@ -1,3 +1,4 @@
+from sqlalchemy import CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -11,6 +12,9 @@ class Location(CoreelementColumns, Base):
     FieldSpec)."""
 
     __tablename__ = "locations"
+    __table_args__ = (
+        CheckConstraint("color ~ '^[0-9a-fA-F]{6}$'", name="locations_color_check"),
+    )
 
     address: Mapped[str | None]
     color: Mapped[str] = mapped_column(default="000000")

@@ -1,39 +1,40 @@
 import uuid
-from datetime import datetime
 
-from sqlalchemy import DateTime, FetchedValue, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+from app.db.models.timestamp_columns_mixin import TimestampColumns
 from app.db.uuid_pk import uuid_pk
 
 
-class Artist(Base):
-    """A composer and/or conductor. `surname`/`givenname` are nullable in
-    the schema even though app-level validation always requires them (see
-    Location.address for the same pattern). `composer`/`conductor` are
+class Artist(TimestampColumns, Base):
+    """A composer and/or conductor. `surname`/`givenname` are required;
+    the years are four-digit and a death cannot precede the birth (both
+    enforced by `artists_years_check`). `composer`/`conductor` are
     orthogonal boolean flags, not mutually exclusive (an Artist row can be
-    both, one, or neither).
-
-    `created_at`/`updated_at` are TIMESTAMPTZ: `created_at` is populated by
-    the database's own DEFAULT now(), `updated_at` by the shared
-    set_updated_at() BEFORE UPDATE trigger -- neither is assigned from
-    Python."""
+    both, one, or neither)."""
 
     __tablename__ = "artists"
-    __table_args__ = (UniqueConstraint("surname", "givenname"),)
+    __table_args__ = (
+        UniqueConstraint("surname", "givenname"),
+        CheckConstraint(
+            "(birthyear IS NULL OR birthyear BETWEEN 1000 AND 9999) "
+            "AND (deathyear IS NULL OR deathyear BETWEEN 1000 AND 9999) "
+            "AND (birthyear IS NULL OR deathyear IS NULL OR deathyear >= birthyear)",
+            name="artists_years_check",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    surname: Mapped[str | None]
-    givenname: Mapped[str | None]
+    surname: Mapped[str]
+    givenname: Mapped[str]
     birthyear: Mapped[int | None]
     deathyear: Mapped[int | None]
     description: Mapped[str | None]
-    composer: Mapped[bool] = mapped_column(default=False)
-    conductor: Mapped[bool] = mapped_column(default=False)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_onupdate=FetchedValue()
-    )
+    composer: Mapped[bool] = mapped_column(default=False, server_default=false())
+    conductor: Mapped[bool] = mapped_column(default=False, server_default=false())

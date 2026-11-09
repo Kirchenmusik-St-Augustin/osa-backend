@@ -2,11 +2,11 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
+from app.schemas.base import LenientUuid, OptionalText, StrictInputModel, WorkName
 
 
 class PropriumworkRequest(StrictInputModel):
-    name: str = Field(min_length=3, max_length=60)
+    name: WorkName
     description: OptionalText = None
     artist_id: LenientUuid
     duration: int | None = Field(default=None, ge=1, le=999)
@@ -21,8 +21,3 @@ class PropriumworkResponse(BaseModel):
     artist_name: str
     duration: int | None
     demanding: bool
-
-
-class PropriumworkSearchResult(BaseModel):
-    id: uuid.UUID
-    label: str

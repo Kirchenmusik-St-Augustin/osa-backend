@@ -5,11 +5,18 @@ from sqlalchemy import select
 from app.db.models.fee import Fee
 from app.schemas.fee import FeeRequest, FeeResponse
 from app.services.errors import DomainValidationError, FieldError, NotFoundError
+from app.services.pagination import select_page
 
 if TYPE_CHECKING:
     import uuid
 
     from sqlalchemy.orm import Session
+
+    from app.schemas.pagination import PagedRows, PageParams
+
+# Alphabetical, since `fees` has no `order` column (see
+# app.db.models.fee.Fee docstring); the id makes the order total.
+_FEES_BY_NAME = select(Fee).order_by(Fee.name, Fee.id)
 
 
 class FeeNotFoundError(NotFoundError):
@@ -51,10 +58,13 @@ def _to_response(fee: Fee) -> FeeResponse:
 
 
 def list_fees(db: Session) -> list[FeeResponse]:
-    # Alphabetical, since `fees` has no `order` column (see
-    # app.db.models.fee.Fee docstring).
-    fees = db.execute(select(Fee).order_by(Fee.name)).scalars().all()
+    """Every fee, for callers that need the whole catalogue (the cast page)."""
+    fees = db.execute(_FEES_BY_NAME).scalars().all()
     return [_to_response(fee) for fee in fees]
+
+
+def list_fees_page(db: Session, page: PageParams) -> PagedRows[FeeResponse]:
+    return select_page(db, _FEES_BY_NAME, page).map(_to_response)
 
 
 def create_fee(db: Session, data: FeeRequest) -> FeeResponse:

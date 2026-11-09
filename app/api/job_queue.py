@@ -39,18 +39,34 @@ async def _enqueue(
     function_name: str,
     args: tuple[object, ...],
     kwargs: dict[str, object],
+    job_id: str | None = None,
 ) -> None:
     """Logs the job NAME only, never its arguments: they carry magic-link
-    tokens and mail bodies (see app.worker.tasks and app.core.redacted)."""
+    tokens and mail bodies (see app.worker.tasks and app.core.redacted).
+    With a `job_id`, arq answers None when a job with that id is still
+    queued or running, and the new one is dropped."""
+    # The kwargs are the job function's own keyword parameters (typed by
+    # JobQueue.enqueue), which never start with an underscore -- so they
+    # cannot collide with enqueue_job's underscore-prefixed queue options,
+    # something Pyright cannot see through a plain dict.
+    options: dict[str, object] = {} if job_id is None else {"_job_id": job_id}
     try:
-        # The kwargs are the job function's own keyword parameters (typed by
-        # JobQueue.enqueue), which never start with an underscore -- so they
-        # cannot collide with enqueue_job's underscore-prefixed queue options,
-        # something Pyright cannot see through a plain dict.
-        await arq_pool.enqueue_job(function_name, *args, **kwargs)  # pyright: ignore[reportArgumentType]
+        queued = await arq_pool.enqueue_job(
+            function_name,
+            *args,
+            **kwargs,  # pyright: ignore[reportArgumentType]
+            **options,  # pyright: ignore[reportArgumentType]
+        )
     except RedisError:
         logger.exception(
             "Could not enqueue ARQ job %r; the job is lost.", function_name
+        )
+        return
+    if job_id is not None and queued is None:
+        logger.info(
+            "ARQ job %r (id %r) is already queued or running; not queued again.",
+            function_name,
+            job_id,
         )
 
 
@@ -69,9 +85,26 @@ class JobQueue:
         app.worker.settings.WorkerSettings.functions; arq addresses it by
         its `__name__` and supplies its leading `ctx` argument itself, so
         `args`/`kwargs` are checked against the job's remaining parameters.
-        They must be picklable (arq's job serializer)."""
+        They must be accepted by the queue's JSON serializer
+        (app.core.job_serialization)."""
         self._background_tasks.add_task(
             _enqueue, self._arq_pool, job.__name__, args, kwargs
+        )
+
+    def enqueue_once[**P](
+        self,
+        job: Callable[Concatenate[JobContext, P], Coroutine[object, object, None]],
+        job_id: str,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> None:
+        """Like `enqueue`, but under a fixed `job_id`: while a job with that
+        id is queued or running, a second call is dropped (and logged), so
+        an action that must never run twice at once (a restore into the
+        stage's database) cannot be started a second time. The id is free
+        again as soon as the job has finished; no job result is kept."""
+        self._background_tasks.add_task(
+            _enqueue, self._arq_pool, job.__name__, args, kwargs, job_id
         )
 
 

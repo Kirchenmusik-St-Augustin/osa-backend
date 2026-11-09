@@ -5,10 +5,15 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from app.core.rate_limit import limiter
 from app.db.models.auth_log import AuthLog
 from app.db.models.oauth2_binding import Oauth2Binding
+from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.sent_email import SentEmail
+from app.db.models.user import User
 from app.services import auth_service
+from tests.google_credential import google_credential
+from tests.sent_emails import sent_email
 
 
 def test_login_success_sets_refresh_cookie_and_returns_access_token(client, make_user):
@@ -65,6 +70,22 @@ def test_login_locked_account_returns_locked_message(client, make_user):
     assert response.json()["detail"] == "Benutzerkonto gesperrt."
 
 
+def test_login_with_an_oversized_username_is_a_plain_401_and_is_logged_clipped(
+    client, db_session
+):
+    response = client.post(
+        "/auth/login", data={"username": "x" * 6400, "password": "irrelevant"}
+    )
+
+    stored = (
+        db_session.execute(select(AuthLog.email).where(AuthLog.event == "Failed"))
+        .scalars()
+        .all()
+    )
+    assert response.status_code == 401
+    assert stored == ["x" * 254]
+
+
 def test_login_throttles_after_five_failed_attempts(client, make_user):
     user = make_user(password="correct-password")
 
@@ -102,8 +123,8 @@ def test_login_missing_fields_returns_german_validation_messages(client):
 
 
 def test_refresh_with_empty_origin_returns_403(client):
-    # CSRF defense for the refresh-token cookie (samesite="none", see
-    # _ensure_trusted_origin's docstring) -- checked before the cookie
+    # CSRF defense for the refresh-token cookie (see _ensure_trusted_origin's
+    # docstring) -- checked before the cookie
     # itself, so this is 403, not the cookie-missing 401 below. Empty
     # rather than absent (httpx2's Headers.update() rejects None as a
     # header value) -- request.headers.get("origin") treats a missing
@@ -233,7 +254,7 @@ def test_me_reflects_kill_switch_status(
     see app.core.mailer.get_kill_switch_status()."""
     db_session.query(SentEmail).delete()
     monkeypatch.setenv("MAIL_KILL_SWITCH_THRESHOLD", "1")
-    db_session.add(SentEmail(to="a@example.test", created_at=datetime.now(UTC)))
+    db_session.add(sent_email(to="a@example.test", created_at=datetime.now(UTC)))
     db_session.commit()
 
     user = make_user(password="correct-password")
@@ -299,53 +320,116 @@ def _registration_payload(**overrides: object) -> dict[str, object]:
         "givenname": f"max{unique}",
         "email": f"max.muster.{unique}@example.com",
         "phone": "+43 660 1234567",
-        "password": "Passw0rd1",
-        "password_confirmation": "Passw0rd1",
+        "password": "Passw0rd12",
+        "password_confirmation": "Passw0rd12",
     }
     payload.update(overrides)
     return payload
 
 
-def test_register_success_auto_logs_in_and_notifies_disponent(
-    client, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
+def _enqueued_functions(fake_arq_pool) -> list[str]:
+    return [call.args[0] for call in fake_arq_pool.enqueue_job.call_args_list]
+
+
+def test_register_creates_the_account_without_a_session_and_sends_the_mails(
+    client, fake_arq_pool, db_session, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    payload = _registration_payload()
 
-    response = client.post("/auth/register", json=_registration_payload())
+    response = client.post("/auth/register", json=payload)
 
     assert response.status_code == 200
     body = response.json()
-    assert body["access_token"]
-    assert "refresh_token" in response.cookies
-    enqueued_functions = [
-        call.args[0] for call in fake_arq_pool.enqueue_job.call_args_list
-    ]
-    assert enqueued_functions == [
+    assert "access_token" not in body
+    assert "refresh_token" not in response.cookies
+    assert body["status"] == "ok"
+    assert body["message"] == (
+        f"Bitte prüfe dein Postfach. Wir haben eine E-Mail an {payload['email']} "
+        "geschickt. Falls für diese Adresse noch kein Konto besteht, enthält sie "
+        "einen Bestätigungslink. Nach der Bestätigung bist du angemeldet."
+    )
+    assert db_session.query(User).filter_by(email=payload["email"]).count() == 1
+    assert _enqueued_functions(fake_arq_pool) == [
         "send_new_registration_notice_task",
         "send_verification_email_task",
     ]
 
 
-def test_register_rejects_duplicate_email(
-    client, fake_arq_pool, monkeypatch: pytest.MonkeyPatch
+def test_register_with_a_known_address_creates_nothing_and_mails_its_owner(
+    client, fake_arq_pool, db_session, make_user
 ):
-    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
-    payload = _registration_payload()
-    first = client.post("/auth/register", json=payload)
-    assert first.status_code == 200
-    fake_arq_pool.enqueue_job.reset_mock()
+    existing = make_user(email=_com_email())
+    users_before = db_session.query(User).count()
 
-    second = client.post(
+    response = client.post(
         "/auth/register",
         json=_registration_payload(
-            surname="Andere", givenname="Person", email=payload["email"].upper()
+            surname="Andere", givenname="Person", email=existing.email.upper()
         ),
     )
 
-    assert second.status_code == 422
-    detail = second.json()["detail"]
-    assert any(err["loc"] == ["body", "email"] for err in detail)
-    fake_arq_pool.enqueue_job.assert_not_called()
+    assert response.status_code == 200
+    assert "access_token" not in response.json()
+    assert db_session.query(User).count() == users_before
+    fake_arq_pool.enqueue_job.assert_called_once_with(
+        "send_registration_account_exists_email_task", existing.email
+    )
+
+
+def test_register_with_a_taken_name_creates_nothing_and_mails_the_given_address(
+    client, fake_arq_pool, db_session, make_user
+):
+    existing = make_user(email=_com_email())
+    existing.surname = "MUSTERFRAU"
+    existing.givenname = "Erika"
+    db_session.commit()
+    users_before = db_session.query(User).count()
+    new_address = _com_email()
+
+    response = client.post(
+        "/auth/register",
+        json=_registration_payload(
+            surname="Musterfrau", givenname="Erika", email=new_address
+        ),
+    )
+
+    assert response.status_code == 200
+    assert db_session.query(User).count() == users_before
+    fake_arq_pool.enqueue_job.assert_called_once_with(
+        "send_registration_entry_exists_email_task",
+        new_address,
+        "Erika",
+        "Musterfrau",
+    )
+
+
+def test_register_answers_alike_for_a_new_address_a_known_address_and_a_taken_name(
+    client, db_session, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify-email")
+    known = make_user(email=_com_email())
+    known.surname = "MUSTERMANN"
+    known.givenname = "Max"
+    db_session.commit()
+    requests = [
+        _registration_payload(),
+        _registration_payload(email=known.email),
+        _registration_payload(surname="Mustermann", givenname="Max"),
+    ]
+
+    responses = [client.post("/auth/register", json=payload) for payload in requests]
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    answers = [
+        {
+            **response.json(),
+            "message": response.json()["message"].replace(payload["email"], "<email>"),
+        }
+        for response, payload in zip(responses, requests, strict=True)
+    ]
+    assert answers[0] == answers[1] == answers[2]
+    assert all("<email>" in answer["message"] for answer in answers)
 
 
 def test_register_rejects_weak_password(client):
@@ -358,8 +442,7 @@ def test_register_rejects_weak_password(client):
     detail = response.json()["detail"]
     password_errors = [err for err in detail if err["loc"] == ["body", "password"]]
     assert len(password_errors) == 1
-    assert "zwischen 8 und 16 Zeichen" in password_errors[0]["msg"]
-    assert "mindestens eine Ziffer" in password_errors[0]["msg"]
+    assert "zwischen 10 und 64 Zeichen" in password_errors[0]["msg"]
     assert "Richtlinien" not in password_errors[0]["msg"]
 
 
@@ -372,8 +455,8 @@ def test_register_rejects_weak_password(client):
             {
                 "email": "nobody@example.com",
                 "token": "",
-                "password": "Passw0rd1",
-                "password_confirmation": "Passw0rd1",
+                "password": "Passw0rd12",
+                "password_confirmation": "Passw0rd12",
             },
         ),
         ("/auth/google/callback", {"credential": ""}),
@@ -409,7 +492,7 @@ def test_register_rejects_invalid_phone(client):
 
     assert response.status_code == 422
     detail = response.json()["detail"]
-    assert any("Telefonnummer" in err["msg"] for err in detail)
+    assert any(err["msg"] == "Das Rufnummern-Format ist ungültig." for err in detail)
 
 
 # ---------------------------------------------------------------------------
@@ -418,13 +501,31 @@ def test_register_rejects_invalid_phone(client):
 
 
 def test_verify_email_success_auto_logs_in(client, make_user):
-    user = make_user()
+    user = make_user(verified=False)
     token = auth_service.build_email_verification_token(user)
 
     response = client.post("/auth/verify-email", json={"token": token})
 
     assert response.status_code == 200
     assert response.json()["access_token"]
+
+
+def test_verify_email_link_cannot_be_used_twice_to_log_in(
+    client, make_user, db_session
+):
+    user = make_user(verified=False)
+    token = auth_service.build_email_verification_token(user)
+
+    first = client.post("/auth/verify-email", json={"token": token})
+    sessions_after_first = db_session.query(PersonalAccessToken).count()
+    second = client.post("/auth/verify-email", json={"token": token})
+
+    assert first.status_code == 200
+    assert second.status_code == 400
+    assert second.json() == {"detail": "Der Bestätigungslink wurde bereits verwendet."}
+    assert "access_token" not in second.json()
+    assert "set-cookie" not in second.headers
+    assert db_session.query(PersonalAccessToken).count() == sessions_after_first
 
 
 def test_verify_email_rejects_invalid_token(client):
@@ -593,15 +694,15 @@ def test_reset_password_success(client, make_user, db_session):
         json={
             "email": user.email,
             "token": token,
-            "password": "Passw0rd1",
-            "password_confirmation": "Passw0rd1",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
         },
     )
 
     assert response.status_code == 200
 
     login_response = client.post(
-        "/auth/login", data={"username": user.email, "password": "Passw0rd1"}
+        "/auth/login", data={"username": user.email, "password": "Passw0rd12"}
     )
     assert login_response.status_code == 200
 
@@ -615,8 +716,8 @@ def test_reset_password_logs_a_password_reset_auth_event(client, make_user, db_s
         json={
             "email": user.email,
             "token": token,
-            "password": "Passw0rd1",
-            "password_confirmation": "Passw0rd1",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
         },
     )
 
@@ -637,8 +738,8 @@ def test_reset_password_rejects_invalid_token(client, make_user):
         json={
             "email": user.email,
             "token": "bogus-token",
-            "password": "Passw0rd1",
-            "password_confirmation": "Passw0rd1",
+            "password": "Passw0rd12",
+            "password_confirmation": "Passw0rd12",
         },
     )
 
@@ -659,7 +760,8 @@ def test_google_callback_returns_404_when_not_linked(
         return_value={"sub": "google-not-linked", "name": "Nobody"},
     ):
         response = client.post(
-            "/auth/google/callback", json={"credential": "fake-credential"}
+            "/auth/google/callback",
+            json={"credential": google_credential("test-client-id")},
         )
 
     assert response.status_code == 404
@@ -680,7 +782,7 @@ def test_google_link_then_callback_logs_in(
         link_response = client.post(
             "/auth/google/link",
             json={
-                "credential": "fake-credential",
+                "credential": google_credential("test-client-id"),
                 "email": user.email,
                 "password": "correct-password",
             },
@@ -688,7 +790,8 @@ def test_google_link_then_callback_logs_in(
         assert link_response.status_code == 200
 
         callback_response = client.post(
-            "/auth/google/callback", json={"credential": "fake-credential"}
+            "/auth/google/callback",
+            json={"credential": google_credential("test-client-id")},
         )
 
     assert callback_response.status_code == 200
@@ -704,7 +807,7 @@ def test_google_link_rejects_wrong_password(
     response = client.post(
         "/auth/google/link",
         json={
-            "credential": "fake-credential",
+            "credential": google_credential("test-client-id"),
             "email": user.email,
             "password": "wrong-password",
         },
@@ -713,13 +816,95 @@ def test_google_link_rejects_wrong_password(
     assert response.status_code == 401
 
 
+def test_google_link_shares_the_login_lockout(client, make_user):
+    user = make_user(password="correct-password", email=_com_email())
+    payload = {
+        "credential": google_credential("test-client-id"),
+        "email": user.email,
+        "password": "wrong-password",
+    }
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        limiter.reset()
+        assert client.post("/auth/google/link", json=payload).status_code == 401
+
+    limiter.reset()
+    blocked = client.post("/auth/google/link", json=payload)
+    limiter.reset()
+    login = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+
+    assert blocked.status_code == 429
+    assert blocked.json()["seconds"] > 0
+    assert login.status_code == 429  # the same counter blocks the login form too
+
+
+def test_google_link_writes_failed_lockout_and_login_events(
+    client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    user = make_user(password="correct-password", email=_com_email())
+    wrong = {
+        "credential": google_credential("test-client-id"),
+        "email": user.email,
+        "password": "wrong-password",
+    }
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        limiter.reset()
+        client.post("/auth/google/link", json=wrong)
+    limiter.reset()
+    client.post("/auth/google/link", json=wrong)
+
+    events = db_session.execute(
+        select(AuthLog.event, AuthLog.payload).where(AuthLog.email == user.email)
+    ).all()
+
+    assert [event for event, _payload in events].count("Failed") == (
+        auth_service.MAX_LOGIN_ATTEMPTS
+    )
+    assert [event for event, _payload in events].count("Lockout") == 1
+    assert all(
+        payload == {"via": "google_link"}
+        for event, payload in events
+        if event == "Failed"
+    )
+
+
+def test_google_link_success_is_recorded_as_a_login_event(
+    client, make_user, db_session, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
+    user = make_user(password="correct-password", email=_com_email())
+
+    with patch(
+        "app.services.auth_service.google_id_token.verify_oauth2_token",
+        return_value={"sub": "google-link-event-log", "name": "Max Muster"},
+    ):
+        response = client.post(
+            "/auth/google/link",
+            json={
+                "credential": google_credential("test-client-id"),
+                "email": user.email,
+                "password": "correct-password",
+            },
+        )
+
+    events = (
+        db_session.execute(select(AuthLog.event).where(AuthLog.email == user.email))
+        .scalars()
+        .all()
+    )
+    assert response.status_code == 200
+    assert events == ["Login"]
+
+
 def test_google_link_rejects_oversized_password(client, make_user):
     user = make_user(password="correct-password", email=_com_email())
 
     response = client.post(
         "/auth/google/link",
         json={
-            "credential": "fake-credential",
+            "credential": google_credential("test-client-id"),
             "email": user.email,
             "password": "x" * 129,
         },
@@ -745,7 +930,7 @@ def test_oauth2_disconnect_removes_own_binding(
         client.post(
             "/auth/google/link",
             json={
-                "credential": "fake-credential",
+                "credential": google_credential("test-client-id"),
                 "email": user.email,
                 "password": "correct-password",
             },
@@ -814,7 +999,7 @@ def test_oauth2_disconnect_rejects_binding_owned_by_another_user(
 
 
 def test_oauth2_disconnect_requires_authentication(client):
-    response = client.delete("/auth/oauth2/1")
+    response = client.delete(f"/auth/oauth2/{uuid.uuid4()}")
 
     assert response.status_code == 401
 
@@ -836,8 +1021,8 @@ def test_forgot_password_verify_email_and_reset_password_are_rate_limited(client
             {
                 "email": "nobody@example.com",
                 "token": "bogus-token",
-                "password": "Passw0rd1",
-                "password_confirmation": "Passw0rd1",
+                "password": "Passw0rd12",
+                "password_confirmation": "Passw0rd12",
             },
         ),
     ]
@@ -854,9 +1039,8 @@ def test_register_is_rate_limited(client, monkeypatch: pytest.MonkeyPatch):
     payload = _registration_payload()
 
     for _ in range(5):
-        # First call succeeds (200); the rest hit the duplicate-email
-        # rejection (422) -- both still count against the limiter, which
-        # counts requests reaching the endpoint, not just successful ones.
+        # The first call creates the account, the rest are answered alike
+        # without creating anything -- all of them count against the limiter.
         response = client.post("/auth/register", json=payload)
         assert response.status_code != 429
 
@@ -868,9 +1052,9 @@ def test_google_callback_and_link_are_rate_limited(
     client, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client-id")
-    callback_payload = {"credential": "fake-credential"}
+    callback_payload = {"credential": google_credential("test-client-id")}
     link_payload = {
-        "credential": "fake-credential",
+        "credential": google_credential("test-client-id"),
         "email": "nobody@example.com",
         "password": "irrelevant",
     }
@@ -890,3 +1074,49 @@ def test_google_callback_and_link_are_rate_limited(
             assert response.status_code != 429
         blocked_link = client.post("/auth/google/link", json=link_payload)
         assert blocked_link.status_code == 429
+
+
+def _login_cookie(client, make_user) -> str:
+    user = make_user(password="correct-password")
+    response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    return response.headers.get_list("set-cookie")[0]
+
+
+def test_refresh_cookie_carries_the_security_flags(client, make_user):
+    # HttpOnly and Secure must never be dropped by a refactor.
+    cookie = _login_cookie(client, make_user)
+
+    assert "HttpOnly" in cookie
+    assert "Secure" in cookie
+    assert "SameSite=strict" in cookie
+    assert "Path=/api/auth" in cookie
+
+
+@pytest.mark.parametrize("samesite", ["lax", "none"])
+def test_refresh_cookie_samesite_follows_the_setting(
+    client, make_user, monkeypatch: pytest.MonkeyPatch, samesite: str
+):
+    monkeypatch.setenv("REFRESH_COOKIE_SAMESITE", samesite)
+
+    assert f"SameSite={samesite}" in _login_cookie(client, make_user)
+
+
+def test_after_logout_neither_the_access_token_nor_the_refresh_cookie_works(
+    client, make_user
+):
+    user = make_user(password="correct-password")
+    login_response = client.post(
+        "/auth/login", data={"username": user.email, "password": "correct-password"}
+    )
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+    client.cookies.set("refresh_token", login_response.cookies["refresh_token"])
+
+    logout = client.post("/auth/logout", headers=headers)
+    me_after_logout = client.get("/auth/me", headers=headers)
+    refresh_after_logout = client.post("/auth/refresh")
+
+    assert logout.status_code == 200
+    assert me_after_logout.status_code == 401
+    assert refresh_after_logout.status_code == 401

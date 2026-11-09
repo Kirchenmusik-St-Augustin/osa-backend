@@ -10,3 +10,8 @@ def test_normalize_givenname_ucwords_only_splits_on_spaces():
     # breaks on apostrophes/hyphens.
     assert normalize_givenname("mary jane") == "Mary Jane"
     assert normalize_givenname("o'brien") == "O'brien"
+
+
+def test_normalize_surname_expands_the_sharp_s_which_changes_the_length():
+    assert normalize_surname("Strauß") == "STRAUSS"
+    assert normalize_surname("Strauß").lower() != "Strauß".lower()

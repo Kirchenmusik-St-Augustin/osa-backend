@@ -1,6 +1,8 @@
 import uuid
 from typing import TYPE_CHECKING
 
+from tests.login import login_as, login_with_credentials
+
 if TYPE_CHECKING:
     import pytest
 
@@ -14,11 +16,7 @@ def _auth_headers(
 ) -> tuple[dict[str, str], str]:
     email = f"{_unique('user').lower()}@example.com"
     user = make_user(email=email, password=password)
-    response = client.post(
-        "/auth/login", data={"username": user.email, "password": password}
-    )
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}, email
+    return login_as(client, user, password), email
 
 
 def _payload(
@@ -170,8 +168,7 @@ class TestUpdateProfile:
             if error["loc"] == ["body", "password"]
         ]
         assert len(password_errors) == 1
-        assert "zwischen 8 und 16 Zeichen" in password_errors[0]["msg"]
-        assert "mindestens eine Ziffer" in password_errors[0]["msg"]
+        assert "zwischen 10 und 64 Zeichen" in password_errors[0]["msg"]
 
     def test_mismatched_confirmation_is_reported_on_its_own_field(
         self, client, make_user
@@ -263,3 +260,40 @@ class TestUpdateProfile:
         assert response.status_code == 422
         fields = {error["loc"][1] for error in response.json()["detail"]}
         assert fields == {"surname", "givenname"}
+
+
+class TestPasswordChangeEndsOtherSessions:
+    def test_other_login_is_logged_out_and_the_caller_stays_logged_in(
+        self, client, make_user
+    ):
+        headers, email = _auth_headers(client, make_user)
+        other_headers = login_with_credentials(client, email, "Passwort123")
+        assert client.get("/profile", headers=other_headers).status_code == 200
+
+        response = client.put(
+            "/profile",
+            json=_payload(
+                email=email,
+                change_password=True,
+                password="EinNeuesPassw0rt",
+                password_confirmation="EinNeuesPassw0rt",
+            ),
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert client.get("/profile", headers=headers).status_code == 200
+        assert client.get("/profile", headers=other_headers).status_code == 401
+
+    def test_other_login_stays_when_only_the_phone_changes(self, client, make_user):
+        headers, email = _auth_headers(client, make_user)
+        other_headers = login_with_credentials(client, email, "Passwort123")
+
+        response = client.put(
+            "/profile",
+            json=_payload(email=email, phone="+43 664 1112233"),
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert client.get("/profile", headers=other_headers).status_code == 200

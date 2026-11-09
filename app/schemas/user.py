@@ -1,11 +1,17 @@
 import uuid
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, Field
 
 from app.core.datetime_utils import UtcDatetime
-from app.schemas.base import LenientUuid, OptionalText, StrictInputModel
-from app.schemas.performance import PositionRefOutput
-from app.schemas.validators import PHONE_PATTERN
+from app.schemas.base import (
+    MAX_CATALOGUE_ENTRIES,
+    IdNameOutput,
+    LenientUuid,
+    NormalizedEmail,
+    PersonName,
+    StrictInputModel,
+)
+from app.schemas.validators import OptionalPhoneNumber
 
 
 class RoleRefOutput(BaseModel):
@@ -20,19 +26,14 @@ class Oauth2BindingOutput(BaseModel):
     remote_name: str
 
 
-class UserSearchResultOutput(BaseModel):
-    id: uuid.UUID
-    label: str
-
-
 class UserFormOptionsOutput(BaseModel):
     """Catalog lists for the Instrument/Voice/Choirjob/Role picker widgets
     in the Create/Edit form -- reuses coreelement_service.list_coreelements()
     (see user_service.get_form_options()), independent of any one user."""
 
-    instruments: list[PositionRefOutput]
-    voices: list[PositionRefOutput]
-    choirjobs: list[PositionRefOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]
+    choirjobs: list[IdNameOutput]
     roles: list[RoleRefOutput]
 
 
@@ -44,24 +45,24 @@ class UserRequest(StrictInputModel):
     only an acting administrator can grant it, and only ever grant (see
     user_service._apply_administrator_grant())."""
 
-    givenname: str = Field(min_length=3, max_length=32)
-    surname: str = Field(min_length=3, max_length=32)
-    email: EmailStr | None = Field(default=None, max_length=190)
-    phone: OptionalText = None
+    givenname: PersonName
+    surname: PersonName
+    email: NormalizedEmail | None = None
+    phone: OptionalPhoneNumber = None
     auth_locked: bool = False
-    instruments: list[LenientUuid] = Field(default_factory=list)
-    voices: list[LenientUuid] = Field(default_factory=list)
-    choirjobs: list[LenientUuid] = Field(default_factory=list)
-    roles: list[LenientUuid] = Field(default_factory=list)
+    instruments: list[LenientUuid] = Field(
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
+    )
+    voices: list[LenientUuid] = Field(
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
+    )
+    choirjobs: list[LenientUuid] = Field(
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
+    )
+    roles: list[LenientUuid] = Field(
+        default_factory=list[LenientUuid], max_length=MAX_CATALOGUE_ENTRIES
+    )
     administrator: bool = False
-
-    @field_validator("phone")
-    @classmethod
-    def _validate_phone(cls, value: str | None) -> str | None:
-        if value is not None and not PHONE_PATTERN.match(value):
-            msg = "Das Rufnummern-Format ist ungültig."
-            raise ValueError(msg)
-        return value
 
 
 class UserResponse(BaseModel):
@@ -79,7 +80,7 @@ class UserResponse(BaseModel):
     administrator: bool
     deletable: bool
     oauth2_bindings: list[Oauth2BindingOutput]
-    instruments: list[PositionRefOutput]
-    voices: list[PositionRefOutput]
-    choirjobs: list[PositionRefOutput]
+    instruments: list[IdNameOutput]
+    voices: list[IdNameOutput]
+    choirjobs: list[IdNameOutput]
     roles: list[RoleRefOutput]

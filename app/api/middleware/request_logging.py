@@ -5,11 +5,14 @@ exception as app/core/mailer.py/app/services/booking_jobs.py (see
 pyproject.toml's per-file-ignores for TID251)."""
 
 import json
+import logging
 import resource
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
+from typing import cast
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -18,36 +21,56 @@ from starlette.responses import Response
 
 from app.api.deps import try_decode_token
 from app.core.json_types import JsonObject, JsonValue
+from app.core.rate_limit import client_ip as resolved_client_ip
 from app.db.database import SessionLocal
 from app.db.models.user import User
 from app.services import request_log_service
 
+logger = logging.getLogger(__name__)
+
 _SKIP_LOG_HEADER = "x-skip-request-log"
+# A stored request or response payload whose serialized JSON is larger than
+# this is replaced by a marker, so one oversized request cannot bloat
+# request_logs.
+_MAX_LOGGED_JSON_BYTES = 16 * 1024
 
 
 async def _extract_request_input(request: Request) -> JsonObject:
     """Best-effort read of the request body as a dict, handling both JSON
     bodies and form-encoded bodies (our own login endpoint uses
-    OAuth2PasswordRequestForm, i.e. x-www-form-urlencoded, not JSON)."""
+    OAuth2PasswordRequestForm, i.e. x-www-form-urlencoded, not JSON).
+    Multipart bodies are not parsed: no endpoint accepts them, and the parser
+    spools file parts to temporary files on disk."""
     content_type = request.headers.get("content-type", "")
     body = await request.body()
     if not body:
         return {}
     if "application/json" in content_type:
         try:
-            parsed = json.loads(body)
+            parsed: JsonValue = json.loads(body)
         except json.JSONDecodeError:
             return {}
         return parsed if isinstance(parsed, dict) else {"value": parsed}
-    if (
-        "application/x-www-form-urlencoded" in content_type
-        or "multipart/form-data" in content_type
-    ):
+    if "application/x-www-form-urlencoded" in content_type:
         form = await request.form()
         return {
             key: value for key, value in form.multi_items() if isinstance(value, str)
         }
     return {}
+
+
+def _exceeds_log_limit(value: JsonValue) -> bool:
+    # json.dumps escapes non-ASCII characters, so the length in characters is
+    # the length in bytes.
+    return len(json.dumps(value)) > _MAX_LOGGED_JSON_BYTES
+
+
+def _bounded(value: JsonValue) -> JsonValue:
+    return {"truncated": True} if _exceeds_log_limit(value) else value
+
+
+def _bounded_object(value: JsonObject) -> JsonObject:
+    return {"truncated": True} if _exceeds_log_limit(value) else value
 
 
 def _try_parse_json(body: bytes) -> JsonValue:
@@ -61,9 +84,11 @@ def _try_parse_json(body: bytes) -> JsonValue:
 
 
 def _forwarded_ips(request: Request) -> list[str]:
-    # Full X-Forwarded-For chain, most recent proxy last -- Starlette has no
-    # built-in equivalent, so this is read directly off the header, falling
-    # back to the direct peer.
+    # Full X-Forwarded-For chain as sent by the client and the proxies, most
+    # recent proxy last: kept as a record only. The address the
+    # application acts on is app.core.rate_limit.client_ip(); the first chain
+    # element is supplied by the caller and can be anything. Without the
+    # header the chain is the direct peer alone.
     header = request.headers.get("x-forwarded-for")
     if not header:
         return [request.client.host] if request.client else []
@@ -147,28 +172,38 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return response
 
         response_body = b""
-        async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+        # The response of call_next() is typed as a plain Response, but it is
+        # always a streaming response with a body iterator.
+        chunks = cast("AsyncIterable[bytes]", response.body_iterator)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        async for chunk in chunks:
             response_body += chunk
         rebuilt = Response(
             content=response_body,
             status_code=response.status_code,
-            headers=dict(response.headers),
             media_type=response.media_type,
             background=response.background,
         )
+        # Not dict(response.headers): that collapses repeated headers, so a
+        # response with two Set-Cookie headers would lose one of them.
+        rebuilt.raw_headers = list(response.raw_headers)
 
-        client_ips = _forwarded_ips(request)
-        await run_in_threadpool(
-            _write_log_entry,
-            client_ip=client_ips[0] if client_ips else "",
-            client_ips=client_ips,
-            auth_header=request.headers.get("authorization"),
-            request_method=request.method,
-            request_path=request.url.path,
-            request_input=request_input,
-            response_status=response.status_code,
-            response_content=_try_parse_json(response_body),
-            memory_usage=_memory_usage_bytes(),
-            user_agent_string=request.headers.get("user-agent"),
-        )
+        try:
+            await run_in_threadpool(
+                _write_log_entry,
+                client_ip=resolved_client_ip(request),
+                client_ips=_forwarded_ips(request),
+                auth_header=request.headers.get("authorization"),
+                request_method=request.method,
+                request_path=request.url.path,
+                request_input=_bounded_object(request_input),
+                response_status=response.status_code,
+                response_content=_bounded(_try_parse_json(response_body)),
+                memory_usage=_memory_usage_bytes(),
+                user_agent_string=request.headers.get("user-agent"),
+            )
+        except SQLAlchemyError:
+            # The log is best effort: by now the route has already committed
+            # its own work, and the client would see a 500 for an operation
+            # that succeeded.
+            logger.exception("Could not write the request log entry.")
         return rebuilt

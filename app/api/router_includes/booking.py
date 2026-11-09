@@ -1,13 +1,17 @@
 import uuid
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.api.auth_guards import require_permission
+from app.api.auth_guards import AuthUser, require_permission
 from app.api.job_queue import JobQueue, get_job_queue
+from app.api.rate_limiting import (
+    MAIL_ACTION_LIMIT,
+    MAIL_ACTION_SCOPE,
+    rate_limited_per_user,
+)
 from app.db.database import get_db
-from app.db.models.user import User
 from app.schemas.booking import (
     BookingStatusOutput,
     CastFormData,
@@ -19,11 +23,15 @@ from app.schemas.booking import (
     PerformanceRequestsAndBookingsResponse,
     SendMessageRequest,
 )
-from app.services import booking_service
-from app.services.booking_service import (
-    BookingRequestAlreadyExistsError,
-    MessageRecipientsEmptyError,
+from app.services import (
+    billing_service,
+    booking_listing_service,
+    booking_status_service,
+    cast_service,
+    message_service,
 )
+from app.services.booking_status_service import BookingRequestAlreadyExistsError
+from app.services.message_service import MessageRecipientsEmptyError
 from app.worker.tasks import (
     send_booked_or_standby_canceled_email_task,
     send_user_message_email_task,
@@ -44,9 +52,9 @@ _EMPTY_RECIPIENTS_DETAIL = "Keiner der Empfänger hat eine bestätigte E-Mail-Ad
 def get_cast_page(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _CAST],
+    _current_user: Annotated[AuthUser, _CAST],
 ) -> PerformanceCastPageResponse:
-    return booking_service.get_cast_page(db, performance_id)
+    return cast_service.get_cast_page(db, performance_id)
 
 
 @booking_router.post("/{performance_id}/cast")
@@ -54,30 +62,30 @@ def save_cast(
     performance_id: uuid.UUID,
     data: CastSaveRequest,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _CAST],
+    _current_user: Annotated[AuthUser, _CAST],
 ) -> CastFormData:
-    return booking_service.save_cast(db, performance_id, data)
+    return cast_service.save_cast(db, performance_id, data)
 
 
 @booking_router.post("/{performance_id}/booking-status")
 def change_user_request_status(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _CHANGE_STATUS],
+    current_user: Annotated[AuthUser, _CHANGE_STATUS],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> BookingStatusOutput:
     """No request body -- the server recomputes the user's own current
     status and dispatches the transition itself (see
-    booking_service.change_user_request_status's docstring).
+    booking_status_service.change_user_request_status's docstring).
     _CHANGE_STATUS is declared before job_queue on purpose, see
     get_job_queue."""
     try:
-        result, notification = booking_service.change_user_request_status(
+        result, notification = booking_status_service.change_user_request_status(
             db, performance_id, current_user
         )
     except BookingRequestAlreadyExistsError:
         # Defensive only -- unreachable via the normal state machine (see
-        # booking_service._request_booking's docstring), but a genuine
+        # booking_status_service._request_booking's docstring), but a genuine
         # concurrent double-click must not surface as a raw 500.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=_DUPLICATE_REQUEST_DETAIL
@@ -101,66 +109,73 @@ def change_user_request_status(
 def get_my_booking_status(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _CHANGE_STATUS],
+    current_user: Annotated[AuthUser, _CHANGE_STATUS],
 ) -> BookingStatusOutput:
-    return booking_service.get_my_booking_status(db, performance_id, current_user.id)
+    return booking_status_service.get_my_booking_status(
+        db, performance_id, current_user.id
+    )
 
 
 @booking_router.get("/{performance_id}/billing")
 def get_billing(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _BILLING],
+    current_user: Annotated[AuthUser, _BILLING],
 ) -> PerformanceBillingResponse:
-    return booking_service.get_billing(db, performance_id, current_user)
+    return billing_service.get_billing(db, performance_id, current_user)
 
 
 @booking_router.get("/{performance_id}/requests-and-bookings")
 def get_requests_and_bookings(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceRequestsAndBookingsResponse:
-    return booking_service.get_requests_and_bookings(db, performance_id, current_user)
+    return booking_listing_service.get_requests_and_bookings(
+        db, performance_id, current_user
+    )
 
 
 @booking_router.get("/{performance_id}/message-to-cast")
 def get_message_to_cast_page(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
 ) -> PerformanceMessageToCastResponse:
-    return booking_service.get_message_to_cast_page(db, performance_id, current_user)
+    return message_service.get_message_to_cast_page(db, performance_id, current_user)
 
 
 @booking_router.get("/{performance_id}/message-to-cast/recipients")
 def get_message_recipients(
     performance_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[User, _MAINTAIN],
+    _current_user: Annotated[AuthUser, _MAINTAIN],
     position_type: Annotated[
         Literal["all", "instruments", "voices", "choirjobs"] | None, Query(alias="type")
     ] = None,
     position_id: Annotated[uuid.UUID | None, Query(alias="id")] = None,
 ) -> list[MessageRecipientOutput]:
     resolved_type = None if position_type in (None, "all") else position_type
-    return booking_service.get_message_recipients(
+    return message_service.get_message_recipients(
         db, performance_id, resolved_type, position_id
     )
 
 
 @booking_router.post("/{performance_id}/message-to-cast/send")
+@rate_limited_per_user(MAIL_ACTION_LIMIT, MAIL_ACTION_SCOPE)
 def send_message_to_cast(
+    request: Request,  # noqa: ARG001
     performance_id: uuid.UUID,
     data: SendMessageRequest,
+    *,
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, _MAINTAIN],
+    current_user: Annotated[AuthUser, _MAINTAIN],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> dict[str, str]:
     """_MAINTAIN is declared before job_queue on purpose -- see
     get_job_queue."""
     try:
-        to_emails, sender_name, message = booking_service.send_message_to_cast(
+        to_emails, sender_name, message = message_service.send_message_to_cast(
             db, performance_id, current_user, data
         )
     except MessageRecipientsEmptyError:

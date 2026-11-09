@@ -13,6 +13,7 @@ from arq.cron import CronJob, cron
 from app.core.arq_pool import build_redis_settings
 from app.core.config import get_settings
 from app.core.datetime_utils import get_app_timezone
+from app.core.job_serialization import dumps_job, loads_job
 from app.core.logging_config import setup_logging
 from app.db import (
     base as _,  # noqa: F401 -- populates SQLAlchemy's mapper registry (string-based relationship() resolution); required here because this worker process never imports main.py, which is where the web process normally does this same import
@@ -21,6 +22,8 @@ from app.worker.cron_config import CronSchedule, build_cron_catalog
 from app.worker.scheduled_jobs import (
     backup_koofr_task,
     downsync_task,
+    manual_backup_task,
+    manual_downsync_task,
     notify_upcoming_booking_status_task,
     purge_expired_password_reset_tokens_task,
     purge_old_request_logs_task,
@@ -33,12 +36,15 @@ from app.worker.tasks import (
     send_booked_or_standby_canceled_email_task,
     send_new_registration_notice_task,
     send_password_reset_email_task,
+    send_registration_account_exists_email_task,
+    send_registration_entry_exists_email_task,
     send_user_message_email_task,
     send_verification_email_task,
 )
 
 if TYPE_CHECKING:
     from arq.connections import RedisSettings
+    from arq.jobs import Deserializer, Serializer
     from arq.typing import WorkerCoroutine
 
 logger = logging.getLogger(__name__)
@@ -91,15 +97,23 @@ class WorkerSettings:
 
     functions: ClassVar[list[WorkerCoroutine]] = [
         send_new_registration_notice_task,
+        send_registration_account_exists_email_task,
+        send_registration_entry_exists_email_task,
         send_verification_email_task,
         send_password_reset_email_task,
         send_booked_or_standby_canceled_email_task,
         send_user_message_email_task,
+        manual_backup_task,
+        manual_downsync_task,
     ]
     cron_jobs: ClassVar[list[CronJob]] = [
         _build_cron_job(schedule) for schedule in _active_schedules
     ]
     redis_settings: RedisSettings = build_redis_settings()
+    # Data-only serializer instead of arq's default pickle, the same pair the
+    # enqueueing side passes to create_pool (see app.core.job_serialization).
+    job_serializer: ClassVar[Serializer] = dumps_job
+    job_deserializer: ClassVar[Deserializer] = loads_job
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     timezone = get_app_timezone()
@@ -114,3 +128,11 @@ class WorkerSettings:
     # sync with osa-deploy's osa-backend-worker Quadlet
     # StopTimeout=/TimeoutStopSec=, which are sized off this same value.
     job_completion_wait: ClassVar[int] = 300
+    # arq keeps every finished job's result, including its arguments, for an
+    # hour by default. The arguments of the mail tasks are one-time links and
+    # message texts, and nothing reads a result, so none is kept.
+    keep_result: ClassVar[int] = 0
+    # How often the worker refreshes the heartbeat that `arq --check` (the
+    # container health check) reads. arq's default is 3600 seconds, far too
+    # long for a probe that runs every 30 seconds.
+    health_check_interval: ClassVar[int] = 30
