@@ -194,7 +194,8 @@ job's last run on the scheduler page and as a `[triggered]` line in the
 ## Scripts
 
 Operational scripts, run manually, from the repo root inside the running
-container:
+worker container (`osa-backend-worker`): the Koofr credentials are passed to
+the worker only, the web container stops with `KOOFR_USER is not set`:
 
 | Script | Purpose |
 |---|---|
@@ -203,9 +204,9 @@ container:
 | `scripts/check_router_soc.py` | Router/service separation-of-concerns pre-commit check |
 
 ```bash
-podman exec osa-backend python scripts/backup_db.py --list
-podman exec osa-backend python scripts/backup_db.py --cleanup --dry-run
-podman exec -it osa-backend python scripts/restore_db.py --force
+podman exec osa-backend-worker python scripts/backup_db.py --list
+podman exec osa-backend-worker python scripts/backup_db.py --cleanup --dry-run
+podman exec -it osa-backend-worker python scripts/restore_db.py --force
 ```
 
 `restore_db.py` refuses to run under `APP_ENVIRONMENT=production` without
@@ -458,7 +459,8 @@ Lauf des Jobs auf der Scheduler-Seite und als `[triggered]`-Zeile im
 ## Skripte
 
 Betriebsskripte, manuell ausgeführt, vom Repo-Root aus im laufenden
-Container:
+Worker-Container (`osa-backend-worker`): Die Koofr-Zugangsdaten bekommt nur
+der Worker, der Web-Container bricht mit `KOOFR_USER is not set` ab:
 
 | Skript | Zweck |
 |---|---|
@@ -467,9 +469,9 @@ Container:
 | `scripts/check_router_soc.py` | Pre-Commit-Check für die Router-/Service-Schichtentrennung |
 
 ```bash
-podman exec osa-backend python scripts/backup_db.py --list
-podman exec osa-backend python scripts/backup_db.py --cleanup --dry-run
-podman exec -it osa-backend python scripts/restore_db.py --force
+podman exec osa-backend-worker python scripts/backup_db.py --list
+podman exec osa-backend-worker python scripts/backup_db.py --cleanup --dry-run
+podman exec -it osa-backend-worker python scripts/restore_db.py --force
 ```
 
 `restore_db.py` verweigert sich unter `APP_ENVIRONMENT=production` ohne
