@@ -57,17 +57,18 @@ exception to the rule that database access goes through an async driver.
 - The service layer, the Alembic setup and the worker's job bodies share one
   synchronous code path. An async session would change `app/services` and the
   test fixtures as a whole.
-- One web worker serves a low-concurrency internal tool (rarely more than 50
-  concurrent users), so throughput is not the constraint and async buys
+- One gunicorn worker serves a low-concurrency internal tool (roughly a hundred
+  members, rarely more than 50 of them active at once), so throughput is not the constraint and async buys
   nothing at this scale.
 - Async SQLAlchemy brings its own bug class: coverage.py silently loses the
   trace across `greenlet_spawn`.
 
 **Limits**
 
-- The request thread pool is larger than the connection pool, so a burst waits
-  for a connection. The wait is bounded by the pool timeout configured in
-  `app/db/database.py`.
+- The request thread pool (Starlette's default of 40 threads) is larger than
+  the connection pool (5 connections plus 5 overflow), so a burst waits for a
+  connection. The wait is bounded by the pool timeout of 10 seconds configured
+  in `app/db/database.py`.
 - No handler may call blocking I/O inside an `async def`.
 
 **Revisit when**
@@ -77,18 +78,6 @@ exception to the rule that database access goes through an async driver.
 - more than 50 users are active at the same time on a regular basis, not only
   in rare peaks, or
 - a second async-only dependency is added.
-
-## ADR-2: Synchronous database access
-
-**Status:** accepted
-
-All handlers that touch the database are plain `def` functions that Starlette runs in its thread pool; the driver is `psycopg` (version 3) with a synchronous `Session`.
-
-**Why:** the whole service layer, the Alembic setup and the worker's job bodies share one synchronous code path; one gunicorn worker serves roughly a hundred members, so throughput is not the constraint.
-
-**Limits:** the thread pool (40) is larger than the connection pool (5 + 5 overflow), so a burst waits for connections, bounded by `pool_timeout`; no handler may call blocking I/O inside an `async def`.
-
-**Revisit when:** the request rate makes the connection pool the bottleneck, or a second async-only dependency is added.
 
 ## ADR-3: arq job serialization
 
