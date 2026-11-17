@@ -14,11 +14,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.security import get_password_hash, verify_password
+from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
+from app.schemas.booking import (
+    CastMemberInput,
+    CastSaveRequest,
+    CastSectionInput,
+    CastSetupItemInput,
+)
 from app.schemas.profile import ProfileUpdateRequest
-from app.services import auth_service, booking_jobs, profile_service
+from app.services import auth_service, booking_jobs, cast_service, profile_service
 from tests import booking_helpers
 from tests.conftest import TestingSessionLocal
 
@@ -218,3 +225,29 @@ class TestSessionRefreshCommits:
                 ).first()
                 is None
             )
+
+
+class TestCastSaveCommits:
+    def test_a_saved_cast_is_committed(self, committed_db):
+        instrument = booking_helpers.create_instrument(committed_db)
+        performance_id = booking_helpers.create_performance(
+            committed_db, instruments={instrument.id: 1}
+        )
+        user = _verified_user(committed_db)
+        request = CastSaveRequest(
+            cast=CastSectionInput(
+                instruments=[
+                    CastSetupItemInput(
+                        id=instrument.id, cast=[CastMemberInput(id=user.id, fee=80)]
+                    )
+                ]
+            ),
+            not_booked=[],
+        )
+
+        cast_service.save_cast(committed_db, performance_id, request)
+
+        with TestingSessionLocal() as other:
+            assert other.execute(
+                select(Booking.user_id).where(Booking.performance_id == performance_id)
+            ).scalars().all() == [user.id]

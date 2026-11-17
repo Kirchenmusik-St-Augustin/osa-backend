@@ -587,7 +587,6 @@ def _apply_cast(
     performance: Performance,
     setup: PerformanceSetupOutput,
     cast_data: CastSectionInput,
-    old_quantities: dict[tuple[PositionType, uuid.UUID], int] | None = None,
 ) -> None:
     cast_groups: tuple[
         tuple[PositionType, list[PerformancePositionOutput], list[CastSetupItemInput]],
@@ -606,18 +605,13 @@ def _apply_cast(
                 if payload_cast is None
                 else [(member.id, member.fee) for member in payload_cast]
             )
-            old_quantity = (
-                old_quantities.get((position_type, setup_item.id))
-                if old_quantities is not None
-                else None
-            )
             save_cast_item(
                 db,
                 performance.id,
                 position_type,
                 setup_item.id,
                 new_cast=entries,
-                old_quantity=old_quantity,
+                old_quantity=None,
             )
 
 
