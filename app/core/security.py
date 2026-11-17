@@ -30,11 +30,8 @@ _BCRYPT_MAX_PASSWORD_BYTES = 72
 
 def verify_password(plain_password: str, hashed_password: str | None) -> bool:
     """Stored hashes may carry the `$2y$` bcrypt prefix (emitted by other
-    bcrypt implementations) -- Python's bcrypt only accepts `$2a$`/`$2b$`.
-    Both prefixes denote the exact same algorithm revision for any password
-    that doesn't hit the historical 8-bit-vs-7-bit-high-bit edge case, so
-    normalizing the prefix before verifying is safe and lets every user with
-    a `$2y$` hash log in unchanged.
+    bcrypt implementations); the bcrypt package verifies it natively, so
+    every user with such a hash logs in unchanged.
 
     A password that bcrypt cannot hash (over 72 bytes, or not encodable) can
     never match a stored hash, so it is refused up front without logging:
@@ -48,8 +45,6 @@ def verify_password(plain_password: str, hashed_password: str | None) -> bool:
         return False
     if len(password_bytes) > _BCRYPT_MAX_PASSWORD_BYTES:
         return False
-    if hashed_password.startswith("$2y$"):
-        hashed_password = hashed_password.replace("$2y$", "$2b$", 1)
     try:
         return bcrypt.checkpw(password_bytes, hashed_password.encode("utf-8"))
     except ValueError:
