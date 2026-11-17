@@ -35,6 +35,19 @@ def test_an_address_is_stripped_and_lower_cased(build, given, stored):
     assert build(email=given).email == stored
 
 
+@pytest.mark.parametrize(
+    "given",
+    ["anna@example.at\nBcc: spy@example.at", "anna@exa\rmple.at", "anna\t@example.at"],
+)
+def test_a_line_break_or_tab_inside_an_address_is_refused(build, given):
+    with pytest.raises(ValidationError) as exc_info:
+        build(email=given)
+
+    (error,) = exc_info.value.errors()
+    assert error["loc"] == ("email",)
+    assert error["type"] == "value_error"
+
+
 def test_the_longest_allowed_address_is_accepted(build):
     address = _address(EMAIL_MAX_LENGTH)
 

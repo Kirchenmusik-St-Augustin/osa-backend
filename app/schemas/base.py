@@ -71,13 +71,14 @@ OptionalText = Annotated[
 
 
 def _normalize_email(value: object) -> object:
-    return value.lower() if isinstance(value, str) else value
+    return value.strip().lower() if isinstance(value, str) else value
 
 
-# An e-mail address as it is stored and compared: lower case (the database
-# enforces it with a CHECK constraint; EmailStr itself removes surrounding
-# blanks, but only lower-cases the domain), and short enough to be saved from
-# the profile form later.
+# An e-mail address as it is stored and compared: surrounding whitespace
+# removed here (the e-mail validator refuses a tab or line break around the
+# address instead of trimming it) and lower case (the database enforces it
+# with a CHECK constraint; EmailStr itself only lower-cases the domain), and
+# short enough to be saved from the profile form later.
 EMAIL_MAX_LENGTH = 190
 NormalizedEmail = Annotated[
     EmailStr, BeforeValidator(_normalize_email), Field(max_length=EMAIL_MAX_LENGTH)
