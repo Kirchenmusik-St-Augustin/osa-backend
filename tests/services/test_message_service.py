@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 class TestSendMessageRequestSchema:
     def test_rejects_oversized_message(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(max_length=2000)
+        with pytest.raises(ValueError, match=r"(?m)^message$"):
             SendMessageRequest(recipient_ids=[uuid.uuid4()], message="x" * 2001)
 
 

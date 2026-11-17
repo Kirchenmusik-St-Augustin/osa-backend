@@ -204,16 +204,16 @@ class TestCreateOrdinariumwork:
         # before the service's _validate() ever runs -- the schema
         # boundary was tightened to match the service's pre-existing
         # 3-60 constant.
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+        with pytest.raises(ValueError, match=r"(?m)^name$"):
             _request(uuid.uuid4(), name="ab")
 
     def test_rejects_out_of_range_duration(self):
         # Like test_rejects_short_name: the schema itself rejects an
         # out-of-range duration (OrdinariumworkRequest's Field(ge=1, le=999)),
         # matching the service-level 1-999 constants.
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+        with pytest.raises(ValueError, match=r"(?m)^duration$"):
             _request(uuid.uuid4(), duration=1000)
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(ge=1)
+        with pytest.raises(ValueError, match=r"(?m)^duration$"):
             _request(uuid.uuid4(), duration=0)
 
     def test_rejects_unknown_artist(self, db_session: Session):
@@ -235,10 +235,16 @@ class TestCreateOrdinariumwork:
             db_session, _request(artist_id, name=name)
         )
 
-        with pytest.raises(ordinariumwork_service.OrdinariumworkValidationError):
+        with pytest.raises(
+            ordinariumwork_service.OrdinariumworkValidationError
+        ) as exc_info:
             ordinariumwork_service.create_ordinariumwork(
                 db_session, _request(artist_id, name=name)
             )
+
+        assert exc_info.value.errors == [
+            ("name", "Dieses Werk ist für diesen Komponisten bereits erfasst.")
+        ]
 
     def test_rejects_unknown_instrument_in_setup(self, db_session: Session):
         artist_id = _make_artist(db_session)

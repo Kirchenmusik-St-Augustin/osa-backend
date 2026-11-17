@@ -71,8 +71,10 @@ def test_every_form_refuses_with_the_same_message(build):
 @pytest.mark.parametrize("phone", ["", "   ", "\n"])
 def test_a_blank_phone_number_is_refused_where_it_is_required(phone):
     for name in ("register", "profile"):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as rejected:
             PERSON_FORMS[name](phone=phone)
+
+        assert [error["loc"] for error in rejected.value.errors()] == [("phone",)]
 
 
 @pytest.mark.parametrize("phone", ["", "   ", "\n", None])

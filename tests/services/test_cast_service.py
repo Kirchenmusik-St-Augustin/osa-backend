@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
 class TestCastMemberInputSchema:
     def test_rejects_out_of_range_fee(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+        with pytest.raises(ValueError, match=r"(?m)^fee$"):
             CastMemberInput(id=uuid.uuid4(), fee=1000)
 
 

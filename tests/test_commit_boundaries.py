@@ -173,3 +173,48 @@ class TestPasswordChangeCommits:
         password_hash, sessions = self._stored(user_id)
         assert verify_password(_CURRENT_PASSWORD, password_hash)
         assert sessions == {own_session, other_session}
+
+
+class TestSessionRefreshCommits:
+    @staticmethod
+    def _stored_secret_hash(session_id: str) -> str | None:
+        """Read through a second connection: only committed rows are seen."""
+        with TestingSessionLocal() as other:
+            return other.execute(
+                select(PersonalAccessToken.refresh_token_hash).where(
+                    PersonalAccessToken.jti == session_id
+                )
+            ).scalar_one_or_none()
+
+    def test_the_rotated_secret_is_committed(self, committed_db):
+        user = _verified_user(committed_db)
+        _token, session_id, secret = auth_service.create_user_session(
+            committed_db, user
+        )
+        hash_before = self._stored_secret_hash(session_id)
+
+        auth_service.refresh_session(committed_db, session_id, secret)
+
+        hash_after = self._stored_secret_hash(session_id)
+        assert hash_before is not None
+        assert hash_after is not None
+        assert hash_after != hash_before
+
+    def test_the_end_of_a_rejected_session_is_committed(self, committed_db):
+        user = _verified_user(committed_db)
+        _token, session_id, _secret = auth_service.create_user_session(
+            committed_db, user
+        )
+
+        with pytest.raises(auth_service.InvalidSessionError):
+            auth_service.refresh_session(committed_db, session_id, "wrong-secret")
+
+        with TestingSessionLocal() as other:
+            assert (
+                other.execute(
+                    select(PersonalAccessToken.id).where(
+                        PersonalAccessToken.jti == session_id
+                    )
+                ).first()
+                is None
+            )

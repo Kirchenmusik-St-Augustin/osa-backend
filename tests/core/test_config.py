@@ -16,7 +16,9 @@ def test_valid_settings_parses_cors_origins_list(monkeypatch: pytest.MonkeyPatch
     assert settings.cors_origins_list == ["https://a.example", "https://b.example"]
 
 
-def test_missing_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
+def test_missing_app_environment_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     monkeypatch.delenv("APP_ENVIRONMENT", raising=False)
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
@@ -24,8 +26,12 @@ def test_missing_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "APP_ENVIRONMENT='None' invalid or unset" in capsys.readouterr().err
 
-def test_invalid_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
+
+def test_invalid_app_environment_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     monkeypatch.setenv("APP_ENVIRONMENT", "not-a-real-environment")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
@@ -33,8 +39,12 @@ def test_invalid_app_environment_exits(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "APP_ENVIRONMENT='not-a-real-environment' invalid" in capsys.readouterr().err
 
-def test_missing_cors_origins_exits(monkeypatch: pytest.MonkeyPatch):
+
+def test_missing_cors_origins_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
@@ -42,8 +52,12 @@ def test_missing_cors_origins_exits(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "CORS_ORIGINS is not set" in capsys.readouterr().err
 
-def test_blank_cors_origins_exits(monkeypatch: pytest.MonkeyPatch):
+
+def test_blank_cors_origins_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", " , ")
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
@@ -51,8 +65,12 @@ def test_blank_cors_origins_exits(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "CORS_ORIGINS is not set" in capsys.readouterr().err
 
-def test_missing_database_url_exits(monkeypatch: pytest.MonkeyPatch):
+
+def test_missing_database_url_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
     monkeypatch.delenv("DATABASE_URL", raising=False)
@@ -60,8 +78,12 @@ def test_missing_database_url_exits(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "DATABASE_URL is not set" in capsys.readouterr().err
 
-def test_missing_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
+
+def test_missing_secret_key_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
@@ -70,8 +92,12 @@ def test_missing_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "SECRET_KEY is not set" in capsys.readouterr().err
 
-def test_too_short_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
+
+def test_too_short_secret_key_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     monkeypatch.setenv("APP_ENVIRONMENT", "test")
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example")
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
@@ -79,6 +105,8 @@ def test_too_short_secret_key_exits(monkeypatch: pytest.MonkeyPatch):
 
     with pytest.raises(SystemExit):
         Settings()
+
+    assert "SECRET_KEY must be at least 32 characters" in capsys.readouterr().err
 
 
 def test_placeholder_secret_key_exits(
@@ -258,23 +286,29 @@ def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SECRET_KEY", "x" * 32)
 
 
-def test_wildcard_cors_origin_exits(monkeypatch: pytest.MonkeyPatch):
+def test_wildcard_cors_origin_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
     _base_env(monkeypatch)
     monkeypatch.setenv("CORS_ORIGINS", "https://a.example,*")
 
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "CORS_ORIGINS must list explicit origins" in capsys.readouterr().err
+
 
 @pytest.mark.parametrize("timezone", ["Mars/Olympus_Mons", "/etc/passwd", "../UTC"])
 def test_unknown_or_malformed_timezone_exits(
-    monkeypatch: pytest.MonkeyPatch, timezone: str
+    monkeypatch: pytest.MonkeyPatch, timezone: str, capsys: pytest.CaptureFixture[str]
 ):
     _base_env(monkeypatch)
     monkeypatch.setenv("APP_TIMEZONE", timezone)
 
     with pytest.raises(SystemExit):
         Settings()
+
+    assert "is not a known IANA zone" in capsys.readouterr().err
 
 
 def test_known_timezone_is_accepted(monkeypatch: pytest.MonkeyPatch):
@@ -286,7 +320,9 @@ def test_known_timezone_is_accepted(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.parametrize("environment", ["qa", "production"])
 def test_missing_valkey_password_exits_on_qa_and_production(
-    monkeypatch: pytest.MonkeyPatch, environment: str
+    monkeypatch: pytest.MonkeyPatch,
+    environment: str,
+    capsys: pytest.CaptureFixture[str],
 ):
     _base_env(monkeypatch)
     monkeypatch.setenv("APP_ENVIRONMENT", environment)
@@ -295,10 +331,14 @@ def test_missing_valkey_password_exits_on_qa_and_production(
     with pytest.raises(SystemExit):
         Settings()
 
+    assert "VALKEY_PASSWORD is required" in capsys.readouterr().err
+
 
 @pytest.mark.parametrize("environment", ["qa", "production"])
 def test_blank_valkey_password_exits_on_qa_and_production(
-    monkeypatch: pytest.MonkeyPatch, environment: str
+    monkeypatch: pytest.MonkeyPatch,
+    environment: str,
+    capsys: pytest.CaptureFixture[str],
 ):
     _base_env(monkeypatch)
     monkeypatch.setenv("APP_ENVIRONMENT", environment)
@@ -306,6 +346,8 @@ def test_blank_valkey_password_exits_on_qa_and_production(
 
     with pytest.raises(SystemExit):
         Settings()
+
+    assert "VALKEY_PASSWORD is required" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("environment", ["qa", "production"])
@@ -359,7 +401,7 @@ def test_out_of_range_numeric_setting_is_rejected(
     _base_env(monkeypatch)
     monkeypatch.setenv(variable, value)
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=variable):
         Settings()
 
 
@@ -412,7 +454,7 @@ def test_refresh_cookie_samesite_refuses_anything_else(
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
     monkeypatch.setenv("REFRESH_COOKIE_SAMESITE", value)
 
-    with pytest.raises((SystemExit, ValidationError)):
+    with pytest.raises(ValidationError, match="REFRESH_COOKIE_SAMESITE"):
         Settings()
 
 

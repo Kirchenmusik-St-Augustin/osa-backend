@@ -489,7 +489,7 @@ class TestOptionalYearFields:
         assert payload.jahr is None
 
     def test_out_of_range_year_is_rejected(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"(?m)^jahr$"):
             _payload(jahr=10000)
 
 
@@ -500,7 +500,7 @@ class TestRequiredSelectRejectsBlank:
         assert exc_info.value.errors()[0]["loc"] == ("inhalt",)
 
     def test_unknown_select_value_is_rejected(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=r"(?m)^sparte$"):
             _payload(sparte="Bogus")
 
 

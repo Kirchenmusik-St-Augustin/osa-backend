@@ -117,7 +117,7 @@ class TestSendMessageToContactperson:
         return MessageToContactpersonRequest(recipient_id=recipient_id, message=message)
 
     def test_rejects_oversized_message(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(max_length=2000)
+        with pytest.raises(ValueError, match=r"(?m)^message$"):
             self._data(recipient_id=uuid.uuid4(), message="x" * 2001)
 
     def test_returns_email_sender_and_message_for_verified_recipient(

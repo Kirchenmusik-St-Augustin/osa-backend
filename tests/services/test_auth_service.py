@@ -389,7 +389,7 @@ def test_refresh_session_rotates_secret(db_session, make_user):
     assert new_secret != refresh_secret
 
     # Old secret must no longer verify -- it was rotated, not reused.
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Token reuse detected$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -426,8 +426,96 @@ def test_refresh_session_bumps_auth_lastsignal(db_session, make_user):
     assert created.auth_lastsignal is not None
 
 
-def test_refresh_session_rejects_unknown_session(db_session):
+def _token_row(db_session, session_id: str) -> PersonalAccessToken:
+    return db_session.execute(
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
+    ).scalar_one_or_none()
+
+
+def test_refresh_session_keeps_the_session_id_in_the_new_access_token(
+    db_session, make_user
+):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+
+    new_access_token, _new_secret = auth_service.refresh_session(
+        db_session, session_id, refresh_secret
+    )
+
+    payload = jwt.decode(
+        new_access_token, security.SECRET_KEY, algorithms=[security.ALGORITHM]
+    )
+    assert payload["jti"] == session_id
+
+
+def test_refresh_session_marks_the_session_as_just_used(db_session, make_user):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    token_row = _token_row(db_session, session_id)
+    long_ago = datetime.now(UTC) - timedelta(minutes=30)
+    token_row.last_used_at = long_ago
+    db_session.commit()
+
+    auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+    db_session.refresh(token_row)
+    assert token_row.last_used_at > long_ago + timedelta(minutes=29)
+
+
+def test_refresh_session_rejects_a_session_without_a_stored_secret(
+    db_session, make_user
+):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    _token_row(db_session, session_id).refresh_token_hash = None
+    db_session.commit()
+
+    with pytest.raises(InvalidSessionError, match=r"^Token reuse detected$"):
+        auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+
+def test_refresh_session_rejects_a_deleted_account(db_session, make_user):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    created.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    with pytest.raises(InvalidSessionError, match=r"^Account locked or deleted$"):
+        auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+
+@pytest.mark.parametrize("reason", ["wrong_secret", "idle", "expired", "locked"])
+def test_a_rejected_refresh_ends_the_session(db_session, make_user, reason):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    token_row = _token_row(db_session, session_id)
+    if reason == "idle":
+        token_row.last_used_at = datetime.now(UTC) - timedelta(hours=999)
+    if reason == "expired":
+        token_row.created_at = datetime.now(UTC) - timedelta(days=999)
+    if reason == "locked":
+        created.auth_locked = True
+    db_session.commit()
+    presented = "wrong-secret" if reason == "wrong_secret" else refresh_secret
+
     with pytest.raises(InvalidSessionError):
+        auth_service.refresh_session(db_session, session_id, presented)
+
+    assert _token_row(db_session, session_id) is None
+
+
+def test_refresh_session_rejects_unknown_session(db_session):
+    with pytest.raises(InvalidSessionError, match=r"^Invalid session$"):
         auth_service.refresh_session(db_session, "no-such-session", "whatever")
 
 
@@ -437,7 +525,7 @@ def test_refresh_session_rejects_wrong_secret(db_session, make_user):
         db_session, created
     )
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Token reuse detected$"):
         auth_service.refresh_session(db_session, session_id, "wrong-secret")
 
 
@@ -454,7 +542,9 @@ def test_refresh_session_rejects_idle_timeout(db_session, make_user):
     token_row.last_used_at = datetime.now(UTC) - timedelta(hours=999)
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(
+        InvalidSessionError, match=r"^Session expired due to inactivity$"
+    ):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -471,7 +561,7 @@ def test_refresh_session_rejects_absolute_lifetime_exceeded(db_session, make_use
     token_row.created_at = datetime.now(UTC) - timedelta(days=999)
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Session expired$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -483,7 +573,7 @@ def test_refresh_session_rejects_user_without_email(db_session, make_user):
     created.email = None
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Account has no email$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -495,7 +585,7 @@ def test_refresh_session_rejects_locked_account(db_session, make_user):
     created.auth_locked = True
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Account locked or deleted$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
