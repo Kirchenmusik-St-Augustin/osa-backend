@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
+from app.db.models.instrument import Instrument
 from app.db.models.role import Role
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
 from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
@@ -114,7 +115,7 @@ class TestCreateCoreelement:
         # before the service's _validate_name() ever runs -- the schema
         # boundary was tightened to match the service's pre-existing
         # 3-character floor (shared by all six types).
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+        with pytest.raises(ValueError, match=r"(?m)^name$"):
             _request("ab")
 
     def test_duplicate_name_is_rejected(self, db_session: Session):
@@ -267,7 +268,7 @@ class TestUpdateCoreelement:
         # runs -- address is used by exactly one type (Location), so the
         # schema bound here IS the service's exact 3-60 constant, not just
         # a best-effort outer net (see CoreelementRequest's docstring).
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+        with pytest.raises(ValueError, match=r"(?m)^address$"):
             _request(address="ab", color="000000")
 
 
@@ -466,6 +467,8 @@ class TestPermissionRoles:
         coreelement_service.delete_coreelement(
             db_session, CoreelementType.instrument, item.id
         )
+
+        assert db_session.get(Instrument, item.id) is None
 
 
 class TestOrderLock:

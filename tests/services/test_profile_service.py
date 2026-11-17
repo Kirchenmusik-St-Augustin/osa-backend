@@ -89,11 +89,11 @@ class TestSchemaValidation:
             _request(phone="not-a-phone-number")
 
     def test_empty_auth_password_is_rejected(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=1)
+        with pytest.raises(ValueError, match=r"(?m)^auth_password$"):
             _request(auth_password="")
 
     def test_oversized_auth_password_is_rejected(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(max_length=128)
+        with pytest.raises(ValueError, match=r"(?m)^auth_password$"):
             _request(auth_password="x" * 129)
 
 

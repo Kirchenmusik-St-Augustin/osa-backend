@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
 class TestCastMemberInputSchema:
     def test_rejects_out_of_range_fee(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+        with pytest.raises(ValueError, match=r"(?m)^fee$"):
             CastMemberInput(id=uuid.uuid4(), fee=1000)
 
 
@@ -106,6 +106,12 @@ class TestDiffCastTransitions:
         )
         assert (1, "unbook", 80) in result
         assert (2, "book", 80) in result
+
+    def test_standby_entry_staying_at_the_first_standby_slot_logs_nothing(self):
+        result = cast_service._diff_cast_transitions(
+            [(1, 80), (2, 80)], [(1, 80), (2, 80)], quantity=1, old_quantity=None
+        )
+        assert result == []
 
     def test_old_quantity_override_used_instead_of_current_quantity(self):
         # both entries were regular under the OLD quantity (2, unchanged
@@ -238,6 +244,69 @@ def _delete_statements(statements: list[str]) -> list[str]:
     return [
         s for s in statements if s.lstrip().upper().startswith("DELETE FROM BOOKINGS")
     ]
+
+
+class TestSaveCastItemLogs:
+    @staticmethod
+    def _logs(db_session: Session, performance_id, user_id) -> list[tuple[str, int]]:
+        return [
+            (log.booking_type, log.fee)
+            for log in db_session.execute(
+                select(BookingLog)
+                .where(
+                    BookingLog.performance_id == performance_id,
+                    BookingLog.user_id == user_id,
+                )
+                .order_by(BookingLog.id)
+            )
+            .scalars()
+            .all()
+        ]
+
+    def test_an_entry_for_a_position_outside_the_setup_is_logged_as_standby(
+        self, db_session: Session, make_user
+    ):
+        in_setup, outside = create_instrument(db_session), create_instrument(db_session)
+        performance_id = create_performance(db_session, instruments={in_setup.id: 1})
+        user = make_user()
+
+        cast_service.save_cast_item(
+            db_session,
+            performance_id,
+            "instruments",
+            outside.id,
+            new_cast=[(user.id, 80)],
+            old_quantity=None,
+        )
+
+        assert self._logs(db_session, performance_id, user.id) == [("unbook", 80)]
+
+    def test_purging_a_position_logs_every_member_with_their_own_fee(
+        self, db_session: Session, make_user
+    ):
+        instrument = create_instrument(db_session)
+        performance_id = create_performance(db_session, instruments={instrument.id: 2})
+        first, second = make_user(), make_user()
+        cast_service.save_cast_item(
+            db_session,
+            performance_id,
+            "instruments",
+            instrument.id,
+            new_cast=[(first.id, 70), (second.id, 65)],
+            old_quantity=None,
+        )
+
+        cast_service.save_cast_item(
+            db_session,
+            performance_id,
+            "instruments",
+            instrument.id,
+            new_cast=None,
+            old_quantity=None,
+        )
+
+        assert self._logs(db_session, performance_id, first.id)[-1] == ("unbook", 70)
+        assert self._logs(db_session, performance_id, second.id)[-1] == ("unbook", 65)
 
 
 class TestSaveCastItemStatements:
@@ -430,23 +499,32 @@ class TestReconcileSetupChange:
             old_quantity=None,
         )
 
+        def second_logs() -> list[str]:
+            return [
+                log.booking_type
+                for log in db_session.execute(
+                    select(BookingLog)
+                    .where(
+                        BookingLog.performance_id == performance_id,
+                        BookingLog.user_id == second.id,
+                    )
+                    .order_by(BookingLog.id)
+                )
+                .scalars()
+                .all()
+            ]
+
+        # Saved as standby (index 1, quantity 1): the log already holds one
+        # 'unbook' for second, so only a NEW entry proves the demotion.
+        before = second_logs()
+
         cast_service.reconcile_setup_change(
             db_session, performance_id, set(), {("instruments", instrument.id): 2}
         )
 
-        logs = (
-            db_session.execute(
-                select(BookingLog)
-                .where(BookingLog.performance_id == performance_id)
-                .order_by(BookingLog.id)
-            )
-            .scalars()
-            .all()
-        )
         # second was regular under old_quantity=2 (index 1 < 2), current
         # quantity shrank to 1 -- must now be demoted (logged 'unbook').
-        demote_logs = [log for log in logs if log.user_id == second.id]
-        assert any(log.booking_type == "unbook" for log in demote_logs)
+        assert second_logs() == [*before, "unbook"]
 
 
 class TestGetCastPageAndSaveCast:
@@ -561,6 +639,138 @@ class TestGetCastPageAndSaveCast:
             )
         ).scalar_one()
         assert rejected_request.notbooked_at is not None
+
+
+class TestSaveCastNotBooked:
+    @staticmethod
+    def _save(db_session: Session, performance_id, instrument_id, cast, not_booked):
+        return cast_service.save_cast(
+            db_session,
+            performance_id,
+            CastSaveRequest(
+                cast=CastSectionInput(
+                    instruments=[
+                        CastSetupItemInput(
+                            id=instrument_id,
+                            cast=[CastMemberInput(id=uid, fee=80) for uid in cast],
+                        )
+                    ]
+                ),
+                not_booked=[NotBookedEntryInput(id=uid) for uid in not_booked],
+            ),
+        )
+
+    @staticmethod
+    def _notbooked(db_session: Session, performance_id, user_id):
+        return db_session.execute(
+            select(BookingRequest.notbooked_at).where(
+                BookingRequest.performance_id == performance_id,
+                BookingRequest.user_id == user_id,
+            )
+        ).scalar_one()
+
+    def test_only_the_listed_requests_are_marked_as_rejected(
+        self, db_session: Session, make_user
+    ):
+        instrument = create_instrument(db_session)
+        performance_id = create_performance(db_session, instruments={instrument.id: 1})
+        rejected, untouched = make_user(), make_user()
+        create_booking_request(db_session, performance_id, rejected.id)
+        create_booking_request(db_session, performance_id, untouched.id)
+
+        self._save(db_session, performance_id, instrument.id, [], [rejected.id])
+
+        assert self._notbooked(db_session, performance_id, rejected.id) is not None
+        assert self._notbooked(db_session, performance_id, untouched.id) is None
+
+    def test_a_rejection_is_withdrawn_when_the_user_is_no_longer_listed(
+        self, db_session: Session, make_user
+    ):
+        instrument = create_instrument(db_session)
+        performance_id = create_performance(db_session, instruments={instrument.id: 1})
+        user = make_user()
+        create_booking_request(
+            db_session, performance_id, user.id, notbooked_at=local_now()
+        )
+
+        self._save(db_session, performance_id, instrument.id, [], [])
+
+        assert self._notbooked(db_session, performance_id, user.id) is None
+
+    def test_someone_who_ends_up_in_the_cast_is_not_marked_as_rejected(
+        self, db_session: Session, make_user
+    ):
+        instrument = create_instrument(db_session)
+        performance_id = create_performance(db_session, instruments={instrument.id: 1})
+        user = make_user()
+        create_booking_request(db_session, performance_id, user.id)
+
+        self._save(db_session, performance_id, instrument.id, [user.id], [user.id])
+
+        assert self._notbooked(db_session, performance_id, user.id) is None
+
+    def test_rejections_of_other_performances_stay_as_they_are(
+        self, db_session: Session, make_user
+    ):
+        instrument = create_instrument(db_session)
+        this_id = create_performance(db_session, instruments={instrument.id: 1})
+        other_id = create_performance(db_session, instruments={instrument.id: 1})
+        rejected_elsewhere, open_elsewhere, rejected_here = (
+            make_user(),
+            make_user(),
+            make_user(),
+        )
+        marked_at = local_now()
+        create_booking_request(
+            db_session, other_id, rejected_elsewhere.id, notbooked_at=marked_at
+        )
+        create_booking_request(db_session, other_id, open_elsewhere.id)
+        create_booking_request(db_session, other_id, rejected_here.id)
+        create_booking_request(db_session, this_id, rejected_here.id)
+
+        self._save(
+            db_session,
+            this_id,
+            instrument.id,
+            [],
+            [rejected_here.id, open_elsewhere.id],
+        )
+
+        assert self._notbooked(db_session, other_id, rejected_elsewhere.id) is not None
+        assert self._notbooked(db_session, other_id, open_elsewhere.id) is None
+        assert self._notbooked(db_session, other_id, rejected_here.id) is None
+        assert self._notbooked(db_session, this_id, rejected_here.id) is not None
+
+    def test_a_cast_cannot_be_saved_for_a_past_performance(self, db_session: Session):
+        instrument = create_instrument(db_session)
+        performance_id = create_performance(db_session, instruments={instrument.id: 1})
+        move_to_past(db_session, performance_id)
+
+        with pytest.raises(performance_service.PerformanceInPastError):
+            self._save(db_session, performance_id, instrument.id, [], [])
+
+
+class TestBookedCastDropsStandby:
+    def test_only_the_regular_members_of_a_position_are_booked_cast(
+        self, db_session: Session, make_user
+    ):
+        instrument = create_instrument(db_session)
+        performance_id = create_performance(db_session, instruments={instrument.id: 1})
+        regular, standby = make_user(), make_user()
+        cast_service.save_cast_item(
+            db_session,
+            performance_id,
+            "instruments",
+            instrument.id,
+            new_cast=[(regular.id, 80), (standby.id, 80)],
+            old_quantity=None,
+        )
+        performance = get_performance(db_session, performance_id)
+        setup = performance_service.get_setup(db_session, performance_id)
+
+        booked = cast_service.get_booked_cast(db_session, performance, setup)
+
+        assert [member.id for member in booked.instruments[0].cast] == [regular.id]
 
 
 class TestPrimaryVoiceByUser:

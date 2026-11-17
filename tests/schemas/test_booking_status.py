@@ -21,5 +21,7 @@ class TestBookingStatusWireFormat:
         )
 
     def test_rejects_an_unknown_status_code(self):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as rejected:
             BookingStatusOutput.model_validate({"status": 6})
+
+        assert [error["loc"] for error in rejected.value.errors()] == [("status",)]

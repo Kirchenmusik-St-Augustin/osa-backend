@@ -14,11 +14,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.security import get_password_hash, verify_password
+from app.db.models.booking import Booking
 from app.db.models.booking_log import BookingLog
 from app.db.models.personal_access_token import PersonalAccessToken
 from app.db.models.user import User
+from app.schemas.booking import (
+    CastMemberInput,
+    CastSaveRequest,
+    CastSectionInput,
+    CastSetupItemInput,
+)
 from app.schemas.profile import ProfileUpdateRequest
-from app.services import auth_service, booking_jobs, profile_service
+from app.services import auth_service, booking_jobs, cast_service, profile_service
 from tests import booking_helpers
 from tests.conftest import TestingSessionLocal
 
@@ -173,3 +180,74 @@ class TestPasswordChangeCommits:
         password_hash, sessions = self._stored(user_id)
         assert verify_password(_CURRENT_PASSWORD, password_hash)
         assert sessions == {own_session, other_session}
+
+
+class TestSessionRefreshCommits:
+    @staticmethod
+    def _stored_secret_hash(session_id: str) -> str | None:
+        """Read through a second connection: only committed rows are seen."""
+        with TestingSessionLocal() as other:
+            return other.execute(
+                select(PersonalAccessToken.refresh_token_hash).where(
+                    PersonalAccessToken.jti == session_id
+                )
+            ).scalar_one_or_none()
+
+    def test_the_rotated_secret_is_committed(self, committed_db):
+        user = _verified_user(committed_db)
+        _token, session_id, secret = auth_service.create_user_session(
+            committed_db, user
+        )
+        hash_before = self._stored_secret_hash(session_id)
+
+        auth_service.refresh_session(committed_db, session_id, secret)
+
+        hash_after = self._stored_secret_hash(session_id)
+        assert hash_before is not None
+        assert hash_after is not None
+        assert hash_after != hash_before
+
+    def test_the_end_of_a_rejected_session_is_committed(self, committed_db):
+        user = _verified_user(committed_db)
+        _token, session_id, _secret = auth_service.create_user_session(
+            committed_db, user
+        )
+
+        with pytest.raises(auth_service.InvalidSessionError):
+            auth_service.refresh_session(committed_db, session_id, "wrong-secret")
+
+        with TestingSessionLocal() as other:
+            assert (
+                other.execute(
+                    select(PersonalAccessToken.id).where(
+                        PersonalAccessToken.jti == session_id
+                    )
+                ).first()
+                is None
+            )
+
+
+class TestCastSaveCommits:
+    def test_a_saved_cast_is_committed(self, committed_db):
+        instrument = booking_helpers.create_instrument(committed_db)
+        performance_id = booking_helpers.create_performance(
+            committed_db, instruments={instrument.id: 1}
+        )
+        user = _verified_user(committed_db)
+        request = CastSaveRequest(
+            cast=CastSectionInput(
+                instruments=[
+                    CastSetupItemInput(
+                        id=instrument.id, cast=[CastMemberInput(id=user.id, fee=80)]
+                    )
+                ]
+            ),
+            not_booked=[],
+        )
+
+        cast_service.save_cast(committed_db, performance_id, request)
+
+        with TestingSessionLocal() as other:
+            assert other.execute(
+                select(Booking.user_id).where(Booking.performance_id == performance_id)
+            ).scalars().all() == [user.id]

@@ -241,6 +241,16 @@ class TestUpdateProfile:
         )
 
         assert response.status_code == 200
+        # The password stays exactly as it was: the old one still logs in, the
+        # ignored new one does not.
+        old_login = client.post(
+            "/auth/login", data={"username": email, "password": "Passwort123"}
+        )
+        ignored_login = client.post(
+            "/auth/login", data={"username": email, "password": "x"}
+        )
+        assert old_login.status_code == 200
+        assert ignored_login.status_code == 401
 
     def test_duplicate_name_combo_returns_422_on_both_fields(
         self, client, make_user, db_session

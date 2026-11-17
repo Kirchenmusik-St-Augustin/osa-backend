@@ -180,7 +180,7 @@ class TestCreatePropriumwork:
         # before the service's _validate() ever runs -- the schema
         # boundary was tightened to match the service's pre-existing
         # 3-60 constant.
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+        with pytest.raises(ValueError, match=r"(?m)^name$"):
             _request(uuid.uuid4(), name="ab")
 
     def test_rejects_unknown_artist(self, db_session: Session):
@@ -202,10 +202,16 @@ class TestCreatePropriumwork:
             db_session, _request(artist_id, name=name)
         )
 
-        with pytest.raises(propriumwork_service.PropriumworkValidationError):
+        with pytest.raises(
+            propriumwork_service.PropriumworkValidationError
+        ) as exc_info:
             propriumwork_service.create_propriumwork(
                 db_session, _request(artist_id, name=name)
             )
+
+        assert exc_info.value.errors == [
+            ("name", "Dieses Werk ist für diesen Komponisten bereits erfasst.")
+        ]
 
     def test_reports_every_failing_work_field(self, db_session: Session):
         # Built without validation: the request schema already refuses these
@@ -229,14 +235,14 @@ class TestCreatePropriumwork:
     def test_rejects_out_of_range_duration(self):
         # Same tightening as test_rejects_short_name, for
         # PropriumworkRequest's new Field(le=999).
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+        with pytest.raises(ValueError, match=r"(?m)^duration$"):
             _request(uuid.uuid4(), duration=1000)
 
     def test_rejects_zero_duration(self):
         """Unlike Ordinariumwork, Propriumwork's duration lower bound is 1,
         not 0 -- a duration of exactly 0 is invalid (PropriumworkRequest's
         own Field(ge=1))."""
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(ge=1)
+        with pytest.raises(ValueError, match=r"(?m)^duration$"):
             _request(uuid.uuid4(), duration=0)
 
 
@@ -273,10 +279,16 @@ class TestUpdatePropriumwork:
             db_session, _request(artist_id)
         )
 
-        with pytest.raises(propriumwork_service.PropriumworkValidationError):
+        with pytest.raises(
+            propriumwork_service.PropriumworkValidationError
+        ) as exc_info:
             propriumwork_service.update_propriumwork(
                 db_session, other.id, _request(artist_id, name=name)
             )
+
+        assert exc_info.value.errors == [
+            ("name", "Dieses Werk ist für diesen Komponisten bereits erfasst.")
+        ]
 
 
 class TestDeletePropriumwork:

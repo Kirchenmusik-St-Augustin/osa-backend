@@ -389,7 +389,7 @@ def test_refresh_session_rotates_secret(db_session, make_user):
     assert new_secret != refresh_secret
 
     # Old secret must no longer verify -- it was rotated, not reused.
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Token reuse detected$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -426,8 +426,96 @@ def test_refresh_session_bumps_auth_lastsignal(db_session, make_user):
     assert created.auth_lastsignal is not None
 
 
-def test_refresh_session_rejects_unknown_session(db_session):
+def _token_row(db_session, session_id: str) -> PersonalAccessToken:
+    return db_session.execute(
+        select(PersonalAccessToken).where(PersonalAccessToken.jti == session_id)
+    ).scalar_one_or_none()
+
+
+def test_refresh_session_keeps_the_session_id_in_the_new_access_token(
+    db_session, make_user
+):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+
+    new_access_token, _new_secret = auth_service.refresh_session(
+        db_session, session_id, refresh_secret
+    )
+
+    payload = jwt.decode(
+        new_access_token, security.SECRET_KEY, algorithms=[security.ALGORITHM]
+    )
+    assert payload["jti"] == session_id
+
+
+def test_refresh_session_marks_the_session_as_just_used(db_session, make_user):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    token_row = _token_row(db_session, session_id)
+    long_ago = datetime.now(UTC) - timedelta(minutes=30)
+    token_row.last_used_at = long_ago
+    db_session.commit()
+
+    auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+    db_session.refresh(token_row)
+    assert token_row.last_used_at > long_ago + timedelta(minutes=29)
+
+
+def test_refresh_session_rejects_a_session_without_a_stored_secret(
+    db_session, make_user
+):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    _token_row(db_session, session_id).refresh_token_hash = None
+    db_session.commit()
+
+    with pytest.raises(InvalidSessionError, match=r"^Token reuse detected$"):
+        auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+
+def test_refresh_session_rejects_a_deleted_account(db_session, make_user):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    created.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    with pytest.raises(InvalidSessionError, match=r"^Account locked or deleted$"):
+        auth_service.refresh_session(db_session, session_id, refresh_secret)
+
+
+@pytest.mark.parametrize("reason", ["wrong_secret", "idle", "expired", "locked"])
+def test_a_rejected_refresh_ends_the_session(db_session, make_user, reason):
+    created = make_user()
+    _access_token, session_id, refresh_secret = auth_service.create_user_session(
+        db_session, created
+    )
+    token_row = _token_row(db_session, session_id)
+    if reason == "idle":
+        token_row.last_used_at = datetime.now(UTC) - timedelta(hours=999)
+    if reason == "expired":
+        token_row.created_at = datetime.now(UTC) - timedelta(days=999)
+    if reason == "locked":
+        created.auth_locked = True
+    db_session.commit()
+    presented = "wrong-secret" if reason == "wrong_secret" else refresh_secret
+
     with pytest.raises(InvalidSessionError):
+        auth_service.refresh_session(db_session, session_id, presented)
+
+    assert _token_row(db_session, session_id) is None
+
+
+def test_refresh_session_rejects_unknown_session(db_session):
+    with pytest.raises(InvalidSessionError, match=r"^Invalid session$"):
         auth_service.refresh_session(db_session, "no-such-session", "whatever")
 
 
@@ -437,7 +525,7 @@ def test_refresh_session_rejects_wrong_secret(db_session, make_user):
         db_session, created
     )
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Token reuse detected$"):
         auth_service.refresh_session(db_session, session_id, "wrong-secret")
 
 
@@ -454,7 +542,9 @@ def test_refresh_session_rejects_idle_timeout(db_session, make_user):
     token_row.last_used_at = datetime.now(UTC) - timedelta(hours=999)
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(
+        InvalidSessionError, match=r"^Session expired due to inactivity$"
+    ):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -471,7 +561,7 @@ def test_refresh_session_rejects_absolute_lifetime_exceeded(db_session, make_use
     token_row.created_at = datetime.now(UTC) - timedelta(days=999)
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Session expired$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -483,7 +573,7 @@ def test_refresh_session_rejects_user_without_email(db_session, make_user):
     created.email = None
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Account has no email$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -495,7 +585,7 @@ def test_refresh_session_rejects_locked_account(db_session, make_user):
     created.auth_locked = True
     db_session.commit()
 
-    with pytest.raises(InvalidSessionError):
+    with pytest.raises(InvalidSessionError, match=r"^Account locked or deleted$"):
         auth_service.refresh_session(db_session, session_id, refresh_secret)
 
 
@@ -988,7 +1078,7 @@ def test_request_password_reset_restarts_the_token_lifetime(db_session, make_use
 def test_execute_password_reset_success_sets_password_and_invalidates_sessions(
     db_session, make_user
 ):
-    user = make_user(password="old-password")
+    user = make_user(password="old-password", verified=False)
     _access_token, _session_id, _refresh_secret = auth_service.create_user_session(
         db_session, user
     )
@@ -1422,3 +1512,406 @@ def test_google_certificate_requests_use_the_bounded_timeout(
 
     assert captured["timeout"] == expected
     assert expected <= auth_service._GOOGLE_REQUEST_TIMEOUT_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# Login lockout: exact policy, key normalisation and window arithmetic
+# ---------------------------------------------------------------------------
+
+
+def _log_at(
+    db_session,
+    event: str,
+    email: str,
+    *,
+    seconds_ago: float,
+    ip_address: str = "1.2.3.4",
+    fired_at: datetime | None = None,
+) -> datetime:
+    moment = fired_at or datetime.now(UTC) - timedelta(seconds=seconds_ago)
+    db_session.add(
+        AuthLog(
+            event=event,
+            fired_at=moment,
+            ip_address=ip_address,
+            email=email,
+            payload={},
+        )
+    )
+    db_session.commit()
+    return moment
+
+
+def test_the_lockout_policy_is_five_failures_a_minute_and_twenty_per_account():
+    assert auth_service.MAX_LOGIN_ATTEMPTS == 5
+    assert auth_service.LOGIN_THROTTLE_WINDOW_SECONDS == 60
+    assert auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT == 20
+    assert auth_service.ACCOUNT_THROTTLE_WINDOW_SECONDS == 900
+
+
+def test_log_auth_event_stores_an_empty_payload_when_none_is_given(db_session):
+    auth_service.log_auth_event(db_session, "Failed", "payload@example.test")
+
+    row = db_session.execute(
+        select(AuthLog).where(AuthLog.email == "payload@example.test")
+    ).scalar_one()
+    assert row.payload == {}
+
+
+def test_throttle_counts_failures_that_were_logged_in_another_letter_case(
+    db_session, make_user
+):
+    created = make_user()
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        _log_at(db_session, "Failed", created.email.upper(), seconds_ago=10)
+
+    assert (
+        auth_service.check_login_throttle(db_session, created.email, "1.2.3.4")
+        is not None
+    )
+
+
+def test_throttle_matches_an_email_typed_in_another_letter_case(db_session, make_user):
+    created = make_user()
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        _log_at(db_session, "Failed", created.email, seconds_ago=10)
+
+    assert (
+        auth_service.check_login_throttle(db_session, created.email.upper(), "1.2.3.4")
+        is not None
+    )
+
+
+def test_throttle_window_restarts_at_the_latest_login_not_the_first(
+    db_session, make_user
+):
+    created = make_user()
+    _log_at(db_session, "Login", created.email, seconds_ago=50)
+    for seconds_ago in (40, 35, 30, 25, 20):
+        _log_at(db_session, "Failed", created.email, seconds_ago=seconds_ago)
+    _log_at(db_session, "Login", created.email, seconds_ago=10)
+
+    assert (
+        auth_service.check_login_throttle(db_session, created.email, "1.2.3.4") is None
+    )
+
+
+def test_throttle_ignores_failures_logged_at_the_very_moment_of_the_last_login(
+    db_session, make_user
+):
+    created = make_user()
+    moment = _log_at(db_session, "Login", created.email, seconds_ago=30)
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        _log_at(db_session, "Failed", created.email, seconds_ago=0, fired_at=moment)
+
+    assert (
+        auth_service.check_login_throttle(db_session, created.email, "1.2.3.4") is None
+    )
+
+
+def test_throttle_wait_ends_when_the_limit_oldest_failure_leaves_the_window(
+    db_session, make_user
+):
+    # Seven failures: the wait is over once the fifth-newest one (45.5 s old)
+    # is 60 s old, i.e. after 14.5 s -- not counted from the oldest failure.
+    created = make_user()
+    for seconds_ago in (55, 50, 45.5, 40, 35, 30, 20):
+        _log_at(db_session, "Failed", created.email, seconds_ago=seconds_ago)
+
+    wait = auth_service.check_login_throttle(db_session, created.email, "1.2.3.4")
+
+    assert wait == 14
+
+
+def test_throttle_wait_is_at_least_one_second(db_session, make_user):
+    created = make_user()
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        _log_at(db_session, "Failed", created.email, seconds_ago=59.5)
+
+    wait = auth_service.check_login_throttle(db_session, created.email, "1.2.3.4")
+
+    assert wait == 1
+
+
+def test_throttle_reports_the_longer_of_the_address_and_the_account_wait(
+    db_session, make_user
+):
+    # The address limit would lift after 39 s, the account limit only after
+    # 799 s: the client has to be told the longer one.
+    created = make_user()
+    for _ in range(auth_service.MAX_LOGIN_ATTEMPTS):
+        _log_at(db_session, "Failed", created.email, seconds_ago=20.5)
+    for index in range(
+        auth_service.MAX_LOGIN_ATTEMPTS_PER_ACCOUNT - auth_service.MAX_LOGIN_ATTEMPTS
+    ):
+        _log_at(
+            db_session,
+            "Failed",
+            created.email,
+            seconds_ago=100.5,
+            ip_address=f"10.0.0.{index}",
+        )
+
+    wait = auth_service.check_login_throttle(db_session, created.email, "1.2.3.4")
+
+    assert wait == 799
+
+
+# ---------------------------------------------------------------------------
+# Authentication, sessions and logout: remaining edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_authenticate_user_treats_a_deleted_account_as_unknown(db_session, make_user):
+    created = make_user(password="correct-password")
+    created.deleted_at = datetime.now(UTC)
+    db_session.commit()
+
+    user, reason = auth_service.authenticate_user(
+        db_session, created.email, "correct-password"
+    )
+
+    assert (user, reason) == (None, "unknown_email")
+
+
+def test_authenticate_user_does_not_reveal_a_lock_to_a_wrong_password(
+    db_session, make_user
+):
+    created = make_user(password="correct-password", auth_locked=True)
+
+    user, reason = auth_service.authenticate_user(
+        db_session, created.email, "wrong-password"
+    )
+
+    assert (user, reason) == (None, "wrong_password")
+
+
+def test_the_unmatchable_hash_is_computed_only_once():
+    auth_service._unmatchable_password_hash.cache_clear()
+    with patch.object(
+        auth_service, "get_password_hash", return_value="$2b$04$placeholder"
+    ) as hashing:
+        first = auth_service._unmatchable_password_hash()
+        second = auth_service._unmatchable_password_hash()
+    auth_service._unmatchable_password_hash.cache_clear()
+
+    assert first == second
+    hashing.assert_called_once()
+
+
+def test_logout_user_also_ends_a_session_whose_access_token_has_expired(
+    db_session, make_user
+):
+    created = make_user()
+    _token, session_id, _secret = auth_service.create_user_session(db_session, created)
+    expired_token, _jti = security.create_access_token(
+        subject=created.email,
+        expires_delta=timedelta(minutes=-5),
+        jti_override=session_id,
+    )
+
+    auth_service.logout_user(db_session, expired_token)
+
+    assert _session_count_of(db_session, created) == 0
+
+
+# ---------------------------------------------------------------------------
+# Registration: the service re-normalises independent of the request schema
+# ---------------------------------------------------------------------------
+
+
+def _unvalidated_register_request(**overrides: object) -> RegisterRequest:
+    valid = _register_request()
+    fields = valid.model_dump()
+    fields.update(overrides)
+    return RegisterRequest.model_construct(**fields)
+
+
+def test_register_user_stores_the_address_in_lower_case(db_session):
+    unique = uuid.uuid4().hex[:8]
+    request = _unvalidated_register_request(email=f"Max.Mixed.{unique}@Example.com")
+
+    user = auth_service.register_user(db_session, request)
+
+    assert isinstance(user, User)
+    assert user.email == f"max.mixed.{unique}@example.com"
+
+
+def test_register_user_stores_the_phone_number(db_session):
+    request = _register_request(phone="+43 660 7654321")
+
+    user = auth_service.register_user(db_session, request)
+
+    assert isinstance(user, User)
+    assert user.phone == request.phone
+
+
+def test_register_user_finds_a_taken_address_whatever_its_letter_case(db_session):
+    unique = uuid.uuid4().hex[:8]
+    auth_service.register_user(
+        db_session, _register_request(email=f"taken.{unique}@example.com")
+    )
+
+    outcome = auth_service.register_user(
+        db_session,
+        _unvalidated_register_request(email=f"TAKEN.{unique}@EXAMPLE.COM"),
+    )
+
+    assert outcome is RegistrationConflict.ACCOUNT_EXISTS
+
+
+def test_register_user_accepts_a_known_surname_with_another_given_name(db_session):
+    unique = uuid.uuid4().hex[:8]
+    auth_service.register_user(
+        db_session, _register_request(surname=f"shared{unique}", givenname="Anna")
+    )
+
+    outcome = auth_service.register_user(
+        db_session, _register_request(surname=f"shared{unique}", givenname="Berta")
+    )
+
+    assert isinstance(outcome, User)
+
+
+def test_register_user_accepts_a_known_given_name_with_another_surname(db_session):
+    unique = uuid.uuid4().hex[:8]
+    auth_service.register_user(
+        db_session, _register_request(surname=f"first{unique}", givenname=f"g{unique}")
+    )
+
+    outcome = auth_service.register_user(
+        db_session, _register_request(surname=f"second{unique}", givenname=f"g{unique}")
+    )
+
+    assert isinstance(outcome, User)
+
+
+# ---------------------------------------------------------------------------
+# Email verification and password reset: remaining edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_build_verification_email_url_carries_the_token_as_query_parameter(
+    db_session, make_user, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("FRONTEND_VERIFY_EMAIL_URL", "https://example.test/verify")
+    user = make_user(verified=False)
+
+    url = auth_service.build_verification_email_url(user)
+
+    base_url, query = url.split("?", 1)
+    assert base_url == "https://example.test/verify"
+    assert list(parse_qs(query)) == ["token"]
+    assert auth_service.verify_email(db_session, parse_qs(query)["token"][0]).id == (
+        user.id
+    )
+
+
+def _verification_token_issued(user: User, seconds_ago: int) -> str:
+    with patch("time.time", return_value=time.time() - seconds_ago):
+        return security.create_email_verification_token(user.id, user.email)
+
+
+def test_verify_email_accepts_a_link_within_its_lifetime(db_session, make_user):
+    user = make_user(verified=False)
+    token = _verification_token_issued(user, seconds_ago=120)
+
+    assert auth_service.verify_email(db_session, token).id == user.id
+
+
+def test_verify_email_rejects_a_link_past_its_lifetime(db_session, make_user):
+    user = make_user(verified=False)
+    lifetime_seconds = auth_service.get_settings().email_verification_ttl_minutes * 60
+    token = _verification_token_issued(user, seconds_ago=lifetime_seconds + 60)
+
+    with pytest.raises(ValueError, match="ungültig oder abgelaufen"):
+        auth_service.verify_email(db_session, token)
+
+
+def test_verify_email_rejects_the_link_of_an_account_that_lost_its_address(
+    db_session, make_user
+):
+    user = make_user(verified=False)
+    token = auth_service.build_email_verification_token(user)
+    user.email = None
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="ungültig oder abgelaufen"):
+        auth_service.verify_email(db_session, token)
+
+
+def test_request_password_reset_finds_the_account_whatever_the_typed_letter_case(
+    db_session, make_user
+):
+    user = make_user()
+
+    token = auth_service.request_password_reset(db_session, user.email.upper())
+
+    assert token is not None
+    row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email)
+    ).scalar_one()
+    assert row.token == hash_reset_token(token)
+
+
+def test_execute_password_reset_accepts_the_address_in_another_letter_case(
+    db_session, make_user
+):
+    user = make_user()
+    token = auth_service.request_password_reset(db_session, user.email)
+
+    auth_service.execute_password_reset(
+        db_session, user.email.upper(), token, "Passw0rd12"
+    )
+
+    _user, reason = auth_service.authenticate_user(db_session, user.email, "Passw0rd12")
+    assert reason == "ok"
+
+
+def test_execute_password_reset_consumes_the_token(db_session, make_user):
+    user = make_user()
+    token = auth_service.request_password_reset(db_session, user.email)
+
+    auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+    assert (
+        db_session.execute(
+            select(PasswordResetToken).where(PasswordResetToken.email == user.email)
+        ).scalar_one_or_none()
+        is None
+    )
+
+
+def test_execute_password_reset_discards_an_expired_token(db_session, make_user):
+    user = make_user()
+    token = auth_service.request_password_reset(db_session, user.email)
+    row = db_session.execute(
+        select(PasswordResetToken).where(PasswordResetToken.email == user.email)
+    ).scalar_one()
+    row.created_at = datetime.now(UTC) - timedelta(hours=2)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="ungültig"):
+        auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+    assert (
+        db_session.execute(
+            select(PasswordResetToken).where(PasswordResetToken.email == user.email)
+        ).scalar_one_or_none()
+        is None
+    )
+
+
+def test_execute_password_reset_leaves_the_sessions_of_other_accounts_alone(
+    db_session, make_user
+):
+    user = make_user()
+    bystander = make_user()
+    auth_service.create_user_session(db_session, user)
+    auth_service.create_user_session(db_session, bystander)
+    token = auth_service.request_password_reset(db_session, user.email)
+
+    auth_service.execute_password_reset(db_session, user.email, token, "Passw0rd12")
+
+    assert _session_count_of(db_session, user) == 0
+    assert _session_count_of(db_session, bystander) == 1

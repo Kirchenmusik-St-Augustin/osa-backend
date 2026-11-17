@@ -1,7 +1,11 @@
-fastapi
+# Held on the 0.140 series: later releases deprecate the `root_path` argument of
+# FastAPI() (main.py), which has to move to the server start first.
+fastapi~=0.140.0
 uvicorn[standard]
 gunicorn
-sqlalchemy
+# Held on the 2.0 series: 2.1 changes the generics of select() (strict typing of
+# the paging helpers) and deprecates DISTINCT ON via .distinct(expr).
+sqlalchemy~=2.0.0
 psycopg
 alembic
 arq

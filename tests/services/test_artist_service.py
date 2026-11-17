@@ -124,7 +124,7 @@ class TestCreateArtist:
         assert (artist.surname, artist.givenname) == ("MUSTER", "Mary Jane")
 
     def test_rejects_a_blank_surname(self):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own validation error
+        with pytest.raises(ValueError, match=r"(?m)^surname$"):
             _request(surname="   ")
 
     def test_accepts_a_surname_of_two_characters(self, db_session: Session):
@@ -142,10 +142,15 @@ class TestCreateArtist:
             db_session, _request(surname=surname, givenname=givenname)
         )
 
-        with pytest.raises(artist_service.ArtistValidationError):
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
             artist_service.create_artist(
                 db_session, _request(surname=f" {surname} ", givenname=f"{givenname} ")
             )
+
+        assert exc_info.value.errors == [
+            ("surname", "Die Kombination von Vor- und Nachname ist vergeben."),
+            ("givenname", "Die Kombination von Vor- und Nachname ist vergeben."),
+        ]
 
     def test_rejects_duplicate_surname_givenname_combination(self, db_session: Session):
         surname, givenname = _unique("Dup"), _unique("Licate")
@@ -266,10 +271,15 @@ class TestUpdateArtist:
         )
         other = artist_service.create_artist(db_session, _request())
 
-        with pytest.raises(artist_service.ArtistValidationError):
+        with pytest.raises(artist_service.ArtistValidationError) as exc_info:
             artist_service.update_artist(
                 db_session, other.id, _request(surname=surname, givenname=givenname)
             )
+
+        assert exc_info.value.errors == [
+            ("surname", "Die Kombination von Vor- und Nachname ist vergeben."),
+            ("givenname", "Die Kombination von Vor- und Nachname ist vergeben."),
+        ]
 
 
 class TestDeleteArtist:

@@ -129,8 +129,10 @@ def test_a_list_above_its_limit_is_rejected(name):
 
 
 def test_a_message_to_the_cast_without_recipients_is_rejected():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as rejected:
         SendMessageRequest.model_validate({"recipient_ids": [], "message": "Hallo"})
+
+    assert [error["loc"] for error in rejected.value.errors()] == [("recipient_ids",)]
 
 
 @pytest.mark.parametrize("message", ["", " ", "   ", "\t\n"])
@@ -195,7 +197,7 @@ def test_a_field_with_a_smaller_limit_of_its_own_keeps_it():
 
 
 def test_the_user_phone_keeps_its_own_format_rule():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as rejected:
         UserRequest.model_validate(
             {
                 "surname": "Muster",
@@ -203,3 +205,5 @@ def test_the_user_phone_keeps_its_own_format_rule():
                 "phone": "1" * (_FREE_TEXT_LIMIT + 1),
             }
         )
+
+    assert [error["loc"] for error in rejected.value.errors()] == [("phone",)]

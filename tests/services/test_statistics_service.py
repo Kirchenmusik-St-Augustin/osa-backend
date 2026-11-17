@@ -2,8 +2,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core import mailer
+from app.db.models.propriumwork import Propriumwork
+from app.schemas.artist import ArtistRequest
 from app.schemas.score import ScoreRequest
-from app.services import score_service, statistics_service
+from app.services import artist_service, score_service, statistics_service
+from tests.booking_helpers import create_ordinariumwork, create_performance, unique
 from tests.sent_emails import sent_email
 
 if TYPE_CHECKING:
@@ -40,6 +43,30 @@ class TestGetStatistics:
         assert result.email.sent == kill_switch.sent
         assert result.email.threshold == kill_switch.threshold
         assert result.email.period_days == kill_switch.period_days
+
+    def test_every_count_comes_from_its_own_table(self, db_session: Session):
+        # A different number of new rows per table, so a count taken from the
+        # wrong table shows up.
+        before = statistics_service.get_statistics(db_session, include_email=False)
+        composer = artist_service.create_artist(
+            db_session,
+            ArtistRequest(surname=unique("Composer"), givenname="Given", composer=True),
+        )
+        create_performance(db_session)
+        create_ordinariumwork(db_session, composer.id)
+        create_ordinariumwork(db_session, composer.id)
+        for _ in range(2):
+            db_session.add(Propriumwork(name=unique("Proprium"), artist_id=composer.id))
+        db_session.commit()
+
+        after = statistics_service.get_statistics(db_session, include_email=False)
+
+        assert after.performances == before.performances + 1
+        # One work comes with the performance, two more were added.
+        assert after.ordinariumworks == before.ordinariumworks + 3
+        assert after.propriumworks == before.propriumworks + 2
+        assert after.users == before.users
+        assert after.scores == before.scores
 
     def test_scores_counts_all_score_rows(self, db_session: Session):
         before = statistics_service.get_statistics(

@@ -35,7 +35,7 @@ class TestCreateFee:
         assert fee.amount == 130
 
     def test_name_too_short_is_rejected(self, db_session: Session):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(min_length=3)
+        with pytest.raises(ValueError, match=r"(?m)^name$"):
             FeeRequest(name="ab", amount=10)
 
     def test_duplicate_name_is_rejected(self, db_session: Session):
@@ -46,7 +46,7 @@ class TestCreateFee:
         assert exc_info.value.errors == [("name", "Der Name ist bereits vergeben.")]
 
     def test_amount_out_of_range_is_rejected(self, db_session: Session):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+        with pytest.raises(ValueError, match=r"(?m)^amount$"):
             FeeRequest(name=_unique(), amount=1000)
 
 

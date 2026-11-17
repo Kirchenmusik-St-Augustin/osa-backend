@@ -346,7 +346,7 @@ class TestCreatePerformance:
         ],
     )
     def test_rejects_out_of_range_money_field(self, field: str):
-        with pytest.raises(ValueError):  # noqa: PT011 -- Pydantic's own Field(le=999)
+        with pytest.raises(ValueError, match=rf"(?m)^{field}$"):
             _request(uuid.uuid4(), uuid.uuid4(), **{field: 1000})
 
     def test_rejects_schedule_before_tomorrow(self, db_session: Session):

@@ -17,11 +17,10 @@ def test_get_password_hash_and_verify_roundtrip():
     assert not security.verify_password("wrong", hashed)
 
 
-def test_verify_password_normalizes_2y_prefix():
-    """Stored hashes may carry the `$2y$` bcrypt prefix -- Python's bcrypt
-    only accepts $2a$/$2b$, so verify_password must normalize the prefix
-    before checking, or every such user's password would break on first
-    login."""
+def test_verify_password_accepts_a_2y_prefixed_hash():
+    """Stored hashes may carry the `$2y$` bcrypt prefix; the bcrypt package
+    has to verify it natively, or every such user's password would break on
+    first login."""
     y_prefix_hash = security.get_password_hash("hunter2").replace("$2b$", "$2y$", 1)
 
     assert security.verify_password("hunter2", y_prefix_hash)
@@ -30,6 +29,16 @@ def test_verify_password_normalizes_2y_prefix():
 def test_verify_password_rejects_none_or_empty_hash():
     assert not security.verify_password("hunter2", None)
     assert not security.verify_password("hunter2", "")
+
+
+@pytest.mark.parametrize("stored_hash", [None, ""])
+def test_verify_password_refuses_a_missing_hash_without_logging(
+    stored_hash: str | None, caplog: pytest.LogCaptureFixture
+):
+    with caplog.at_level(logging.DEBUG):
+        assert not security.verify_password("hunter2", stored_hash)
+
+    assert caplog.text == ""
 
 
 def test_verify_password_handles_malformed_hash_gracefully():
@@ -83,6 +92,19 @@ def test_create_access_token_roundtrip():
     assert uuid.UUID(jti).version == 7
 
 
+def test_access_token_is_signed_with_hs256():
+    token, _jti = security.create_access_token(subject="user@example.test")
+
+    assert jwt.get_unverified_header(token)["alg"] == "HS256"
+
+
+def test_access_token_lives_for_the_configured_session_lifetime_by_default():
+    token, _jti = security.create_access_token(subject="user@example.test")
+
+    payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+    assert payload["exp"] - payload["iat"] == security.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+
 def test_create_access_token_respects_jti_override():
     _token, jti = security.create_access_token(
         subject="user@example.test", jti_override="fixed-session-id"
@@ -108,6 +130,10 @@ def test_generate_and_hash_refresh_secret_roundtrip():
     assert not security.verify_refresh_secret("wrong-secret", hashed)
 
 
+def test_refresh_secret_carries_256_bits_of_randomness():
+    assert len(security.generate_refresh_secret()) == 43
+
+
 def test_build_and_parse_refresh_cookie_roundtrip():
     session_id = str(uuid.uuid4())
     cookie_value = security.build_refresh_cookie_value(session_id, "refresh-secret")
@@ -129,6 +155,20 @@ def test_parse_refresh_cookie_rejects_malformed_value():
         security.parse_refresh_cookie(":only-two")
 
 
+def test_parse_refresh_cookie_rejects_an_empty_secret_after_a_valid_session_id():
+    with pytest.raises(ValueError, match="Malformed refresh cookie"):
+        security.parse_refresh_cookie(f"{uuid.uuid4()}:")
+
+
+def test_parse_refresh_cookie_splits_at_the_first_colon_only():
+    session_id = str(uuid.uuid4())
+
+    assert security.parse_refresh_cookie(f"{session_id}:part-one:part-two") == (
+        session_id,
+        "part-one:part-two",
+    )
+
+
 def test_parse_refresh_cookie_rejects_non_uuid_session_id():
     with pytest.raises(ValueError, match="Malformed refresh cookie"):
         security.parse_refresh_cookie("not-a-uuid:refresh-secret")
@@ -144,6 +184,16 @@ def test_email_verification_token_roundtrip():
 
     assert decoded_user_id == user_id
     assert email_hash == security.hash_email_for_verification("user@example.test")
+
+
+def test_email_verification_token_fingerprints_the_email_exactly_as_given():
+    token = security.create_email_verification_token(uuid.uuid4(), "User@Example.test")
+
+    _user_id, email_hash = security.decode_email_verification_token(
+        token, max_age_seconds=3600
+    )
+
+    assert email_hash == security.hash_email_for_verification("User@Example.test")
 
 
 def test_email_verification_token_is_not_signed_with_the_access_token_key():
@@ -210,6 +260,37 @@ def test_generate_and_hash_reset_token_roundtrip():
 
     assert security.verify_reset_token(token, hashed)
     assert not security.verify_reset_token("wrong-token", hashed)
+
+
+def test_reset_token_carries_256_bits_of_randomness():
+    assert len(security.generate_reset_token()) == 43
+
+
+def test_random_password_has_ten_characters_by_default():
+    assert len(security.generate_random_password()) == 10
+
+
+def test_random_password_honours_the_requested_length():
+    assert len(security.generate_random_password(length=24)) == 24
+
+
+def test_random_password_draws_from_all_letters_and_digits():
+    password = security.generate_random_password(length=5_000)
+
+    assert set(password) == set(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    )
+
+
+def test_production_keeps_a_work_factor_above_the_minimum(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    production = security._settings.model_copy(
+        update={"app_environment": "production", "bcrypt_rounds": 13}
+    )
+    monkeypatch.setattr(security, "_settings", production)
+
+    assert security.get_password_hash("correct horse").startswith("$2b$13$")
 
 
 def test_production_never_hashes_below_the_minimum_work_factor(
