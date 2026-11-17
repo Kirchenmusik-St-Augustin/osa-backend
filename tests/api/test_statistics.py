@@ -1,3 +1,4 @@
+from tests.booking_helpers import create_performance
 from tests.login import login_headers
 
 
@@ -44,20 +45,21 @@ class TestGetStatistics:
             "sent",
         }
 
-    def test_counts_are_non_negative_integers(self, client, make_user):
+    def test_the_counts_follow_the_stored_rows(self, client, make_user, db_session):
         headers = login_headers(client, make_user)
-        response = client.get("/statistics", headers=headers)
+        before = client.get("/statistics", headers=headers).json()
 
-        body = response.json()
-        for key in (
-            "users",
-            "performances",
-            "ordinariumworks",
-            "propriumworks",
-            "scores",
-        ):
-            assert isinstance(body[key], int)
-            assert body[key] >= 0
+        make_user()
+        # Creates a performance together with its composer, location and
+        # ordinarium work.
+        create_performance(db_session)
+        after = client.get("/statistics", headers=headers).json()
+
+        assert after["users"] == before["users"] + 1
+        assert after["performances"] == before["performances"] + 1
+        assert after["ordinariumworks"] == before["ordinariumworks"] + 1
+        assert after["propriumworks"] == before["propriumworks"]
+        assert after["scores"] == before["scores"]
 
 
 class TestMailBudgetVisibility:

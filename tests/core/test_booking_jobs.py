@@ -554,25 +554,33 @@ class TestNotifyUpcomingBookingStatus:
     ):
         performance_id = _make_performance(db_session)
         user = make_user(verified=False)
-        _make_log(
+        log = _make_log(
             db_session,
             performance_id=performance_id,
             user_id=user.id,
             booking_type="book",
         )
+        log_id = log.id
 
         with patch("app.core.mailer._send_message") as mock_send:
             booking_jobs.notify_upcoming_booking_status()
 
-        assert all(call.args[1] != [user.email] for call in mock_send.call_args_list)
+        mock_send.assert_not_called()
+        # Still pending, so the mail goes out once the address is verified.
+        db_session.expire_all()
+        pending = db_session.get(BookingLog, log_id)
+        assert pending is not None
+        assert pending.notified_at is None
 
     def test_noop_when_no_upcoming_performances_have_logs(self):
-        # Doesn't create any data of its own -- only asserts this doesn't
-        # crash. conftest.py's SessionLocal patch routes the job through
-        # this test's own (empty, freshly-rolled-back-per-test) transaction,
-        # so there's no leftover-data flakiness concern here.
-        with patch("app.core.mailer._send_message"):
+        # Doesn't create any data of its own. conftest.py's SessionLocal patch
+        # routes the job through this test's own (empty, freshly-rolled-back-
+        # per-test) transaction, so there's no leftover-data flakiness concern
+        # here.
+        with patch("app.core.mailer._send_message") as mock_send:
             booking_jobs.notify_upcoming_booking_status()
+
+        mock_send.assert_not_called()
 
     def test_query_count_does_not_scale_with_number_of_performances(
         self, db_session: Session, make_user, count_queries

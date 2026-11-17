@@ -66,10 +66,14 @@ class TestListShorturls:
 
 
 class TestListShorturlsWithPrefix:
-    def test_builds_urlprefix_from_settings(self, db_session: Session):
+    def test_builds_urlprefix_from_settings(
+        self, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("SHORTURL_DOMAIN", "go.example.test")
+
         result = shorturl_service.list_shorturls_with_prefix(db_session)
-        assert result.urlprefix.startswith("https://")
-        assert result.urlprefix.endswith("/")
+
+        assert result.urlprefix == "https://go.example.test/"
 
 
 class TestCreateShorturl:

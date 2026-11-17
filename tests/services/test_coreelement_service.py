@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
+from app.db.models.instrument import Instrument
 from app.db.models.role import Role
 from app.schemas.coreelement import CoreelementRequest, CoreelementType
 from app.schemas.pagination import MAX_PAGE_SIZE, PageParams
@@ -466,6 +467,8 @@ class TestPermissionRoles:
         coreelement_service.delete_coreelement(
             db_session, CoreelementType.instrument, item.id
         )
+
+        assert db_session.get(Instrument, item.id) is None
 
 
 class TestOrderLock:

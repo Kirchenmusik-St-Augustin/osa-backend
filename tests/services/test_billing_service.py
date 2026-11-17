@@ -52,8 +52,10 @@ class TestGetBilling:
         move_to_past(db_session, performance_id)
         current_user = make_user()
 
-        billing = billing_service.get_billing(
-            db_session, performance_id, current_user
-        )  # no raise
+        billing = billing_service.get_billing(db_session, performance_id, current_user)
 
-        assert billing.billing.sum >= 0
+        # Not locked although the performance lies in the past: one unfilled
+        # instrument slot at the default fee (60) plus the organisation fee
+        # for one instrument (30).
+        assert billing.billing.instruments.count == 1
+        assert billing.billing.sum == 60 + 30

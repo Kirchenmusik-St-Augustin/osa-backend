@@ -539,13 +539,14 @@ class TestUpdateUser:
         admin = make_user(administrator=True)
         email = f"{_unique('same')}@example.com"
         user = make_user(email=email)
-        user.email_verified_at = datetime.now(UTC)
+        verified_at = datetime.now(UTC)
+        user.email_verified_at = verified_at
         db_session.commit()
 
         response = user_service.update_user(
             db_session, user.id, _request(email=email), admin
         )
-        assert response.email_verified_at is not None
+        assert response.email_verified_at == verified_at
 
     def _role_holder(self, make_user):
         return make_user(
